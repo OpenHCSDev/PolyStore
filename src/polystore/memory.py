@@ -1,28 +1,24 @@
-# openhcs/io/storage/backends/memory.py
+# polystore/memory.py
 """
-Memory storage backend module for OpenHCS.
+Memory storage backend module.
 
-This module provides an in-memory implementation of the MicroscopyStorageBackend interface.
-It stores data in memory and supports overlay operations for materializing data to disk when needed.
-
-This implementation enforces Clause 106-A (Declared Memory Types) and
-Clause 251 (Declarative Memory Conversion Interface) by requiring explicit
-memory type declarations and providing declarative conversion methods.
+This module provides an in-memory implementation of the StorageBackend interface.
+It stores data in memory and supports directory operations.
 """
 
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
-from openhcs.io.base import StorageBackend
-from openhcs.constants.constants import Backend
+from .base import StorageBackend
+from .exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
 
 
-class MemoryStorageBackend(StorageBackend):
+class MemoryBackend(StorageBackend):
     """Memory storage backend with automatic registration."""
-    _backend_type = Backend.MEMORY.value
+    _backend_type = "memory"
     def __init__(self, shared_dict: Optional[Dict[str, Any]] = None):
         """
         Initializes the memory storage.

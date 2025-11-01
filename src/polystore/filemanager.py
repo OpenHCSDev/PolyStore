@@ -9,9 +9,9 @@ import logging
 from pathlib import Path
 from typing import List, Set, Union, Tuple, Any
 
-from openhcs.constants.constants import DEFAULT_IMAGE_EXTENSIONS
-from openhcs.io.base import DataSink
-from openhcs.io.exceptions import StorageResolutionError
+from .formats import DEFAULT_IMAGE_EXTENSIONS
+from .base import DataSink
+from .exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         # List image files and apply natural sorting
-        from openhcs.core.utils import natural_sort
+        from .utils import natural_sort
         files = backend_instance.list_files(str(directory), pattern, extensions, recursive)
         return natural_sort(files)
 
@@ -270,7 +270,7 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         # List files and apply natural sorting
-        from openhcs.core.utils import natural_sort
+        from .utils import natural_sort
         files = backend_instance.list_files(str(directory), pattern, extensions, recursive, **kwargs)
         return natural_sort(files)
 
@@ -315,7 +315,7 @@ class FileManager:
 
         try:
             # Get directory listing and apply natural sorting
-            from openhcs.core.utils import natural_sort
+            from .utils import natural_sort
             entries = backend_instance.list_dir(str(path))
             return natural_sort(entries)
         except (FileNotFoundError, NotADirectoryError):
@@ -704,7 +704,7 @@ class FileManager:
                     continue
 
         # Apply natural sorting to both dirs and files before returning
-        from openhcs.core.utils import natural_sort
+        from .utils import natural_sort
         return natural_sort(dirs), natural_sort(files)
     
     def is_file(self, path: Union[str, Path], backend: str) -> bool:

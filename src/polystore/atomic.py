@@ -122,6 +122,61 @@ def _cleanup_lock(lock_fd: Optional[int], lock_path: Path) -> None:
             logger.warning(f"Error removing lock file {lock_path}: {e}")
 
 
+@contextmanager
+def atomic_write(file_path: Union[str, Path], mode: str = 'w', ensure_directory: bool = True):
+    """
+    Context manager for atomic file writes.
+    
+    Writes to a temporary file first, then renames to the target path.
+    This ensures the operation is atomic - either fully succeeds or fails
+    without leaving partial writes.
+    
+    Args:
+        file_path: Target file path
+        mode: File mode ('w' for text, 'wb' for binary)
+        ensure_directory: Create parent directory if it doesn't exist
+        
+    Example:
+        with atomic_write("output.txt") as f:
+            f.write("data")
+    """
+    file_path = Path(file_path)
+    
+    if ensure_directory:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Create temporary file in same directory
+    with tempfile.NamedTemporaryFile(
+        mode=mode,
+        dir=file_path.parent,
+        prefix=f"{LOCK_CONFIG.TEMP_PREFIX}{file_path.name}",
+        delete=False
+    ) as tmp_file:
+        tmp_path = tmp_file.name
+        try:
+            yield tmp_file
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        except Exception:
+            # Clean up temp file on error
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
+    
+    # Atomically replace target file
+    try:
+        os.replace(tmp_path, str(file_path))
+        logger.debug(f"Atomically wrote to {file_path}")
+    except Exception as e:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        raise FileLockError(f"Atomic write failed for {file_path}: {e}") from e
+
+
 def atomic_write_json(
     file_path: Union[str, Path],
     data: Dict[str, Any],

@@ -1,9 +1,9 @@
-# openhcs/io/storage/backends/disk.py
+# polystore/disk.py
 """
 Disk-based storage backend implementation.
 
 This module provides a concrete implementation of the storage backend interfaces
-for local disk storage. It strictly enforces VFS boundaries and doctrinal clauses.
+for local disk storage.
 """
 
 import logging
@@ -14,8 +14,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 import numpy as np
 
-from openhcs.constants.constants import FileFormat, Backend
-from openhcs.io.base import StorageBackend
+from .formats import FileFormat
+from .base import StorageBackend
+from .lazy_imports import get_torch, get_jax, get_jnp, get_cupy, get_tf
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +28,20 @@ def optional_import(module_name):
         return None
 
 # Optional dependencies at module level (not instance level to avoid pickle issues)
-# Skip GPU libraries in subprocess runner mode
-if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
+# Skip GPU libraries if running in no-GPU mode
+if os.getenv('POLYSTORE_NO_GPU') == '1':
     torch = None
     jax = None
     jnp = None
     cupy = None
     tf = None
-    logger.info("Subprocess runner mode - skipping GPU library imports in disk backend")
+    logger.info("No-GPU mode - skipping GPU library imports in disk backend")
 else:
-    from openhcs.core.lazy_gpu_imports import torch, jax, jnp, cupy, tf
+    torch = get_torch()
+    jax = get_jax()
+    jnp = get_jnp()
+    cupy = get_cupy()
+    tf = get_tf()
 tifffile = optional_import("tifffile")
 
 class FileFormatRegistry:
@@ -59,9 +64,9 @@ class FileFormatRegistry:
         return ext.lower() in self._writers and ext.lower() in self._readers
 
 
-class DiskStorageBackend(StorageBackend):
+class DiskBackend(StorageBackend):
     """Disk storage backend with automatic registration."""
-    _backend_type = Backend.DISK.value
+    _backend_type = "disk"
     def __init__(self):
         self.format_registry = FileFormatRegistry()
         self._register_formats()
@@ -98,7 +103,7 @@ class DiskStorageBackend(StorageBackend):
                 continue
 
             # Register all extensions for this format
-            for ext in file_format.value:
+            for ext in file_format.extensions:
                 self.format_registry.register(ext.lower(), writer, reader)
 
     # Format-specific writer/reader functions (pickleable)
@@ -199,8 +204,11 @@ class DiskStorageBackend(StorageBackend):
 
     def _roi_zip_reader(self, path, **kwargs):
         """Read ROIs from .roi.zip archive."""
-        from openhcs.core.roi import load_rois_from_zip
-        return load_rois_from_zip(path)
+        try:
+            from openhcs.core.roi import load_rois_from_zip
+            return load_rois_from_zip(path)
+        except ImportError:
+            raise ImportError("ROI support requires the openhcs package")
 
     def _csv_reader(self, path):
         import csv
@@ -265,16 +273,18 @@ class DiskStorageBackend(StorageBackend):
             TypeError: If output_path is not a valid path type or content_type is not specified
             ValueError: If the data cannot be saved
         """
-        from openhcs.core.roi import ROI
-
         disk_output_path = Path(output_path)
 
-        # Explicit type dispatch for ROI data
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], ROI):
-            # ROI data - save as JSON
-            images_dir = kwargs.pop('images_dir', None)
-            self._save_rois(data, disk_output_path, images_dir=images_dir, **kwargs)
-            return
+        # Explicit type dispatch for ROI data (if openhcs is available)
+        try:
+            from openhcs.core.roi import ROI
+            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], ROI):
+                # ROI data - save as JSON
+                images_dir = kwargs.pop('images_dir', None)
+                self._save_rois(data, disk_output_path, images_dir=images_dir, **kwargs)
+                return
+        except ImportError:
+            pass  # OpenHCS not available, skip ROI check
 
         ext = disk_output_path.suffix.lower()
         if not self.format_registry.is_registered(ext):
@@ -320,33 +330,10 @@ class DiskStorageBackend(StorageBackend):
         if len(data_list) != len(output_paths):
             raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
 
-        # Convert GPU arrays to CPU numpy arrays using OpenHCS memory conversion system
-        from openhcs.core.memory.converters import convert_memory, detect_memory_type
-        from openhcs.constants.constants import MemoryType
-
-        cpu_data_list = []
-        for data in data_list:
-            # Detect the memory type of the data
-            source_type = detect_memory_type(data)
-
-            # Convert to numpy if not already numpy
-            if source_type == MemoryType.NUMPY.value:
-                # Already numpy, use as-is
-                cpu_data_list.append(data)
-            else:
-                # Convert to numpy using OpenHCS memory conversion system
-                # Allow CPU roundtrip since we're explicitly going to disk
-                numpy_data = convert_memory(
-                    data=data,
-                    source_type=source_type,
-                    target_type=MemoryType.NUMPY.value,
-                    gpu_id=0  # Placeholder since numpy doesn't use GPU ID
-                )
-                cpu_data_list.append(numpy_data)
-
-        # Save converted data using existing save method
-        for cpu_data, output_path in zip(cpu_data_list, output_paths):
-            self.save(cpu_data, output_path, **kwargs)
+        # Save each data object using existing save method
+        # GPU array conversions are handled by the individual format writers
+        for data, output_path in zip(data_list, output_paths):
+            self.save(data, output_path, **kwargs)
 
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Union[str,Path]]:
@@ -721,7 +708,11 @@ class DiskStorageBackend(StorageBackend):
         """
         import zipfile
         import numpy as np
-        from openhcs.core.roi import PolygonShape, MaskShape, PointShape, EllipseShape
+        
+        try:
+            from openhcs.core.roi import PolygonShape, MaskShape, PointShape, EllipseShape
+        except ImportError:
+            raise ImportError("ROI support requires the openhcs package")
 
         output_path = Path(output_path)
 

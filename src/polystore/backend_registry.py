@@ -1,23 +1,33 @@
 """
 Storage backend metaclass registration system.
 
-Eliminates hardcoded backend registration by using metaclass auto-registration
-following OpenHCS generic solution principles. Backends are automatically
-discovered and registered when their classes are defined.
+Backends are automatically discovered and registered when their classes are defined.
 """
 
 import logging
 from typing import Dict
-from openhcs.io.base import BackendBase, DataSink
-from openhcs.core.auto_register_meta import AutoRegisterMeta
+from .base import BackendBase, DataSink
 
 logger = logging.getLogger(__name__)
 
 _backend_instances: Dict[str, DataSink] = {}
 
-# Registry auto-created by AutoRegisterMeta on BackendBase
-# Includes both StorageBackend (read-write) and ReadOnlyBackend (read-only) subclasses
-STORAGE_BACKENDS = BackendBase.__registry__
+
+def _get_storage_backends() -> Dict:
+    """Get the storage backends registry, ensuring it's initialized."""
+    # Import backends to trigger registration
+    from . import memory, disk
+    try:
+        from . import zarr
+    except ImportError:
+        pass  # Zarr not available
+    
+    # Registry auto-created by AutoRegisterMeta on BackendBase
+    return BackendBase.__registry__
+
+
+# Lazy access to registry
+STORAGE_BACKENDS = None
 
 
 def get_backend_instance(backend_type: str) -> DataSink:
@@ -41,11 +51,12 @@ def get_backend_instance(backend_type: str) -> DataSink:
         return _backend_instances[backend_type]
 
     # Get backend class from registry
-    if backend_type not in STORAGE_BACKENDS:
+    storage_backends = _get_storage_backends()
+    if backend_type not in storage_backends:
         raise KeyError(f"Backend type '{backend_type}' not registered. "
-                      f"Available backends: {list(STORAGE_BACKENDS.keys())}")
+                      f"Available backends: {list(storage_backends.keys())}")
 
-    backend_class = STORAGE_BACKENDS[backend_type]
+    backend_class = storage_backends[backend_type]
 
     try:
         # Create and cache instance
@@ -64,14 +75,15 @@ def create_storage_registry() -> Dict[str, DataSink]:
     Returns:
         Dictionary mapping backend types to instances
     """
-    # Backends auto-discovered on first access to STORAGE_BACKENDS
+    # Get backends registry (triggers import and registration)
+    storage_backends = _get_storage_backends()
 
     # Backends that require context-specific initialization (e.g., plate_root)
     # These are registered lazily when needed, not at startup
     SKIP_BACKENDS = {'virtual_workspace'}
 
     registry = {}
-    for backend_type in STORAGE_BACKENDS.keys():  # Auto-discovers here
+    for backend_type in storage_backends.keys():
         # Skip backends that need context-specific initialization
         if backend_type in SKIP_BACKENDS:
             logger.debug(f"Skipping backend '{backend_type}' - requires context-specific initialization")
@@ -129,16 +141,20 @@ def cleanup_backend_connections() -> None:
         except Exception as e:
             logger.warning(f"Failed to cleanup napari viewer: {e}")
 
-        try:
-            from openhcs.runtime.fiji_stream_visualizer import _cleanup_global_fiji_viewer
-            _cleanup_global_fiji_viewer()
-            logger.debug("Cleaned up Fiji viewer for test mode")
-        except ImportError:
-            pass  # fiji visualizer not available
-        except Exception as e:
-            logger.warning(f"Failed to cleanup Fiji viewer: {e}")
 
-    logger.info(f"Backend connections cleaned up ({'test mode' if is_test_mode else 'napari window preserved'})")
+class BackendRegistry(dict):
+    """
+    Registry for storage backends.
+
+    This is a dictionary that automatically populates with available backends
+    when first accessed.
+    """
+
+    def __init__(self):
+        """Initialize the backend registry."""
+        super().__init__()
+        # Populate with available backends
+        self.update(create_storage_registry())
 
 
 def cleanup_all_backends() -> None:

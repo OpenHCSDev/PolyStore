@@ -18,14 +18,19 @@ from .base import (
 
 # Concrete backends
 from .memory import MemoryBackend
-from .disk import DiskStorageBackend
-from .zarr import ZarrBackend
+from .disk import DiskBackend
+
+# Optional backends
+try:
+    from .zarr import ZarrBackend
+except ImportError:
+    ZarrBackend = None
 
 # File manager
 from .filemanager import FileManager
 
 # Registry
-from .backend_registry import BackendRegistry
+from .backend_registry import BackendRegistry, create_storage_registry
 
 # Atomic operations
 from .atomic import atomic_write, atomic_write_json
@@ -55,7 +60,7 @@ __all__ = [
     "ReadOnlyBackend",
     # Backends
     "MemoryBackend",
-    "DiskStorageBackend",
+    "DiskBackend",
     "ZarrBackend",
     # File manager
     "FileManager",
