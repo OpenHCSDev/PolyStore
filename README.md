@@ -3,8 +3,10 @@
 **Framework-agnostic multi-backend storage abstraction for ML and scientific computing**
 
 [![PyPI version](https://badge.fury.io/py/polystore.svg)](https://badge.fury.io/py/polystore)
+[![Documentation Status](https://readthedocs.org/projects/polystore/badge/?version=latest)](https://polystore.readthedocs.io/en/latest/?badge=latest)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Coverage](https://raw.githubusercontent.com/trissim/polystore/main/.github/badges/coverage.svg)](https://trissim.github.io/polystore/coverage/)
 
 ## Features
 
