@@ -99,15 +99,14 @@ jobs:
           Last updated: $(date)
           EOF
 
-      # Disabled: Auto-committing badges causes push conflicts
-      # - name: Commit and push if coverage badge changed
-      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      #   run: |
-      #     git config --local user.email "github-actions[bot]@users.noreply.github.com"
-      #     git config --local user.name "github-actions[bot]"
-      #     git add .github/badges/coverage.svg -f
-      #     git commit -m "chore: update coverage badge" || exit 0
-      #     git push
+      - name: Commit and push if coverage badge changed
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .github/badges/coverage.svg -f
+          git commit -m "chore: update coverage badge" || exit 0
+          git push
 
       - name: Check GitHub Pages status
         run: |
