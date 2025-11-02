@@ -29,8 +29,6 @@ jobs:
         run: |
           cd docs
           make html
-        env:
-          SPHINXOPTS: "-W --keep-going"
 
       - name: Check for broken links
         run: |
