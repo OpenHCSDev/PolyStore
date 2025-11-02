@@ -5,7 +5,7 @@ Provides pluggable storage backends with multi-framework I/O support for
 NumPy, PyTorch, JAX, TensorFlow, CuPy, and Zarr.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # Core abstractions
 from .base import (
