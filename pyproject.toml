@@ -39,7 +39,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.26.0",
     "portalocker>=2.8.0",  # Cross-platform file locking
-    "metaclass-registry>=0.1.0",
+    "metaclass-register",
 ]
 
 [project.optional-dependencies]
