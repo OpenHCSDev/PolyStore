@@ -75,9 +75,8 @@ def passthrough_to_disk(*extensions: str, ensure_parent_dir: bool = False):
 
             # Check if path matches passthrough extensions
             if path_arg and any(path_arg.endswith(ext) for ext in extensions):
-                from openhcs.constants.constants import Backend
-                from openhcs.io.backend_registry import get_backend_instance
-                disk_backend = get_backend_instance(Backend.DISK.value)
+                # Use local backend registry to avoid OpenHCS dependency
+                disk_backend = get_backend_instance('disk')
 
                 # Ensure parent directory exists if requested (for save operations)
                 if ensure_parent_dir:
@@ -160,14 +159,15 @@ except ImportError:
     import portalocker
     FCNTL_AVAILABLE = False
 
-from openhcs.constants.constants import Backend
-from openhcs.io.base import StorageBackend
-from openhcs.io.exceptions import StorageResolutionError
+from .backend_registry import get_backend_instance
+from .base import StorageBackend
+from .exceptions import StorageResolutionError
 
 
 class ZarrStorageBackend(StorageBackend):
     """Zarr storage backend with automatic registration."""
-    _backend_type = Backend.ZARR.value
+    # Use simple backend type string to avoid depending on OpenHCS enums
+    _backend_type = "zarr"
     """
     Zarr storage backend implementation with configurable compression.
 
@@ -189,8 +189,8 @@ class ZarrStorageBackend(StorageBackend):
         Args:
             zarr_config: ZarrConfig dataclass with all zarr settings (uses defaults if None)
         """
-        # Import here to avoid circular imports
-        from openhcs.core.config import ZarrConfig
+        # Import local ZarrConfig to remain OpenHCS-agnostic
+        from .config import ZarrConfig
 
         if zarr_config is None:
             zarr_config = ZarrConfig()
@@ -243,7 +243,7 @@ class ZarrStorageBackend(StorageBackend):
         Returns:
             Chunk shape tuple
         """
-        from openhcs.core.config import ZarrChunkStrategy
+        from .config import ZarrChunkStrategy
 
         match self.config.chunk_strategy:
             case ZarrChunkStrategy.WELL:
@@ -843,8 +843,7 @@ class ZarrStorageBackend(StorageBackend):
         # Passthrough to disk backend for text files (JSON, CSV, TXT)
         path_str = str(path)
         if path_str.endswith(('.json', '.csv', '.txt')):
-            from openhcs.io.backend_registry import get_backend_instance
-            disk_backend = get_backend_instance(Backend.DISK.value)
+            disk_backend = get_backend_instance('disk')
             return disk_backend.delete(path)
 
         path = str(path)
@@ -1264,3 +1263,7 @@ class ZarrSymlink:
 
     def __repr__(self):
         return f"<ZarrSymlink → {self.target}>"
+
+
+# Backwards-compatible name used by package public API
+ZarrBackend = ZarrStorageBackend

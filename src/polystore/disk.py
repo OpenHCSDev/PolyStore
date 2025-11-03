@@ -208,7 +208,7 @@ class DiskBackend(StorageBackend):
             from openhcs.core.roi import load_rois_from_zip
             return load_rois_from_zip(path)
         except ImportError:
-            raise ImportError("ROI support requires the openhcs package")
+            raise ImportError("ROI support requires the openhcs package. Install with: pip install openhcs")
 
     def _csv_reader(self, path):
         import csv

@@ -3,18 +3,33 @@ Streaming backend interfaces for OpenHCS.
 
 This module provides abstract base classes for streaming data destinations
 that send data to external systems without persistent storage capabilities.
+
+Note: This module requires the openhcs package. It is optional for polystore.
 """
 
 import logging
 import time
 import os
 from pathlib import Path
-from typing import Any, List, Union
+from typing import Any, List, Union, Optional
 import numpy as np
 
-from openhcs.io.base import DataSink
-from openhcs.runtime.zmq_base import get_zmq_transport_url
-from openhcs.core.config import TransportMode
+# Lazy imports - streaming is optional and requires OpenHCS
+try:
+    from openhcs.io.base import DataSink
+    from openhcs.runtime.zmq_base import get_zmq_transport_url
+    from openhcs.core.config import TransportMode
+    OPENHCS_AVAILABLE = True
+except ImportError:
+    OPENHCS_AVAILABLE = False
+    DataSink = object  # Use object as stub base class
+    TransportMode = None
+    get_zmq_transport_url = None
+
+
+# Only define StreamingBackend if OpenHCS is available
+if not OPENHCS_AVAILABLE:
+    raise ImportError("Streaming backend requires OpenHCS. Install with: pip install openhcs")
 
 logger = logging.getLogger(__name__)
 
