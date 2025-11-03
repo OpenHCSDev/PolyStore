@@ -206,3 +206,60 @@ class TestMemoryBackend:
         self.backend.save(data_dict, "/test/data.json")
         loaded_dict = self.backend.load("/test/data.json")
         assert data_dict == loaded_dict
+
+    def test_is_file_nonexistent(self):
+        """Test is_file on non-existent path returns False."""
+        assert not self.backend.is_file("/nonexistent/file.txt")
+
+    def test_is_dir_nonexistent(self):
+        """Test is_dir on non-existent path returns False."""
+        assert not self.backend.is_dir("/nonexistent/dir")
+
+    def test_create_symlink_parent_not_found(self):
+        """Test creating symlink with non-existent parent fails."""
+        self.backend.save("data", "/test/source.txt")
+        with pytest.raises(FileNotFoundError):
+            self.backend.create_symlink("/test/source.txt", "/nonexistent/link.txt")
+
+    def test_move_directory_with_contents(self):
+        """Test moving a directory with nested files."""
+        # Create directory structure
+        self.backend.ensure_directory("/test/dir")
+        self.backend.ensure_directory("/test/dir/sub")
+        self.backend.save("file1", "/test/dir/file1.txt")
+        self.backend.save("file2", "/test/dir/sub/file2.txt")
+        self.backend.save("file3", "/test/dir/sub/file3.txt")
+
+        # Move the directory
+        self.backend.move("/test/dir", "/test/newdir")
+
+        # Verify old location is gone
+        assert not self.backend.exists("/test/dir")
+        assert not self.backend.exists("/test/dir/file1.txt")
+        assert not self.backend.exists("/test/dir/sub/file2.txt")
+
+        # Verify new location has all files
+        assert self.backend.exists("/test/newdir")
+        assert self.backend.load("/test/newdir/file1.txt") == "file1"
+        assert self.backend.load("/test/newdir/sub/file2.txt") == "file2"
+        assert self.backend.load("/test/newdir/sub/file3.txt") == "file3"
+
+    def test_copy_directory_with_contents(self):
+        """Test copying a directory with nested files."""
+        # Create directory structure
+        self.backend.ensure_directory("/test/dir")
+        self.backend.ensure_directory("/test/dir/sub")
+        self.backend.save("file1", "/test/dir/file1.txt")
+        self.backend.save("file2", "/test/dir/sub/file2.txt")
+
+        # Copy the directory
+        self.backend.copy("/test/dir", "/test/copydir")
+
+        # Verify original still exists
+        assert self.backend.exists("/test/dir")
+        assert self.backend.load("/test/dir/file1.txt") == "file1"
+
+        # Verify copy exists with all files
+        assert self.backend.exists("/test/copydir")
+        assert self.backend.load("/test/copydir/file1.txt") == "file1"
+        assert self.backend.load("/test/copydir/sub/file2.txt") == "file2"
