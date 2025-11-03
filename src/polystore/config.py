@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Any
 
@@ -23,5 +23,5 @@ class CompressorConfig:
 class ZarrConfig:
     """Minimal Zarr configuration dataclass for polystore (OpenHCS-agnostic)."""
     compression_level: Optional[int] = None
-    compressor: CompressorConfig = CompressorConfig()
+    compressor: CompressorConfig = field(default_factory=CompressorConfig)
     chunk_strategy: ZarrChunkStrategy = ZarrChunkStrategy.WELL
