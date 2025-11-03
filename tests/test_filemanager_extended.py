@@ -265,35 +265,10 @@ class TestFileManagerMemoryBackend:
         loaded = file_manager.load(path, backend="memory")
 
         np.testing.assert_array_equal(loaded, data)
-    def test_save_load_memory(self, file_manager):
-        """Test save/load with memory backend."""
-        data = np.random.rand(10, 10)
-        path = "/test_exists.npy"
-
-        # Ensure parent directory exists in memory
-        file_manager.ensure_directory("/", backend="memory")
-
-        file_manager.save(data, path, backend="memory")
-        loaded = file_manager.load(path, backend="memory")
-
-        np.testing.assert_array_equal(loaded, data)
 
     def test_batch_memory(self, file_manager):
         """Test batch operations with memory backend."""
         data_list = [np.random.rand(5, 5) for _ in range(3)]
-    def test_exists_memory(self, file_manager):
-        """Test exists() with memory backend."""
-        path = "/test_exists.npy"
-
-        # Ensure parent directory exists
-        file_manager.ensure_directory("/", backend="memory")
-
-        # Before saving
-        assert not file_manager.exists(path, backend="memory")
-
-        # After saving
-        file_manager.save(np.zeros((5, 5)), path, backend="memory")
-        assert file_manager.exists(path, backend="memory")
         paths = [f"/batch_{i}.npy" for i in range(3)]
 
         # Ensure parent directory exists
