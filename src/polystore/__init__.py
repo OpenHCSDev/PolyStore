@@ -45,6 +45,13 @@ from .exceptions import (
 # Streaming (optional and lazy)
 # Don't import at module level - streaming is heavy and optional
 # Users can import manually if needed: from polystore.streaming import StreamingBackend
+try:
+    from .streaming import StreamingBackend
+except ImportError:
+    StreamingBackend = None
+# Streaming (optional and lazy)
+# Don't import at module level - streaming is heavy and optional
+# Users can import manually if needed: from polystore.streaming import StreamingBackend
 StreamingBackend = None
 
 __all__ = [
