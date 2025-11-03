@@ -1,8 +1,8 @@
 """Comprehensive tests for MemoryBackend."""
 
-import pytest
 import numpy as np
-from pathlib import Path
+import pytest
+
 from polystore import MemoryBackend
 
 
@@ -61,25 +61,21 @@ class TestMemoryBackend:
 
     def test_batch_save_and_load(self):
         """Test batch save and load operations."""
-        data_list = [
-            np.array([1, 2, 3]),
-            np.array([4, 5, 6]),
-            np.array([7, 8, 9])
-        ]
+        data_list = [np.array([1, 2, 3]), np.array([4, 5, 6]), np.array([7, 8, 9])]
         paths = ["/test/data1.npy", "/test/data2.npy", "/test/data3.npy"]
-        
+
         self.backend.save_batch(data_list, paths)
         loaded_list = self.backend.load_batch(paths)
-        
+
         assert len(loaded_list) == len(data_list)
-        for original, loaded in zip(data_list, loaded_list):
+        for original, loaded in zip(data_list, loaded_list, strict=False):
             np.testing.assert_array_equal(original, loaded)
 
     def test_batch_save_length_mismatch(self):
         """Test batch save with mismatched lengths raises error."""
         data_list = [np.array([1, 2, 3]), np.array([4, 5, 6])]
         paths = ["/test/data1.npy"]
-        
+
         with pytest.raises(ValueError):
             self.backend.save_batch(data_list, paths)
 
@@ -88,7 +84,7 @@ class TestMemoryBackend:
         path = self.backend.ensure_directory("/new/nested/dir")
         # Path should be normalized to forward slashes and preserve leading slash
         assert str(path) == "/new/nested/dir"
-        
+
         # Verify directory exists
         assert self.backend.exists("/new/nested/dir")
         assert self.backend.is_dir("/new/nested/dir")
@@ -98,10 +94,10 @@ class TestMemoryBackend:
         # Create some files
         for i in range(3):
             self.backend.save(np.array([i]), f"/test/file{i}.npy")
-        
+
         files = self.backend.list_files("/test")
         assert len(files) == 3
-        assert all(str(f).endswith('.npy') for f in files)
+        assert all(str(f).endswith(".npy") for f in files)
 
     def test_list_files_with_extension_filter(self):
         """Test listing files with extension filter."""
@@ -109,7 +105,7 @@ class TestMemoryBackend:
         self.backend.save(np.array([1]), "/test/data1.npy")
         self.backend.save("text", "/test/data2.txt")
         self.backend.save(np.array([2]), "/test/data3.npy")
-        
+
         npy_files = self.backend.list_files("/test", extensions={".npy"})
         assert len(npy_files) == 2
 
@@ -118,7 +114,7 @@ class TestMemoryBackend:
         # Create files in multiple levels
         self.backend.save(np.array([1]), "/test/file1.npy")
         self.backend.save(np.array([2]), "/test/sub/file2.npy")
-        
+
         files = self.backend.list_files("/test", recursive=True)
         assert len(files) >= 2
 
@@ -127,7 +123,7 @@ class TestMemoryBackend:
         # Create some entries
         self.backend.save(np.array([1]), "/test/file.npy")
         self.backend.ensure_directory("/test/subdir")
-        
+
         entries = self.backend.list_dir("/test")
         assert "file.npy" in entries or "sub" in entries
 
@@ -135,7 +131,7 @@ class TestMemoryBackend:
         """Test path existence checking."""
         assert self.backend.exists("/test")
         assert not self.backend.exists("/nonexistent")
-        
+
         self.backend.save(np.array([1]), "/test/file.npy")
         assert self.backend.exists("/test/file.npy")
 
@@ -143,19 +139,21 @@ class TestMemoryBackend:
         """Test file checking."""
         self.backend.save(np.array([1]), "/test/file.npy")
         assert self.backend.is_file("/test/file.npy")
-        assert not self.backend.is_file("/test")
+        with pytest.raises(IsADirectoryError):
+            self.backend.is_file("/test")
 
     def test_is_dir(self):
         """Test directory checking."""
         assert self.backend.is_dir("/test")
         self.backend.save(np.array([1]), "/test/file.npy")
-        assert not self.backend.is_dir("/test/file.npy")
+        with pytest.raises(NotADirectoryError):
+            self.backend.is_dir("/test/file.npy")
 
     def test_delete(self):
         """Test file deletion."""
         self.backend.save(np.array([1]), "/test/file.npy")
         assert self.backend.exists("/test/file.npy")
-        
+
         self.backend.delete("/test/file.npy")
         assert not self.backend.exists("/test/file.npy")
 
@@ -175,7 +173,7 @@ class TestMemoryBackend:
         # Create a directory tree
         self.backend.save(np.array([1]), "/test/file1.npy")
         self.backend.save(np.array([2]), "/test/sub/file2.npy")
-        
+
         self.backend.delete_all("/test")
         assert not self.backend.exists("/test")
 
@@ -184,7 +182,7 @@ class TestMemoryBackend:
         # Test with different path formats
         data = np.array([1, 2, 3])
         self.backend.save(data, "/test/data.npy")
-        
+
         # Should be able to load with different path format
         loaded = self.backend.load("/test/data.npy")
         np.testing.assert_array_equal(data, loaded)
@@ -196,13 +194,13 @@ class TestMemoryBackend:
         self.backend.save(arr, "/test/array.npy")
         loaded_arr = self.backend.load("/test/array.npy")
         np.testing.assert_array_equal(arr, loaded_arr)
-        
+
         # String
         text = "Hello, World!"
         self.backend.save(text, "/test/text.txt")
         loaded_text = self.backend.load("/test/text.txt")
         assert text == loaded_text
-        
+
         # Dictionary
         data_dict = {"key": "value", "number": 42}
         self.backend.save(data_dict, "/test/data.json")
