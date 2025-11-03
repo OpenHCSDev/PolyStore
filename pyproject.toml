@@ -94,6 +94,35 @@ docs = [
     "sphinx-design>=0.5.0",
 ]
 
+gpu = [
+    # PyTorch
+    "torch>=2.6.0,<2.8.0",
+    "torchvision>=0.21.0,<0.23.0",
+
+    # JAX
+    "jax>=0.5.3,<0.6.0",
+    "jaxlib>=0.5.3,<0.6.0",
+
+    # JAX CUDA plugins
+    "jax-cuda12-pjrt>=0.5.3,<0.6.0",
+    "jax-cuda12-plugin>=0.5.3,<0.6.0",
+
+    # CuPy
+    "cupy-cuda12x>=13.3.0,<14.0.0",
+
+    # CuCIM
+    "cucim-cu12>=25.6.0,<26.0.0",
+
+    # TensorFlow
+    "tensorflow>=2.19.0,<2.20.0",
+
+    # TensorFlow Probability
+    "tensorflow-probability[tf]>=0.25.0,<0.26.0",
+
+    # pyclesperanto
+    "pyclesperanto>=0.17.1",
+]
+
 [project.urls]
 Homepage = "https://github.com/trissim/polystore"
 Documentation = "https://polystore.readthedocs.io"

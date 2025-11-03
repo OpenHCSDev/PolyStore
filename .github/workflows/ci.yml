@@ -73,3 +73,14 @@ jobs:
         continue-on-error: true
         run: |
           mypy src/ --ignore-missing-imports
+
+ # Kaggle integration test
+ kaggle:
+   runs-on: ubuntu-latest
+
+   steps:
+     - name: Checkout
+       uses: actions/checkout@v4
+
+     - name: kaggle Action
+       uses: Frederisk/kaggle-action@v1.0.0
