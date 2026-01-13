@@ -13,6 +13,7 @@ Polystore provides a pluggable storage backend system with multi-framework I/O s
    quickstart
    api/index
    guides/custom_backends
+   openhcs_migration/index
 
 Features
 --------
@@ -63,4 +64,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-
