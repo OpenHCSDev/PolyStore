@@ -37,7 +37,6 @@ from .metadata_writer import (
     resolve_subdirectory_path,
 )
 from .metadata_migration import detect_legacy_format, migrate_legacy_metadata, migrate_plate_metadata
-from .pipeline_migration import detect_legacy_pipeline, migrate_pipeline_file, load_pipeline_with_migration
 from .roi import (
     ROI,
     PolygonShape,
@@ -91,9 +90,6 @@ __all__ = [
     "detect_legacy_format",
     "migrate_legacy_metadata",
     "migrate_plate_metadata",
-    "detect_legacy_pipeline",
-    "migrate_pipeline_file",
-    "load_pipeline_with_migration",
     "ROI",
     "PolygonShape",
     "PolylineShape",
