@@ -81,18 +81,20 @@ The `FileManager` routes to any `DataSink`. Pipeline code doesn't know whether d
 
 **Streaming Internals Hidden**: Streaming backends handle substantial complexity internally—GPU tensor conversion, shared memory allocation, ZMQ socket management, ROI serialization—all behind the same `save_batch()` interface. The orchestrator remains backend-agnostic.
 
-**Atomic Operations**: Cross-platform file locking (`fcntl` on Unix, `portalocker` on Windows) with `atomic_update_json()` for concurrent metadata writes from multiple pipeline workers.
+**Atomic Operations**: Cross-platform file locking (`fcntl` on Unix, `portalocker` on Windows) with `atomic_update_json()` for concurrent metadata writes from multiple pipeline workers. This is critical for OpenHCS where multiple worker processes write metadata simultaneously—without atomic operations, race conditions corrupt JSON files.
 
-Backends auto-register via `metaclass-registry` [@metaclassregistry] and are lazily instantiated, keeping optional dependencies unloaded until used.
+**Lazy Backend Instantiation**: Backends auto-register via `metaclass-registry` [@metaclassregistry] and are lazily instantiated, keeping optional dependencies unloaded until used. For example, the Napari streaming backend only imports `napari` when first used, avoiding dependency bloat for users who don't need visualization.
+
+**Batch Operations**: The `save_batch()` and `load_batch()` interfaces accept lists of paths and data, enabling backends to optimize I/O. The Zarr backend can write multiple arrays in a single transaction; the Napari backend can batch ROI updates into a single viewer refresh. This is more efficient than per-file operations.
 
 # Research Application
 
-PolyStore was developed for OpenHCS (Open High-Content Screening) where microscopy pipelines:
+PolyStore was developed for OpenHCS (Open High-Content Screening) where microscopy pipelines process thousands of images per experiment. A typical workflow:
 
-- Load images from disk or virtual workspace
-- Process in memory (avoiding I/O between steps)
-- Write results to Zarr (chunked, compressed)
-- Stream intermediate results to Napari for live preview
+1. **Load**: Read raw images from disk (TIFF, OME-TIFF) or virtual workspace (lazy-loaded)
+2. **Process**: Apply filters, segmentation, feature extraction in memory
+3. **Save**: Write results to Zarr (chunked, compressed for efficient storage)
+4. **Stream**: Send intermediate results to Napari for live preview and quality control
 
 All through one interface:
 
@@ -104,7 +106,15 @@ fm.save_batch(processed, paths, backend="zarr")
 fm.save_batch(processed, paths, backend="napari_stream")
 ```
 
-The explicit backend model eliminated an entire class of bugs where code assumed disk storage but ran against memory or streaming backends.
+**Concrete Example**: A user processes 10,000 images. Without PolyStore, the pipeline code would contain:
+- `np.load()` for disk reads
+- `zarr.open_array()` for Zarr writes
+- `napari.Viewer.add_image()` for visualization
+- Custom socket code for streaming to remote Fiji instances
+
+With PolyStore, all I/O goes through `FileManager`, and the user can switch backends by changing a config parameter—no code changes needed.
+
+**Bug Prevention**: The explicit backend model eliminated an entire class of bugs where code assumed disk storage but ran against memory or streaming backends. For example, a function that called `os.path.exists()` would fail silently against a memory backend. With PolyStore, the backend is explicit, and such mismatches are caught immediately.
 
 # AI Usage Disclosure
 
