@@ -59,27 +59,31 @@ With PolyStore, one call handles all backends. The explicit `backend=` parameter
 | Explicit backend selection | ✓ | — | — | — |
 | Zero implicit fallback | ✓ | — | — | — |
 
-**fsspec** [@fsspec] provides unified filesystem access but lacks streaming and array framework handling. **zarr** [@zarr] handles chunked arrays but is a single format, not a storage abstraction. **xarray** [@xarray] provides multi-dimensional arrays with NetCDF/Zarr backends but no streaming or explicit backend routing.
+**fsspec** [@fsspec] provides unified filesystem access but cannot support streaming because its abstraction is *filesystems*—everything must behave like a file. PolyStore's abstraction is *data sinks*, which includes destinations that consume data without persisting it. This distinction is fundamental: a Napari viewer is not a filesystem, but it is a valid data sink.
+
+**zarr** [@zarr] handles chunked arrays but is a single format, not a storage abstraction. **xarray** [@xarray] provides multi-dimensional arrays with NetCDF/Zarr backends but no streaming or explicit backend routing.
 
 # Software Design
 
-**Backend Hierarchy**: `DataSource` (read-only), `DataSink` (write-only), `StorageBackend` (read/write). Backends auto-register via `metaclass-registry` [@metaclassregistry] and are lazily instantiated.
+**Backend Hierarchy**: The key architectural decision is the base abstraction. `DataSink` (write-only) is the root interface—not `StorageBackend`. This allows streaming backends that consume data without supporting reads:
 
-**FileManager**: Thin router enforcing explicit backend selection. No magic resolution—if you don't specify a backend, you get an error.
+```python
+class StreamingBackend(DataSink):      # Write-only sink
+    def save_batch(self, data, paths, **kwargs): ...
+    # No load() method - streaming is one-way
 
-**Streaming Backends**: ZeroMQ transport with shared memory for zero-copy image transfer. ROI data model provides backend-neutral shapes/points with converters for Napari and Fiji.
+class StorageBackend(DataSink):        # Read/write storage
+    def save_batch(self, data, paths, **kwargs): ...
+    def load_batch(self, paths, **kwargs): ...
+```
+
+The `FileManager` routes to any `DataSink`. Pipeline code doesn't know whether data goes to disk, memory, or a live Napari viewer—and doesn't need to.
+
+**Streaming Internals Hidden**: Streaming backends handle substantial complexity internally—GPU tensor conversion, shared memory allocation, ZMQ socket management, ROI serialization—all behind the same `save_batch()` interface. The orchestrator remains backend-agnostic.
 
 **Atomic Operations**: Cross-platform file locking (`fcntl` on Unix, `portalocker` on Windows) with `atomic_update_json()` for concurrent metadata writes from multiple pipeline workers.
 
-```python
-# Multiple workers safely update shared metadata
-from polystore import AtomicMetadataWriter
-
-writer = AtomicMetadataWriter()
-writer.merge_subdirectory_metadata(metadata_path, {
-    "TimePoint_1": {"available_backends": {"zarr": True}}
-})
-```
+Backends auto-register via `metaclass-registry` [@metaclassregistry] and are lazily instantiated, keeping optional dependencies unloaded until used.
 
 # Research Application
 
