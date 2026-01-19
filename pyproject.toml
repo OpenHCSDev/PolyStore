@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-dynamic = ["version"]
+version = "0.1.0"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -139,8 +139,7 @@ Source = "https://github.com/trissim/polystore"
 where = ["src"]
 include = ["polystore*"]
 
-[tool.setuptools.dynamic]
-version = {attr = "polystore.__version__"}
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

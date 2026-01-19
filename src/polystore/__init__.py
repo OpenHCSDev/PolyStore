@@ -2,6 +2,8 @@
 Polystore package exports.
 """
 
+__version__ = "0.1.0"
+
 import os
 
 from .atomic import file_lock, atomic_write_json, atomic_update_json, FileLockError, FileLockTimeoutError
