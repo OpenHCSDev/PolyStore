@@ -115,7 +115,6 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         omero_data_dir: Optional[Path] = None,
         omero_conn=None,
         namespace_prefix: str = "polystore",
-        parser_registry: Optional[Dict[str, Any]] = None,
         lock_dir_name: str = ".polystore",
     ):
         try:
@@ -162,8 +161,9 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         self._microscope_key = f"{namespace_prefix}.microscope_type"
         self._lock_dir_name = lock_dir_name
 
-        # Parser registry (name -> class/factory/instance)
-        self._parser_registry = parser_registry or {}
+        # Parser registry - use auto-discovered FilenameParser registry from openhcs
+        from openhcs.microscopes.microscope_interfaces import FilenameParser
+        self._parser_registry = FilenameParser.__registry__
 
         # File format registry
         self.format_registry = OMEROFileFormatRegistry()
@@ -325,7 +325,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         if parser_entry is None:
             raise ValueError(
                 f"Unknown parser: {parser_name}. "
-                "Provide parser_registry when constructing OMEROLocalBackend."
+                f"Available parsers: {list(self._parser_registry.keys())}"
             )
 
         if isinstance(parser_entry, type):
@@ -345,12 +345,24 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         Raises:
             ValueError: If plate not found or missing metadata
         """
+        import time
+        
         conn = self._get_connection(**kwargs)
 
-        # Query OMERO for plate
-        plate = conn.getObject("Plate", plate_id)
-        if not plate:
-            raise ValueError(f"OMERO Plate not found: {plate_id}")
+        # Query OMERO for plate with retry mechanism
+        # Plates may need time to become available after upload
+        max_retries = 30
+        retry_delay = 1.0
+        
+        for attempt in range(max_retries):
+            plate = conn.getObject("Plate", plate_id)
+            if plate:
+                break
+            if attempt < max_retries - 1:
+                logger.info(f"Plate {plate_id} not found yet, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+            else:
+                raise ValueError(f"OMERO Plate not found after {max_retries} retries: {plate_id}")
 
         # Get parser metadata
         parser_name = self._get_parser_from_plate_metadata(plate)
