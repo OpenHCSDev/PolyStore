@@ -130,10 +130,10 @@ gpu = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/trissim/polystore"
+Homepage = "https://github.com/OpenHCSDev/PolyStore"
 Documentation = "https://polystore.readthedocs.io"
-"Bug Reports" = "https://github.com/trissim/polystore/issues"
-Source = "https://github.com/trissim/polystore"
+"Bug Reports" = "https://github.com/OpenHCSDev/PolyStore/issues"
+Source = "https://github.com/OpenHCSDev/PolyStore"
 
 [tool.setuptools.packages.find]
 where = ["src"]
