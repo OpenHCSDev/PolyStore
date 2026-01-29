@@ -434,6 +434,79 @@ Write comprehensive tests for your backend:
            with pytest.raises(FileNotFoundError):
                self.backend.load("nonexistent.npy")
 
+File Extension Filtering (Streaming Backends)
+---------------------------------------------
+
+Streaming backends (Napari, Fiji) should declare which file types they support
+to avoid attempting to stream incompatible files (CSV, JSON, etc.).
+
+**Declare Supported Extensions:**
+
+.. code-block:: python
+
+   from polystore import StreamingBackend
+
+   class MyStreamingBackend(StreamingBackend):
+       """Custom streaming backend with extension filtering."""
+
+       _backend_type = 'my_stream'
+       VIEWER_TYPE = 'myviewer'
+       SHM_PREFIX = 'myviewer_'
+
+       # Declare which extensions this backend can stream
+       SUPPORTED_EXTENSIONS = {
+           '.tif', '.tiff', '.png', '.jpg', '.jpeg',
+           '.roi.zip',  # Compound extensions work too
+       }
+
+       def save_batch(self, data_list, file_paths, **kwargs):
+           """Stream data, automatically filtering unsupported files."""
+           # Filter to only supported file types
+           data_list, file_paths, skipped = self._filter_streamable_files(
+               data_list, file_paths
+           )
+
+           if not data_list:
+               return
+
+           # Now stream only the supported files...
+           for data, path in zip(data_list, file_paths):
+               self._stream_data(data, path, **kwargs)
+
+**How It Works:**
+
+1. **SUPPORTED_EXTENSIONS**: Class attribute defining valid file extensions
+2. **_filter_streamable_files()**: Base class method that filters data
+3. **Automatic Logging**: Skipped files are logged at INFO level
+
+**Adding/Removing Support:**
+
+To add support for new formats, simply add to the set:
+
+.. code-block:: python
+
+   SUPPORTED_EXTENSIONS = {
+       '.tif', '.tiff',
+       '.png', '.jpg', '.jpeg',
+       '.roi.zip',
+       '.myformat',  # Add your format
+   }
+
+To remove support, remove from the set or override in subclass:
+
+.. code-block:: python
+
+   class RestrictedNapariBackend(NapariStreamingBackend):
+       """Napari backend that only supports TIFF files."""
+       SUPPORTED_EXTENSIONS = {'.tif', '.tiff'}
+
+**Why This Pattern:**
+
+- **Prevents Crashes**: CSV/JSON files won't crash the viewer
+- **Clear Contracts**: Developers know what each backend supports
+- **Extensible**: Easy to add new formats
+- **Consistent**: All streaming backends use the same pattern
+
 Best Practices
 --------------
 
@@ -445,6 +518,7 @@ Best Practices
 6. **Resource Cleanup**: Implement ``__del__`` or context managers for cleanup
 7. **Type Hints**: Add type hints for better IDE support
 8. **Logging**: Use logging for debugging and monitoring
+9. **Extension Filtering**: For streaming backends, always use ``SUPPORTED_EXTENSIONS``
 
 Publishing Your Backend
 -----------------------
