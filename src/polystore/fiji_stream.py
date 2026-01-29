@@ -74,7 +74,7 @@ class FijiStreamingBackend(StreamingBackend):
         # Extract kwargs using generic polymorphic names
         host = kwargs.get('host', 'localhost')
         port = kwargs['port']
-        transport_mode = kwargs.get('transport_mode', TransportMode.IPC)
+        transport_mode = kwargs['transport_mode']
         transport_config = kwargs.get('transport_config')
         publisher = self._get_publisher(host, port, transport_mode, transport_config=transport_config)
         display_config = kwargs['display_config']

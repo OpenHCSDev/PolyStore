@@ -57,7 +57,7 @@ class StreamingBackend(DataSink):
         self._shared_memory_blocks = {}
         self._transport_config = transport_config or POLYSTORE_ZMQ_CONFIG
 
-    def _get_publisher(self, host: str, port: int, transport_mode: TransportMode = TransportMode.IPC, transport_config=None):
+    def _get_publisher(self, host: str, port: int, transport_mode: TransportMode, transport_config=None):
         """
         Lazy initialization of ZeroMQ publisher (common for all streaming backends).
 
@@ -67,7 +67,7 @@ class StreamingBackend(DataSink):
         Args:
             host: Host to connect to (ignored for IPC mode)
             port: Port to connect to
-            transport_mode: IPC or TCP transport
+            transport_mode: IPC or TCP transport (required - comes from config)
 
         Returns:
             ZeroMQ publisher socket
