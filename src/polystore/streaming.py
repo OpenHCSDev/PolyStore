@@ -10,7 +10,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, List, Union
+from typing import Any, Callable, List, Set, Union
 import numpy as np
 
 from .base import DataSink
@@ -45,10 +45,57 @@ class StreamingBackend(DataSink):
     VIEWER_TYPE: str = None
     SHM_PREFIX: str = None
 
+    # Class attribute: streaming backends only support image array data and ROIs
+    supports_arbitrary_files: bool = False
+
+    # Extensions that streaming backends can handle
+    # Subclasses can override to add support for specific formats
+    SUPPORTED_EXTENSIONS: set[str] = {'.tif', '.tiff', '.png', '.jpg', '.jpeg', '.roi.zip'}
+
     @property
     def requires_filesystem_validation(self) -> bool:
         """Streaming backends don't require filesystem validation."""
         return False
+
+    def _filter_streamable_files(
+        self,
+        data_list: List[Any],
+        file_paths: List[Union[str, Path]],
+    ) -> tuple[List[Any], List[Union[str, Path]], List[Union[str, Path]]]:
+        """
+        Filter data to only include files with supported extensions.
+
+        Args:
+            data_list: List of data objects
+            file_paths: List of file paths
+
+        Returns:
+            Tuple of (filtered_data, filtered_paths, skipped_paths)
+        """
+        filtered_data = []
+        filtered_paths = []
+        skipped_paths = []
+
+        for data, path in zip(data_list, file_paths):
+            path_obj = Path(path)
+            name = path_obj.name.lower()
+            
+            # Check if extension is supported
+            is_supported = any(name.endswith(ext) for ext in self.SUPPORTED_EXTENSIONS)
+            
+            if is_supported:
+                filtered_data.append(data)
+                filtered_paths.append(path)
+            else:
+                skipped_paths.append(path)
+
+        if skipped_paths:
+            logger.info(
+                f"{self.VIEWER_TYPE}: Skipping {len(skipped_paths)} non-streamable files: "
+                f"{[str(p) for p in skipped_paths]}"
+            )
+
+        return filtered_data, filtered_paths, skipped_paths
 
     def __init__(self, transport_config=None):
         """Initialize ZeroMQ and shared memory infrastructure."""

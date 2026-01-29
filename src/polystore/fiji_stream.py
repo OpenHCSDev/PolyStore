@@ -71,6 +71,11 @@ class FijiStreamingBackend(StreamingBackend):
 
         logger.info(f"📦 FIJI BACKEND: save_batch called with {len(data_list)} items")
 
+        # Filter to only supported file types
+        data_list, file_paths, skipped = self._filter_streamable_files(data_list, file_paths)
+        if not data_list:
+            return
+
         # Extract kwargs using generic polymorphic names
         host = kwargs.get('host', 'localhost')
         port = kwargs['port']
