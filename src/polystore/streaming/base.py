@@ -5,7 +5,8 @@ Provides type-safe protocols, generic data wrappers, and component accessors
 that work with arbitrary numbers of components (not hardcoded to 3).
 """
 
-from typing import TypeVar, Generic, Dict, Any, Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from typing import TypeVar, Generic, Dict, Any, List
 from dataclasses import dataclass
 
 T = TypeVar('T')
@@ -29,9 +30,10 @@ class TypedData(Generic[T]):
     source: str
 
 
-class ComponentAccessor(Protocol):
-    """Protocol for component metadata access (arbitrary number of components)."""
+class ComponentAccessor(ABC):
+    """ABC for component metadata access (arbitrary number of components)."""
 
+    @abstractmethod
     def get_by_mode(self, mode: str) -> list:
         """
         Get all component names that have this mode (stack/slice/window).
@@ -46,8 +48,9 @@ class ComponentAccessor(Protocol):
             If config has {'channel': 'stack', 'z_index': 'slice', 'well': 'window'}
             Then get_by_mode('stack') returns ['channel']
         """
-        ...
+        raise NotImplementedError
 
+    @abstractmethod
     def get_value(self, item: Dict[str, Any], component_name: str) -> Any:
         """
         Get component value for an item.
@@ -55,8 +58,9 @@ class ComponentAccessor(Protocol):
         Returns:
             Value or default (0) if component not in metadata.
         """
-        ...
+        raise NotImplementedError
 
+    @abstractmethod
     def collect_values(self, component_names: list) -> list[tuple]:
         """
         Collect unique values for given components across all items.
@@ -64,24 +68,48 @@ class ComponentAccessor(Protocol):
         Returns:
             Sorted list of tuples for consistent indexing.
         """
-        ...
+        raise NotImplementedError
 
 
-class HandlerContext(Protocol):
-    """Protocol for handler context with generic component access."""
+class HandlerContext(ABC):
+    """ABC for handler context with generic component access."""
 
-    server: Any
-    window_key: str
-    data: 'TypedData[Any]'
-    display_config: Dict[str, Any]
-    components: ComponentAccessor
-    images_dir: str | None
+    @property
+    @abstractmethod
+    def server(self) -> Any:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def window_key(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def data(self) -> "TypedData[Any]":
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def display_config(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def components(self) -> ComponentAccessor:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def images_dir(self) -> str | None:
+        raise NotImplementedError
 
 
-class ItemHandler(Protocol):
-    """Type-safe protocol for item handlers with automatic discovery."""
+class ItemHandler(ABC):
+    """Type-safe ABC for item handlers with automatic discovery."""
 
     @staticmethod
+    @abstractmethod
     def can_handle(data_type: str) -> bool:
         """
         Check if this handler can process the given data type.
@@ -92,9 +120,10 @@ class ItemHandler(Protocol):
         Returns:
             True if this handler can process this type.
         """
-        ...
+        raise NotImplementedError
 
     @staticmethod
+    @abstractmethod
     def handle(context: HandlerContext) -> None:
         """
         Process items using type-safe context object.
@@ -102,7 +131,7 @@ class ItemHandler(Protocol):
         Args:
             context: HandlerContext with typed data and component accessor.
         """
-        ...
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -171,7 +200,7 @@ class GenericComponentAccessor:
 
 
 @dataclass(frozen=True)
-class SimpleHandlerContext(HandlerContext):
+class SimpleHandlerContext:
     """Concrete implementation of HandlerContext protocol."""
 
     server: Any

@@ -1,15 +1,7 @@
-"""
-Napari batch processor for efficient image accumulation and display.
-
-Handles batching strategies:
-- batch_size=None: Wait for all images, display once (fastest)
-- batch_size=N: Display incrementally every N images (provides feedback)
-"""
-
 import logging
-import threading
-import time
 from typing import Any, Dict, List, Optional
+
+from polystore.streaming.receivers.core import DebouncedBatchEngine
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +39,11 @@ class NapariBatchProcessor:
         self.debounce_delay_ms = debounce_delay_ms
         self.max_debounce_wait_ms = max_debounce_wait_ms
         
-        # Accumulation state
-        self._pending_items = []
-        self._pending_display_config = None
-        self._pending_component_names_metadata = {}
-        self._pending_layer_key = None
-        
-        # Debouncing state
-        self._debounce_timer = None
-        self._first_item_time = None
-        self._lock = threading.Lock()
+        self._engine = DebouncedBatchEngine(
+            process_fn=self._process_batch,
+            debounce_delay_ms=debounce_delay_ms,
+            max_debounce_wait_ms=max_debounce_wait_ms,
+        )
         
         logger.info(
             f"NapariBatchProcessor: Created with batch_size={batch_size}, "
@@ -79,104 +66,29 @@ class NapariBatchProcessor:
             display_config: Display configuration dict
             component_names_metadata: Component name mappings for dimension labels
         """
-        with self._lock:
-            # Add items to pending queue
-            self._pending_items.extend(items)
-            self._pending_display_config = display_config
-            self._pending_component_names_metadata = component_names_metadata
-            self._pending_layer_key = layer_key
-            
-            # Track first item time for max wait enforcement
-            if self._first_item_time is None:
-                self._first_item_time = time.time()
-            
-            current_count = len(self._pending_items)
-            logger.debug(
-                f"NapariBatchProcessor: Added {len(items)} items to batch "
-                f"(total pending: {current_count})"
-            )
-            
-            # Check if we should process immediately
-            should_process = False
-            
-            if self.batch_size is not None and current_count >= self.batch_size:
-                # Batch size reached - process immediately
-                should_process = True
-                logger.info(
-                    f"NapariBatchProcessor: Batch size {self.batch_size} reached, "
-                    f"processing {current_count} items"
-                )
-            else:
-                # Check max wait time
-                elapsed_ms = (time.time() - self._first_item_time) * 1000
-                if elapsed_ms >= self.max_debounce_wait_ms:
-                    should_process = True
-                    logger.info(
-                        f"NapariBatchProcessor: Max wait {self.max_debounce_wait_ms}ms exceeded, "
-                        f"processing {current_count} items"
-                    )
-                else:
-                    # Schedule debounced processing
-                    self._schedule_debounced_processing()
-            
-            if should_process:
-                self._process_pending_batch()
-    
-    def _schedule_debounced_processing(self):
-        """Schedule debounced batch processing (called with lock held)."""
-        # Cancel existing timer
-        if self._debounce_timer is not None:
-            self._debounce_timer.cancel()
-        
-        # Schedule new timer
-        delay_seconds = self.debounce_delay_ms / 1000.0
-        self._debounce_timer = threading.Timer(
-            delay_seconds,
-            self._process_pending_batch
+        self._engine.enqueue(
+            items=items,
+            context={
+                "display_config": display_config,
+                "component_names_metadata": component_names_metadata,
+                "layer_key": layer_key,
+            },
         )
-        self._debounce_timer.start()
-        
         logger.debug(
-            f"NapariBatchProcessor: Scheduled processing in {self.debounce_delay_ms}ms"
+            "NapariBatchProcessor: Added %d items to batch for layer '%s'",
+            len(items),
+            layer_key,
         )
-    
-    def _process_pending_batch(self):
-        """Process all pending items as a batch."""
-        with self._lock:
-            if not self._pending_items:
-                return
 
-            items = self._pending_items
-            display_config = self._pending_display_config
-            component_names_metadata = self._pending_component_names_metadata
-            layer_key = self._pending_layer_key
+    def flush(self) -> None:
+        """Force immediate processing of the pending batch."""
+        self._engine.flush()
 
-            # Clear pending state
-            self._pending_items = []
-            self._pending_display_config = None
-            self._pending_component_names_metadata = {}
-            self._pending_layer_key = None
-            self._debounce_timer = None
-            self._first_item_time = None
-
-            logger.info(
-                f"NapariBatchProcessor: Processing batch of {len(items)} items "
-                f"for layer '{layer_key}'"
-            )
-
-        # Process outside lock to avoid blocking new items
-        try:
-            # Delegate to napari server for actual display
-            # The server knows how to build layers from items
-            self.napari_server._display_layer_batch(
-                layer_key=layer_key,
-                items=items,
-                display_config=display_config,
-                component_names_metadata=component_names_metadata,
-            )
-        except Exception as e:
-            logger.error(
-                f"NapariBatchProcessor: Error processing batch: {e}",
-                exc_info=True
-            )
-
+    def _process_batch(self, items: List[Dict[str, Any]], context: Dict[str, Any]) -> None:
+        """Process callback used by shared debounced batch engine."""
+        self.napari_server._display_layer_batch(
+            layer_key=context["layer_key"],
+            items=items,
+            display_config=context["display_config"],
+            component_names_metadata=context["component_names_metadata"],
+        )
