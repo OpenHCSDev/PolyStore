@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.1.7"
+version = "0.1.8"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -180,7 +180,7 @@ target-version = ["py311", "py312"]
 
 [tool.ruff]
 line-length = 100
-target-version = "0.1.7"
+target-version = "0.1.8"
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
