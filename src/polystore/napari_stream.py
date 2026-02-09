@@ -9,10 +9,11 @@ SHARED MEMORY OWNERSHIP MODEL:
 - Sender (Worker): Creates shared memory, sends reference via ZMQ, closes handle (does NOT unlink)
 - Receiver (Napari Server): Attaches to shared memory, copies data, closes handle, unlinks
 - Only receiver calls unlink() to prevent FileNotFoundError
-- PUB/SUB socket pattern is non-blocking; receiver must copy data before sender closes handle
+- REQ/REP socket pattern is blocking; worker waits for acknowledgment before closing shared memory
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, List, Union
 
@@ -22,6 +23,7 @@ from .constants import Backend, TransportMode
 from .streaming_constants import StreamingDataType
 from .streaming import StreamingBackend
 from .roi_converters import NapariROIConverter
+from zmqruntime.transport import get_zmq_transport_url, coerce_transport_mode
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,6 @@ class NapariStreamingBackend(StreamingBackend):
         port = kwargs['port']
         transport_mode = kwargs['transport_mode']
         transport_config = kwargs.get('transport_config')
-        publisher = self._get_publisher(host, port, transport_mode, transport_config=transport_config)
         display_config = kwargs['display_config']
         microscope_handler = kwargs['microscope_handler']
         source = kwargs.get('source', 'unknown_source')  # Pre-built source value
@@ -114,22 +115,43 @@ class NapariStreamingBackend(StreamingBackend):
             transport_config=transport_config,
         )
 
-        # Send non-blocking to prevent hanging if Napari is slow to process (matches Fiji pattern)
-        send_succeeded = False
+        # Create FRESH REQ socket for each send - REQ sockets cannot be reused
+        # This prevents the "Operation cannot be accomplished in current state" error
+        # when multiple streams happen concurrently
+        transport_config = transport_config or self._transport_config
+        url = get_zmq_transport_url(
+            port,
+            host=host,
+            mode=coerce_transport_mode(transport_mode),
+            config=transport_config,
+        )
+
+        if self._context is None:
+            self._context = zmq.Context()
+
+        socket = self._context.socket(zmq.REQ)
+        socket.connect(url)
+        time.sleep(0.1)  # Brief delay for connection to establish
+
         try:
-            publisher.send_json(message, flags=zmq.NOBLOCK)
-            send_succeeded = True
+            # Send with REQ socket (BLOCKING - worker waits for Napari to acknowledge)
+            # Worker blocks until Napari receives, copies data from shared memory, and sends ack
+            # This guarantees no messages are lost and shared memory is only closed after Napari is done
+            logger.info(f"📤 NAPARI BACKEND: Sending batch of {len(batch_images)} images to Napari on port {port} (REQ/REP - blocking until ack)")
+            socket.send_json(message)  # Blocking send
 
-        except zmq.Again:
-            logger.warning(f"Napari viewer busy, dropped batch of {len(batch_images)} images (port {port})")
-
-        except Exception as e:
-            logger.error(f"Failed to send batch to Napari on port {port}: {e}", exc_info=True)
-            raise  # Re-raise the exception so the pipeline knows it failed
+            # Wait for acknowledgment from Napari (REP socket)
+            # Napari will only reply after it has copied all data from shared memory
+            ack_response = socket.recv_json()
+            logger.info(f"✅ NAPARI BACKEND: Received ack from Napari: {ack_response.get('status', 'unknown')}")
 
         finally:
-            # Unified cleanup: close our handle after successful send, close+unlink after failure
-            self._cleanup_shared_memory_blocks(batch_images, unlink=not send_succeeded)
+            # Always close the socket - never reuse REQ sockets
+            socket.close()
+
+        # Clean up publisher's handles after successful send
+        # Receiver will unlink the shared memory after copying the data
+        self._cleanup_shared_memory_blocks(batch_images, unlink=False)
 
     # cleanup() now inherited from ABC
 

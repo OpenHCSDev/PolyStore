@@ -12,13 +12,17 @@ SHARED MEMORY OWNERSHIP MODEL:
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, List, Union
+
+import zmq
 
 from .constants import Backend, TransportMode
 from .streaming_constants import StreamingDataType
 from .streaming import StreamingBackend
 from .roi_converters import FijiROIConverter
+from zmqruntime.transport import get_zmq_transport_url, coerce_transport_mode
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +85,6 @@ class FijiStreamingBackend(StreamingBackend):
         port = kwargs['port']
         transport_mode = kwargs['transport_mode']
         transport_config = kwargs.get('transport_config')
-        publisher = self._get_publisher(host, port, transport_mode, transport_config=transport_config)
         display_config = kwargs['display_config']
         microscope_handler = kwargs['microscope_handler']
         source = kwargs.get('source', 'unknown_source')  # Pre-built source value
@@ -132,16 +135,39 @@ class FijiStreamingBackend(StreamingBackend):
             transport_config=transport_config,
         )
 
-        # Send with REQ socket (BLOCKING - worker waits for Fiji to acknowledge)
-        # Worker blocks until Fiji receives, copies data from shared memory, and sends ack
-        # This guarantees no messages are lost and shared memory is only closed after Fiji is done
-        logger.info(f"📤 FIJI BACKEND: Sending batch of {len(batch_images)} images to Fiji on port {port} (REQ/REP - blocking until ack)")
-        publisher.send_json(message)  # Blocking send
+        # Create FRESH REQ socket for each send - REQ sockets cannot be reused
+        # This prevents the "Operation cannot be accomplished in current state" error
+        # when multiple streams happen concurrently
+        transport_config = transport_config or self._transport_config
+        url = get_zmq_transport_url(
+            port,
+            host=host,
+            mode=coerce_transport_mode(transport_mode),
+            config=transport_config,
+        )
 
-        # Wait for acknowledgment from Fiji (REP socket)
-        # Fiji will only reply after it has copied all data from shared memory
-        ack_response = publisher.recv_json()
-        logger.info(f"✅ FIJI BACKEND: Received ack from Fiji: {ack_response.get('status', 'unknown')}")
+        if self._context is None:
+            self._context = zmq.Context()
+
+        socket = self._context.socket(zmq.REQ)
+        socket.connect(url)
+        time.sleep(0.1)  # Brief delay for connection to establish
+
+        try:
+            # Send with REQ socket (BLOCKING - worker waits for Fiji to acknowledge)
+            # Worker blocks until Fiji receives, copies data from shared memory, and sends ack
+            # This guarantees no messages are lost and shared memory is only closed after Fiji is done
+            logger.info(f"📤 FIJI BACKEND: Sending batch of {len(batch_images)} images to Fiji on port {port} (REQ/REP - blocking until ack)")
+            socket.send_json(message)  # Blocking send
+
+            # Wait for acknowledgment from Fiji (REP socket)
+            # Fiji will only reply after it has copied all data from shared memory
+            ack_response = socket.recv_json()
+            logger.info(f"✅ FIJI BACKEND: Received ack from Fiji: {ack_response.get('status', 'unknown')}")
+
+        finally:
+            # Always close the socket - never reuse REQ sockets
+            socket.close()
 
         # Clean up publisher's handles after successful send
         # Receiver will unlink the shared memory after copying the data

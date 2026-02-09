@@ -135,16 +135,12 @@ class StreamingBackend(DataSink):
                 if self._context is None:
                     self._context = zmq.Context()
 
-                # Use REQ socket for Fiji (synchronous request/reply - worker blocks until Fiji acks)
-                # Use PUB socket for Napari (broadcast pattern)
-                socket_type = zmq.REQ if self.VIEWER_TYPE == 'fiji' else zmq.PUB
-                publisher = self._context.socket(socket_type)
-
-                if socket_type == zmq.PUB:
-                    publisher.setsockopt(zmq.SNDHWM, 100000)  # Only for PUB sockets
+                # Use REQ socket for all viewers (synchronous request/reply)
+                # All viewers must send acknowledgment after processing
+                publisher = self._context.socket(zmq.REQ)
 
                 publisher.connect(url)
-                socket_name = "REQ" if socket_type == zmq.REQ else "PUB"
+                socket_name = "REQ"
                 logger.info(f"{self.VIEWER_TYPE} streaming {socket_name} socket connected to {url}")
                 time.sleep(0.1)
                 self._publishers[key] = publisher
