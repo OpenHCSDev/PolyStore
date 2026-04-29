@@ -210,6 +210,10 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
         logger.info(f"  relative_dir_str='{relative_dir_str}'")
         logger.info(f"  mapping has {len(self._mapping_cache)} entries")
 
+        lowercase_extensions = (
+            None if extensions is None else {ext.lower() for ext in extensions}
+        )
+
         # Filter paths in this directory
         results = []
         for virtual_relative in self._mapping_cache.keys():
@@ -230,7 +234,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
             vpath = Path(virtual_relative)
             if pattern and not fnmatch(vpath.name, pattern):
                 continue
-            if extensions and vpath.suffix not in extensions:
+            if lowercase_extensions and vpath.suffix.lower() not in lowercase_extensions:
                 continue
 
             # Return absolute path

@@ -9,6 +9,7 @@ for local disk storage. It strictly enforces VFS boundaries and doctrinal clause
 import logging
 import os
 import shutil
+import importlib
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def optional_import(module_name):
     try:
-        return __import__(module_name)
+        return importlib.import_module(module_name)
     except ImportError:
         return None
 
@@ -44,6 +45,7 @@ else:
     cupy = get_cupy()
     tf = get_tf()
 tifffile = optional_import("tifffile")
+imageio = optional_import("imageio.v3")
 
 # Optional arraybridge integration for memory conversion
 try:
@@ -99,6 +101,7 @@ class DiskStorageBackend(StorageBackend):
 
             # Complex formats - use custom handlers
             (FileFormat.TIFF, tifffile, self._tiff_writer, self._tiff_reader),
+            (FileFormat.RASTER_IMAGE, imageio, self._image_writer, self._image_reader),
             (FileFormat.TEXT, True, self._text_writer, self._text_reader),
             (FileFormat.JSON, True, self._json_writer, self._json_reader),
             (FileFormat.CSV, True, self._csv_writer, self._csv_reader),
@@ -163,6 +166,14 @@ class DiskStorageBackend(StorageBackend):
                     return tifffile.imread(str(resolved_path))
         else:
             return tifffile.imread(str(path))
+
+    def _image_writer(self, path, data, **kwargs):
+        """Write standard raster images using imageio."""
+        imageio.imwrite(path, np.asarray(data))
+
+    def _image_reader(self, path):
+        """Read standard raster images using imageio."""
+        return imageio.imread(path)
 
     def _text_writer(self, path, data, **kwargs):
         """Write text data to file. Accepts and ignores extra kwargs for compatibility."""
@@ -261,7 +272,7 @@ class DiskStorageBackend(StorageBackend):
             ext = disk_path.suffix.lower()
 
         if not self.format_registry.is_registered(ext):
-            raise ValueError(f"No writer registered for extension '{ext}'")
+            raise ValueError(f"No reader registered for extension '{ext}'")
 
         try:
             reader = self.format_registry.get_reader(ext)

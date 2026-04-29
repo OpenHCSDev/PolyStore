@@ -20,6 +20,7 @@ class FileFormat(Enum):
 
     # Image formats
     TIFF = "tiff"
+    RASTER_IMAGE = "raster_image"
 
     # Data formats
     CSV = "csv"
@@ -44,6 +45,7 @@ FILE_FORMAT_EXTENSIONS = {
     FileFormat.TENSORFLOW: [".tf"],
     FileFormat.ZARR: [".zarr"],
     FileFormat.TIFF: [".tif", ".tiff"],
+    FileFormat.RASTER_IMAGE: [".bmp", ".gif", ".jpeg", ".jpg", ".png"],
     FileFormat.CSV: [".csv"],
     FileFormat.JSON: [".json"],
     FileFormat.TEXT: [".txt"],
@@ -51,7 +53,14 @@ FILE_FORMAT_EXTENSIONS = {
 }
 
 # Default image extensions
-DEFAULT_IMAGE_EXTENSIONS = {".tif", ".tiff", ".TIF", ".TIFF"}
+DEFAULT_IMAGE_EXTENSIONS = {
+    extension
+    for extensions in (
+        FILE_FORMAT_EXTENSIONS[FileFormat.TIFF],
+        FILE_FORMAT_EXTENSIONS[FileFormat.RASTER_IMAGE],
+    )
+    for extension in extensions
+}
 
 
 def get_format_from_extension(ext: str) -> FileFormat:
