@@ -139,6 +139,9 @@ class MemoryStorageBackend(StorageBackend):
         if self._memory_store[dir_key] is not None:
             raise NotADirectoryError(f"Path is not a directory: {directory}")
 
+        lowercase_extensions = (
+            None if extensions is None else {extension.lower() for extension in extensions}
+        )
         result = []
         dir_prefix = dir_key + "/" if not dir_key.endswith("/") else dir_key
 
@@ -159,7 +162,10 @@ class MemoryStorageBackend(StorageBackend):
                 filename = Path(rel_path).name
                 # If pattern is None, match all files
                 if pattern is None or fnmatch(filename, pattern):
-                    if not extensions or Path(filename).suffix in extensions:
+                    if (
+                        lowercase_extensions is None
+                        or Path(filename).suffix.lower() in lowercase_extensions
+                    ):
                         # Calculate depth for breadth-first sorting
                         depth = rel_path.count('/')
                         result.append((Path(path), depth))

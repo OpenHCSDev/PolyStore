@@ -109,6 +109,17 @@ class TestMemoryBackend:
         npy_files = self.backend.list_files("/test", extensions={".npy"})
         assert len(npy_files) == 2
 
+    def test_list_files_extension_filter_is_case_insensitive(self):
+        """Test extension filtering matches backend contract case-insensitively."""
+        self.backend.save(np.array([1]), "/test/image.TIF")
+        self.backend.save(np.array([2]), "/test/image.tif")
+        self.backend.save("text", "/test/notes.TXT")
+
+        tif_files = self.backend.list_files("/test", extensions={".tif"})
+
+        assert len(tif_files) == 2
+        assert {path.name for path in tif_files} == {"image.TIF", "image.tif"}
+
     def test_list_files_recursive(self):
         """Test recursive file listing."""
         # Create files in multiple levels
