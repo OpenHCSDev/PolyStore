@@ -205,10 +205,16 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
         if self._mapping_cache is None:
             self._load_mapping()
 
-        logger.info(f"VirtualWorkspace.list_files called: directory={directory}, recursive={recursive}, pattern={pattern}, extensions={extensions}")
-        logger.info(f"  plate_root={self.plate_root}")
-        logger.info(f"  relative_dir_str='{relative_dir_str}'")
-        logger.info(f"  mapping has {len(self._mapping_cache)} entries")
+        logger.debug(
+            "VirtualWorkspace.list_files directory=%s recursive=%s pattern=%s extensions=%s",
+            directory,
+            recursive,
+            pattern,
+            extensions,
+        )
+        logger.debug("  plate_root=%s", self.plate_root)
+        logger.debug("  relative_dir_str=%r", relative_dir_str)
+        logger.debug("  mapping has %s entries", len(self._mapping_cache))
 
         lowercase_extensions = (
             None if extensions is None else {ext.lower() for ext in extensions}
@@ -240,14 +246,14 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
             # Return absolute path
             results.append(str(self.plate_root / virtual_relative))
 
-        logger.info(f"  VirtualWorkspace.list_files returning {len(results)} files")
+        logger.debug("  VirtualWorkspace.list_files returning %s files", len(results))
         if len(results) == 0 and len(self._mapping_cache) > 0:
             # Log first few mapping keys to help debug
             sample_keys = list(self._mapping_cache.keys())[:3]
-            logger.info(f"  Sample mapping keys: {sample_keys}")
+            logger.debug("  Sample mapping keys: %s", sample_keys)
             if not recursive and relative_dir_str == '':
                 sample_parents = [str(Path(k).parent).replace('\\', '/') for k in sample_keys]
-                logger.info(f"  Sample parent dirs: {sample_parents}")
+                logger.debug("  Sample parent dirs: %s", sample_parents)
                 logger.info(f"  Expected parent to match: '{relative_dir_str}'")
 
         return sorted(results)
