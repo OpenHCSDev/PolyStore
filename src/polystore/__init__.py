@@ -26,10 +26,10 @@ from .base import (
     get_backend,
 )
 from .constants import Backend, MemoryType, TransportMode
-from .disk import DiskStorageBackend
+from .disk import DiskBackend, DiskStorageBackend
 from .filemanager import FileManager
 from .formats import FileFormat, DEFAULT_IMAGE_EXTENSIONS
-from .memory import MemoryStorageBackend
+from .memory import MemoryBackend, MemoryStorageBackend
 from .metadata_writer import (
     AtomicMetadataWriter,
     MetadataWriteError,
@@ -76,7 +76,9 @@ __all__ = [
     "register_cleanup_callback",
     "STORAGE_BACKENDS",
     "DiskStorageBackend",
+    "DiskBackend",
     "MemoryStorageBackend",
+    "MemoryBackend",
     "FileManager",
     "file_lock",
     "atomic_write_json",

@@ -834,3 +834,6 @@ class DiskStorageBackend(StorageBackend):
 
         logger.info(f"Saved {roi_count} ROIs to .roi.zip archive: {output_path}")
         return str(output_path)
+
+
+DiskBackend = DiskStorageBackend

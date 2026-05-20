@@ -9,8 +9,9 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Set, Union
+from typing import Any, Callable, List, Mapping, Set, Union
 import numpy as np
 
 from ..base import DataSink
@@ -22,6 +23,27 @@ from zmqruntime.ack_listener import GlobalAckListener
 from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StreamingComponentMetadata:
+    """Message metadata for one streamed item."""
+
+    parsed_filename_metadata: Mapping[str, Any] | None
+    source: str
+
+    def to_payload(self) -> dict[str, Any]:
+        if self.parsed_filename_metadata is None:
+            metadata: dict[str, Any] = {}
+        elif isinstance(self.parsed_filename_metadata, Mapping):
+            metadata = dict(self.parsed_filename_metadata)
+        else:
+            raise TypeError(
+                "Streaming filename parser must return a mapping or None, "
+                f"got {type(self.parsed_filename_metadata).__name__}."
+            )
+        metadata["source"] = self.source
+        return metadata
 
 
 class StreamingBackend(DataSink):
@@ -165,12 +187,10 @@ class StreamingBackend(DataSink):
             Component metadata dict with source added
         """
         filename = os.path.basename(str(file_path))
-        component_metadata = microscope_handler.parser.parse_filename(filename)
-
-        # Add pre-built source value directly
-        component_metadata['source'] = source
-
-        return component_metadata
+        return StreamingComponentMetadata(
+            microscope_handler.parser.parse_filename(filename),
+            source,
+        ).to_payload()
 
     def _detect_data_type(self, data: Any):
         """

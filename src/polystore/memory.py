@@ -657,3 +657,6 @@ class MemorySymlink:
 
     def __repr__(self):
         return f"<MemorySymlink → {self.target}>"
+
+
+MemoryBackend = MemoryStorageBackend
