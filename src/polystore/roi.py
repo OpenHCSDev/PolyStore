@@ -6,12 +6,14 @@ ROIs can be materialized to multiple backends (disk, streaming, OMERO).
 """
 
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta
 
 from .constants import Backend
 
@@ -27,8 +29,14 @@ class ShapeType(Enum):
     ELLIPSE = "ellipse"
 
 
+class ROIShape(ABC):
+    """Nominal base for all ROI shape records."""
+
+    shape_type: ShapeType
+
+
 @dataclass(frozen=True)
-class PolygonShape:
+class PolygonShape(ROIShape):
     """Polygon ROI shape defined by vertex coordinates."""
     coordinates: np.ndarray  # Nx2 array of (y, x) coordinates
     shape_type: ShapeType = field(default=ShapeType.POLYGON, init=False)
@@ -41,7 +49,7 @@ class PolygonShape:
 
 
 @dataclass(frozen=True)
-class PolylineShape:
+class PolylineShape(ROIShape):
     """Polyline ROI shape defined by path coordinates (open path, not closed polygon)."""
     coordinates: np.ndarray  # Nx2 array of (y, x) coordinates
     shape_type: ShapeType = field(default=ShapeType.POLYLINE, init=False)
@@ -54,7 +62,7 @@ class PolylineShape:
 
 
 @dataclass(frozen=True)
-class MaskShape:
+class MaskShape(ROIShape):
     """Binary mask ROI shape."""
     mask: np.ndarray  # 2D boolean array
     bbox: Tuple[int, int, int, int]  # (min_y, min_x, max_y, max_x)
@@ -68,7 +76,7 @@ class MaskShape:
 
 
 @dataclass(frozen=True)
-class PointShape:
+class PointShape(ROIShape):
     """Point ROI shape."""
     y: float
     x: float
@@ -76,7 +84,7 @@ class PointShape:
 
 
 @dataclass(frozen=True)
-class EllipseShape:
+class EllipseShape(ROIShape):
     """Ellipse ROI shape."""
     center_y: float
     center_x: float
@@ -95,14 +103,82 @@ class ROI:
         if not self.shapes:
             raise ValueError("ROI must have at least one shape")
         for shape in self.shapes:
-            if not hasattr(shape, "shape_type"):
-                raise ValueError(f"Shape {shape} must have shape_type attribute")
+            if not isinstance(shape, ROIShape):
+                raise ValueError(f"Shape {shape} must be an ROIShape")
+
+
+class ROIJsonShapeDecoder(ABC, metaclass=AutoRegisterMeta):
+    """Decode one serialized ROI shape variant."""
+
+    __registry_key__ = "shape_type"
+    __skip_if_no_key__ = True
+
+    shape_type: ClassVar[ShapeType | None] = None
+
+    @classmethod
+    def for_serialized_shape(cls, shape_dict: Dict[str, Any]) -> "ROIJsonShapeDecoder | None":
+        shape_type = shape_dict.get("type")
+        try:
+            shape_key = ShapeType(shape_type)
+        except ValueError:
+            logger.warning(f"Unknown shape type: {shape_type}, skipping")
+            return None
+        return cls.__registry__[shape_key]()
+
+    @abstractmethod
+    def decode(self, shape_dict: Dict[str, Any]) -> Any:
+        """Return the concrete ROI shape represented by ``shape_dict``."""
+
+
+class PolygonROIJsonShapeDecoder(ROIJsonShapeDecoder):
+    shape_type = ShapeType.POLYGON
+
+    def decode(self, shape_dict: Dict[str, Any]) -> PolygonShape:
+        return PolygonShape(coordinates=np.array(shape_dict["coordinates"]))
+
+
+class PolylineROIJsonShapeDecoder(ROIJsonShapeDecoder):
+    shape_type = ShapeType.POLYLINE
+
+    def decode(self, shape_dict: Dict[str, Any]) -> PolylineShape:
+        return PolylineShape(coordinates=np.array(shape_dict["coordinates"]))
+
+
+class MaskROIJsonShapeDecoder(ROIJsonShapeDecoder):
+    shape_type = ShapeType.MASK
+
+    def decode(self, shape_dict: Dict[str, Any]) -> MaskShape:
+        return MaskShape(
+            mask=np.array(shape_dict["mask"], dtype=bool),
+            bbox=tuple(shape_dict["bbox"]),
+        )
+
+
+class PointROIJsonShapeDecoder(ROIJsonShapeDecoder):
+    shape_type = ShapeType.POINT
+
+    def decode(self, shape_dict: Dict[str, Any]) -> PointShape:
+        return PointShape(y=shape_dict["y"], x=shape_dict["x"])
+
+
+class EllipseROIJsonShapeDecoder(ROIJsonShapeDecoder):
+    shape_type = ShapeType.ELLIPSE
+
+    def decode(self, shape_dict: Dict[str, Any]) -> EllipseShape:
+        return EllipseShape(
+            center_y=shape_dict["center_y"],
+            center_x=shape_dict["center_x"],
+            radius_y=shape_dict["radius_y"],
+            radius_x=shape_dict["radius_x"],
+        )
 
 
 def extract_rois_from_labeled_mask(
     labeled_mask: np.ndarray,
     min_area: int = 10,
     extract_contours: bool = True,
+    spatial_origin_yx: Optional[Tuple[int, int]] = None,
+    source_spatial_shape_yx: Optional[Tuple[int, int]] = None,
 ) -> List[ROI]:
     """Extract ROIs from a labeled segmentation mask."""
     from skimage import measure
@@ -117,19 +193,33 @@ def extract_rois_from_labeled_mask(
 
     regions = regionprops(labeled_mask)
     slices = find_objects(labeled_mask)
+    origin_y, origin_x = spatial_origin_yx or (0, 0)
 
     rois = []
     for region in regions:
         if region.area < min_area:
             continue
+        min_y, min_x, max_y, max_x = region.bbox
 
         metadata = {
             "label": int(region.label),
             "area": float(region.area),
             "perimeter": float(region.perimeter),
-            "centroid": tuple(float(c) for c in region.centroid),
-            "bbox": tuple(int(b) for b in region.bbox),
+            "centroid": (
+                float(region.centroid[0] + origin_y),
+                float(region.centroid[1] + origin_x),
+            ),
+            "bbox": (
+                int(min_y + origin_y),
+                int(min_x + origin_x),
+                int(max_y + origin_y),
+                int(max_x + origin_x),
+            ),
         }
+        if source_spatial_shape_yx is not None:
+            metadata["source_spatial_shape_yx"] = tuple(
+                int(value) for value in source_spatial_shape_yx
+            )
 
         shapes = []
         if extract_contours:
@@ -142,14 +232,14 @@ def extract_rois_from_labeled_mask(
                 contours = measure.find_contours(padded_mask, level=0.5)
                 offset_y = slice_y.start
                 offset_x = slice_x.start
-                padding_offset = np.array([offset_y, offset_x]) - 1
+                padding_offset = np.array([offset_y + origin_y, offset_x + origin_x]) - 1
                 for contour in contours:
                     if len(contour) >= 3:
                         contour_full = contour + padding_offset
                         shapes.append(PolygonShape(coordinates=contour_full))
         else:
             binary_mask = (labeled_mask == region.label)
-            shapes.append(MaskShape(mask=binary_mask, bbox=region.bbox))
+            shapes.append(MaskShape(mask=binary_mask, bbox=metadata["bbox"]))
 
         if shapes:
             rois.append(ROI(shapes=shapes, metadata=metadata))
@@ -203,31 +293,9 @@ def load_rois_from_json(json_path: Path) -> List[ROI]:
         metadata = roi_dict.get("metadata", {})
         shapes = []
         for shape_dict in roi_dict.get("shapes", []):
-            shape_type = shape_dict.get("type")
-
-            if shape_type == "polygon":
-                coordinates = np.array(shape_dict["coordinates"])
-                shapes.append(PolygonShape(coordinates=coordinates))
-            elif shape_type == "polyline":
-                coordinates = np.array(shape_dict["coordinates"])
-                shapes.append(PolylineShape(coordinates=coordinates))
-            elif shape_type == "mask":
-                mask = np.array(shape_dict["mask"], dtype=bool)
-                bbox = tuple(shape_dict["bbox"])
-                shapes.append(MaskShape(mask=mask, bbox=bbox))
-            elif shape_type == "point":
-                shapes.append(PointShape(y=shape_dict["y"], x=shape_dict["x"]))
-            elif shape_type == "ellipse":
-                shapes.append(
-                    EllipseShape(
-                        center_y=shape_dict["center_y"],
-                        center_x=shape_dict["center_x"],
-                        radius_y=shape_dict["radius_y"],
-                        radius_x=shape_dict["radius_x"],
-                    )
-                )
-            else:
-                logger.warning(f"Unknown shape type: {shape_type}, skipping")
+            decoder = ROIJsonShapeDecoder.for_serialized_shape(shape_dict)
+            if decoder is not None:
+                shapes.append(decoder.decode(shape_dict))
 
         if shapes:
             rois.append(ROI(shapes=shapes, metadata=metadata))

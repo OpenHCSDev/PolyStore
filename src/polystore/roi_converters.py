@@ -7,63 +7,184 @@ Provides a single source of truth for converting ROI objects to:
 """
 
 import logging
-from typing import Any, Dict, List, Tuple
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, ClassVar, Dict, List, Tuple
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta
 
-from .roi import EllipseShape, PointShape, PolygonShape, PolylineShape, ROI
-from .streaming_constants import NapariShapeType
+from .roi import EllipseShape, PointShape, PolygonShape, PolylineShape, ROI, ShapeType
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class NapariShapeTypeAlias:
+    """Inert alias from Napari wire shape names to ROI shape types."""
+
+    alias: str
+    shape_type: ShapeType
+
+
+NAPARI_SHAPE_TYPE_ALIASES = (
+    NapariShapeTypeAlias("path", ShapeType.POLYLINE),
+    NapariShapeTypeAlias("points", ShapeType.POINT),
+)
+
+
+class NapariShapeConverter(ABC, metaclass=AutoRegisterMeta):
+    """Registered conversion behavior for one ROI shape type."""
+
+    __registry_key__ = "shape_type"
+    __skip_if_no_key__ = True
+
+    shape_type: ClassVar[ShapeType | None] = None
+
+    @classmethod
+    def for_shape_dict(cls, shape_dict: Dict[str, Any]) -> "NapariShapeConverter":
+        return cls.__registry__[_shape_type_from_napari(shape_dict["type"])]()
+
+    def append_common_properties(
+        self,
+        metadata: Dict[str, Any],
+        properties: dict[str, list[Any]],
+        centroid: tuple[Any, Any],
+        *,
+        area: Any | None = None,
+    ) -> None:
+        properties["label"].append(metadata.get("label", ""))
+        properties["area"].append(metadata.get("area", 0) if area is None else area)
+        properties["centroid_y"].append(centroid[0])
+        properties["centroid_x"].append(centroid[1])
+
+    @abstractmethod
+    def add_dimensions(self, shape_dict: Dict[str, Any], prepend_dims: np.ndarray) -> np.ndarray:
+        """Add dimensions to a 2D shape to make it nD."""
+
+    @abstractmethod
+    def append_napari_format(
+        self,
+        shape_dict: Dict[str, Any],
+        napari_shapes: list[np.ndarray],
+        shape_types: list[str],
+        properties: dict[str, list[Any]],
+    ) -> None:
+        """Append this shape to a Napari layer payload."""
+
+
+def _shape_type_from_napari(shape_type: object) -> ShapeType:
+    if isinstance(shape_type, ShapeType):
+        return shape_type
+    value = str(shape_type.value) if isinstance(shape_type, Enum) else str(shape_type)
+    for alias in NAPARI_SHAPE_TYPE_ALIASES:
+        if alias.alias == value:
+            return alias.shape_type
+    return ShapeType(value)
+
+
+class CoordinateNapariShapeConverter(NapariShapeConverter):
+    """Shared converter for coordinate-list shapes."""
+
+    napari_shape_type: ClassVar[str]
+
+    def add_dimensions(self, shape_dict: Dict[str, Any], prepend_dims: np.ndarray) -> np.ndarray:
+        coordinates = np.array(shape_dict["coordinates"])
+        return np.hstack([np.tile(prepend_dims, (len(coordinates), 1)), coordinates])
+
+    def append_napari_format(
+        self,
+        shape_dict: Dict[str, Any],
+        napari_shapes: list[np.ndarray],
+        shape_types: list[str],
+        properties: dict[str, list[Any]],
+    ) -> None:
+        metadata = shape_dict.get("metadata", {})
+        napari_shapes.append(np.array(shape_dict["coordinates"]))
+        shape_types.append(self.napari_shape_type)
+        self.append_common_properties(
+            metadata,
+            properties,
+            metadata.get("centroid", (0, 0)),
+        )
+
+
+class PolygonNapariShapeConverter(CoordinateNapariShapeConverter):
+    shape_type = ShapeType.POLYGON
+    napari_shape_type = "polygon"
+
+
+class PolylineNapariShapeConverter(CoordinateNapariShapeConverter):
+    shape_type = ShapeType.POLYLINE
+    napari_shape_type = "path"
+
+
+class EllipseNapariShapeConverter(NapariShapeConverter):
+    shape_type = ShapeType.ELLIPSE
+
+    def add_dimensions(self, shape_dict: Dict[str, Any], prepend_dims: np.ndarray) -> np.ndarray:
+        center = shape_dict["center"]
+        radii = shape_dict["radii"]
+        corners = np.array(
+            [
+                [center[0] - radii[0], center[1] - radii[1]],
+                [center[0] - radii[0], center[1] + radii[1]],
+                [center[0] + radii[0], center[1] + radii[1]],
+                [center[0] + radii[0], center[1] - radii[1]],
+            ]
+        )
+        return np.hstack([np.tile(prepend_dims, (4, 1)), corners])
+
+    def append_napari_format(
+        self,
+        shape_dict: Dict[str, Any],
+        napari_shapes: list[np.ndarray],
+        shape_types: list[str],
+        properties: dict[str, list[Any]],
+    ) -> None:
+        metadata = shape_dict.get("metadata", {})
+        center = np.array(shape_dict["center"])
+        radii = np.array(shape_dict["radii"])
+        napari_shapes.append(np.array([center - radii, center + radii]))
+        shape_types.append("ellipse")
+        self.append_common_properties(
+            metadata,
+            properties,
+            metadata.get("centroid", (0, 0)),
+        )
+
+
+class PointNapariShapeConverter(NapariShapeConverter):
+    shape_type = ShapeType.POINT
+
+    def add_dimensions(self, shape_dict: Dict[str, Any], prepend_dims: np.ndarray) -> np.ndarray:
+        return np.concatenate([prepend_dims, shape_dict["coordinates"]]).reshape(1, -1)
+
+    def append_napari_format(
+        self,
+        shape_dict: Dict[str, Any],
+        napari_shapes: list[np.ndarray],
+        shape_types: list[str],
+        properties: dict[str, list[Any]],
+    ) -> None:
+        metadata = shape_dict.get("metadata", {})
+        coordinates = shape_dict["coordinates"]
+        napari_shapes.append(np.array([coordinates]))
+        shape_types.append("point")
+        self.append_common_properties(metadata, properties, coordinates, area=0)
 
 
 class NapariROIConverter:
     """Convert ROI objects to Napari shapes format."""
 
-    _SHAPE_DIMENSION_HANDLERS = {
-        "polygon": lambda shape_dict, prepend_dims: np.hstack(
-            [np.tile(prepend_dims, (len(shape_dict["coordinates"]), 1)), np.array(shape_dict["coordinates"])]
-        ),
-        "polyline": lambda shape_dict, prepend_dims: np.hstack(
-            [np.tile(prepend_dims, (len(shape_dict["coordinates"]), 1)), np.array(shape_dict["coordinates"])]
-        ),
-        "ellipse": lambda shape_dict, prepend_dims: np.hstack(
-            [
-                np.tile(prepend_dims, (4, 1)),
-                np.array(
-                    [
-                        [
-                            shape_dict["center"][0] - shape_dict["radii"][0],
-                            shape_dict["center"][1] - shape_dict["radii"][1],
-                        ],
-                        [
-                            shape_dict["center"][0] - shape_dict["radii"][0],
-                            shape_dict["center"][1] + shape_dict["radii"][1],
-                        ],
-                        [
-                            shape_dict["center"][0] + shape_dict["radii"][0],
-                            shape_dict["center"][1] + shape_dict["radii"][1],
-                        ],
-                        [
-                            shape_dict["center"][0] + shape_dict["radii"][0],
-                            shape_dict["center"][1] - shape_dict["radii"][1],
-                        ],
-                    ]
-                ),
-            ]
-        ),
-        "point": lambda shape_dict, prepend_dims: np.concatenate([prepend_dims, shape_dict["coordinates"]]).reshape(1, -1),
-    }
-
     @staticmethod
     def add_dimensions_to_shape(shape_dict: Dict[str, Any], prepend_dims: List[float]) -> np.ndarray:
         """Add dimensions to a 2D shape to make it nD."""
-        shape_type = shape_dict["type"]
-        shape_type_enum = NapariShapeType(shape_type) if isinstance(shape_type, str) else shape_type
-        handler = NapariROIConverter._SHAPE_DIMENSION_HANDLERS.get(shape_type_enum.value)
-        if handler is None:
-            raise ValueError(f"Unsupported shape type: {shape_type}")
-        return handler(shape_dict, np.array(prepend_dims))
+        return NapariShapeConverter.for_shape_dict(shape_dict).add_dimensions(
+            shape_dict,
+            np.array(prepend_dims),
+        )
 
     @staticmethod
     def rois_to_shapes(rois: List[ROI]) -> List[Dict[str, Any]]:
@@ -104,40 +225,12 @@ class NapariROIConverter:
         properties = {"label": [], "area": [], "centroid_y": [], "centroid_x": []}
 
         for shape_dict in shapes_data:
-            shape_type = shape_dict.get("type")
-            metadata = shape_dict.get("metadata", {})
-
-            if shape_type == "polygon":
-                coords = np.array(shape_dict["coordinates"])
-                napari_shapes.append(coords)
-                shape_types.append("polygon")
-                centroid = metadata.get("centroid", (0, 0))
-                properties["label"].append(metadata.get("label", ""))
-                properties["area"].append(metadata.get("area", 0))
-                properties["centroid_y"].append(centroid[0])
-                properties["centroid_x"].append(centroid[1])
-
-            elif shape_type == "ellipse":
-                center = np.array(shape_dict["center"])
-                radii = np.array(shape_dict["radii"])
-                corners = np.array([center - radii, center + radii])
-                napari_shapes.append(corners)
-                shape_types.append("ellipse")
-                centroid = metadata.get("centroid", (0, 0))
-                properties["label"].append(metadata.get("label", ""))
-                properties["area"].append(metadata.get("area", 0))
-                properties["centroid_y"].append(centroid[0])
-                properties["centroid_x"].append(centroid[1])
-
-            elif shape_type == "point":
-                coords = np.array([shape_dict["coordinates"]])
-                napari_shapes.append(coords)
-                shape_types.append("point")
-                point_coords = shape_dict["coordinates"]
-                properties["label"].append(metadata.get("label", ""))
-                properties["area"].append(0)
-                properties["centroid_y"].append(point_coords[0])
-                properties["centroid_x"].append(point_coords[1])
+            NapariShapeConverter.for_shape_dict(shape_dict).append_napari_format(
+                shape_dict,
+                napari_shapes,
+                shape_types,
+                properties,
+            )
 
         return napari_shapes, shape_types, properties
 

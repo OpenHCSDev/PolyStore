@@ -14,13 +14,7 @@ def normalize_component_layout(display_config: Any) -> tuple[dict[str, str], lis
         component_order = display_config["component_order"]
         return component_modes, component_order
 
-    component_order = list(display_config.COMPONENT_ORDER)
-    component_modes: dict[str, str] = {}
-    for component in component_order:
-        mode_field = f"{component}_mode"
-        mode_value = display_config.__getattribute__(mode_field)
-        component_modes[component] = mode_value.value
-    return component_modes, component_order
+    return display_config.component_modes(), list(display_config.COMPONENT_ORDER)
 
 
 def build_layer_key(
@@ -38,9 +32,4 @@ def build_layer_key(
 
     layer_key = "_".join(layer_key_parts) if layer_key_parts else "default_layer"
 
-    if data_type == StreamingDataType.SHAPES:
-        return f"{layer_key}_shapes"
-    if data_type == StreamingDataType.POINTS:
-        return f"{layer_key}_points"
-    return layer_key
-
+    return f"{layer_key}{data_type.napari_layer_suffix}"

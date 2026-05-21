@@ -31,11 +31,8 @@ class FijiStreamingBackend(StreamingBackend):
     """Fiji streaming backend with ZMQ publisher pattern (matches Napari architecture)."""
     _backend_type = Backend.FIJI_STREAM.value
 
-    # Configure ABC attributes
     VIEWER_TYPE = 'fiji'
     SHM_PREFIX = 'fiji_'
-
-    # __init__, _get_publisher, save, cleanup now inherited from ABC
 
     def _prepare_rois_data(self, data: Any, file_path: Union[str, Path]) -> dict:
         """
@@ -90,6 +87,7 @@ class FijiStreamingBackend(StreamingBackend):
         source = kwargs.get('source', 'unknown_source')  # Pre-built source value
         images_dir = kwargs.get('images_dir')  # Source image subdirectory for ROI mapping
         plate_path = kwargs.get('plate_path')
+        component_metadata = kwargs.get('component_metadata')
         logger.info(f"🏷️  FIJI BACKEND: plate_path = {plate_path}")
         logger.info(f"🏷️  FIJI BACKEND: microscope_handler = {microscope_handler}")
         display_payload_extra = {
@@ -108,6 +106,7 @@ class FijiStreamingBackend(StreamingBackend):
             display_config,
             self._prepare_batch_item,
             plate_path=plate_path,
+            component_metadata=component_metadata,
             component_names_kwargs={"log_prefix": "🏷️  FIJI BACKEND", "verbose": True},
             display_payload_extra=display_payload_extra,
             message_extra=message_extra,

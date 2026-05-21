@@ -37,6 +37,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "arraybridge>=0.2.9",
     "numpy>=1.26.0",
     "portalocker>=2.8.0",  # Cross-platform file locking
     "metaclass-registry",

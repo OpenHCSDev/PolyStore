@@ -20,7 +20,6 @@ from typing import Any, List, Union
 import zmq
 
 from .constants import Backend, TransportMode
-from .streaming_constants import StreamingDataType
 from .streaming import StreamingBackend
 from .roi_converters import NapariROIConverter
 from zmqruntime.transport import get_zmq_transport_url, coerce_transport_mode
@@ -32,11 +31,8 @@ class NapariStreamingBackend(StreamingBackend):
     """Napari streaming backend with automatic registration."""
     _backend_type = Backend.NAPARI_STREAM.value
 
-    # Configure ABC attributes
     VIEWER_TYPE = 'napari'
     SHM_PREFIX = 'napari_'
-
-    # __init__, _get_publisher, save, cleanup now inherited from ABC
 
     def _prepare_shapes_data(self, data: Any, file_path: Union[str, Path]) -> dict:
         """
@@ -57,7 +53,7 @@ class NapariStreamingBackend(StreamingBackend):
         }
 
     def _prepare_batch_item(self, data: Any, file_path: Union[str, Path], data_type):
-        if data_type in (StreamingDataType.SHAPES, StreamingDataType.POINTS):
+        if data_type.uses_napari_vector_payload:
             item_data = self._prepare_shapes_data(data, file_path)
             data_type_value = data_type.value
         else:
@@ -88,6 +84,7 @@ class NapariStreamingBackend(StreamingBackend):
         microscope_handler = kwargs['microscope_handler']
         source = kwargs.get('source', 'unknown_source')  # Pre-built source value
         plate_path = kwargs.get('plate_path')
+        component_metadata = kwargs.get('component_metadata')
         display_payload_extra = {
             "colormap": display_config.get_colormap_name(),
             "variable_size_handling": display_config.variable_size_handling.value
@@ -103,6 +100,7 @@ class NapariStreamingBackend(StreamingBackend):
             display_config,
             self._prepare_batch_item,
             plate_path=plate_path,
+            component_metadata=component_metadata,
             display_payload_extra=display_payload_extra,
         )
 

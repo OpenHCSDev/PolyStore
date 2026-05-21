@@ -15,6 +15,21 @@ class StreamingDataType(Enum):
     POINTS = "points"  # Napari points layer (e.g., skeleton tracings)
     ROIS = "rois"      # Fiji ROI payloads
 
+    @property
+    def uses_napari_vector_payload(self) -> bool:
+        """Whether napari should receive this type through vector layer payloads."""
+        return self in (type(self).SHAPES, type(self).POINTS)
+
+    @property
+    def napari_layer_suffix(self) -> str:
+        """Layer-key suffix contributed by this data type."""
+        return {
+            type(self).IMAGE: "",
+            type(self).SHAPES: "_shapes",
+            type(self).POINTS: "_points",
+            type(self).ROIS: "",
+        }[self]
+
 
 class NapariShapeType(Enum):
     """Napari shape types for ROI visualization."""

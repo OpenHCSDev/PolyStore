@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Set, Union
 import numpy as np
+from arraybridge import convert_memory, detect_memory_type
+from arraybridge.types import MemoryType as ArrayBridgeMemoryType
 
 from ..base import DataSink
 from ..constants import TransportMode
@@ -20,30 +22,60 @@ from ..streaming_constants import StreamingDataType
 from ..roi import ROI, PointShape
 from ..zmq_config import POLYSTORE_ZMQ_CONFIG
 from zmqruntime.ack_listener import GlobalAckListener
-from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
+from zmqruntime.transport import coerce_transport_mode
 
 logger = logging.getLogger(__name__)
+
+
+PrepareStreamingItem = Callable[[Any, Union[str, Path], Any], tuple[dict, str]]
 
 
 @dataclass(frozen=True)
 class StreamingComponentMetadata:
     """Message metadata for one streamed item."""
 
-    parsed_filename_metadata: Mapping[str, Any] | None
+    parsed_filename_metadata: Mapping[str, Any]
     source: str
 
     def to_payload(self) -> dict[str, Any]:
-        if self.parsed_filename_metadata is None:
-            metadata: dict[str, Any] = {}
-        elif isinstance(self.parsed_filename_metadata, Mapping):
+        if isinstance(self.parsed_filename_metadata, Mapping):
             metadata = dict(self.parsed_filename_metadata)
         else:
             raise TypeError(
-                "Streaming filename parser must return a mapping or None, "
+                "Streaming component metadata must be a mapping, "
                 f"got {type(self.parsed_filename_metadata).__name__}."
             )
         metadata["source"] = self.source
         return metadata
+
+
+@dataclass(frozen=True)
+class StreamingBatchRequest:
+    """Shared provenance for one streaming batch."""
+
+    data_list: List[Any]
+    file_paths: List[Union[str, Path]]
+    microscope_handler: Any
+    source: str
+    prepare_item: PrepareStreamingItem
+    component_metadata: Mapping[str, Any] | None = None
+
+
+class StreamingPayloadMemoryAuthority:
+    """Memory conversion authority for streamable image payloads."""
+
+    @staticmethod
+    def to_numpy(data: Any) -> np.ndarray:
+        if isinstance(data, np.ndarray):
+            return data
+        if isinstance(data, (list, tuple)):
+            return np.asarray(data)
+        return convert_memory(
+            data,
+            detect_memory_type(data),
+            ArrayBridgeMemoryType.NUMPY.value,
+            gpu_id=0,
+        )
 
 
 class StreamingBackend(DataSink):
@@ -126,55 +158,13 @@ class StreamingBackend(DataSink):
         self._shared_memory_blocks = {}
         self._transport_config = transport_config or POLYSTORE_ZMQ_CONFIG
 
-    def _get_publisher(self, host: str, port: int, transport_mode: TransportMode, transport_config=None):
-        """
-        Lazy initialization of ZeroMQ publisher (common for all streaming backends).
-
-        Uses REQ socket for Fiji (synchronous request/reply with blocking)
-        and PUB socket for Napari (broadcast pattern).
-
-        Args:
-            host: Host to connect to (ignored for IPC mode)
-            port: Port to connect to
-            transport_mode: IPC or TCP transport (required - comes from config)
-
-        Returns:
-            ZeroMQ publisher socket
-        """
-        # Generate transport URL using centralized function
-        transport_config = transport_config or self._transport_config
-        url = get_zmq_transport_url(
-            port,
-            host=host,
-            mode=coerce_transport_mode(transport_mode),
-            config=transport_config,
-        )
-
-        key = url  # Use URL as key instead of host:port
-        if key not in self._publishers:
-            try:
-                import zmq
-                if self._context is None:
-                    self._context = zmq.Context()
-
-                # Use REQ socket for all viewers (synchronous request/reply)
-                # All viewers must send acknowledgment after processing
-                publisher = self._context.socket(zmq.REQ)
-
-                publisher.connect(url)
-                socket_name = "REQ"
-                logger.info(f"{self.VIEWER_TYPE} streaming {socket_name} socket connected to {url}")
-                time.sleep(0.1)
-                self._publishers[key] = publisher
-
-            except ImportError:
-                logger.error("ZeroMQ not available - streaming disabled")
-                raise RuntimeError("ZeroMQ required for streaming")
-
-        return self._publishers[key]
-
-    def _parse_component_metadata(self, file_path: Union[str, Path], microscope_handler,
-                                  source: str) -> dict:
+    def _parse_component_metadata(
+        self,
+        file_path: Union[str, Path],
+        microscope_handler,
+        source: str,
+        component_metadata: Mapping[str, Any] | None = None,
+    ) -> dict:
         """
         Parse component metadata from filename (common for all streaming backends).
 
@@ -187,10 +177,17 @@ class StreamingBackend(DataSink):
             Component metadata dict with source added
         """
         filename = os.path.basename(str(file_path))
-        return StreamingComponentMetadata(
-            microscope_handler.parser.parse_filename(filename),
-            source,
-        ).to_payload()
+        parsed_metadata = (
+            component_metadata
+            if component_metadata is not None
+            else microscope_handler.parser.parse_filename(filename)
+        )
+        if parsed_metadata is None:
+            raise ValueError(
+                "Streaming component metadata requires explicit component_metadata "
+                f"or a parser-readable filename; got {filename!r}."
+            )
+        return StreamingComponentMetadata(parsed_metadata, source).to_payload()
 
     def _detect_data_type(self, data: Any):
         """
@@ -226,9 +223,7 @@ class StreamingBackend(DataSink):
         Returns:
             Dict with shared memory metadata
         """
-        # Convert to numpy
-        np_data = data.cpu().numpy() if hasattr(data, 'cpu') else \
-                  data.get() if hasattr(data, 'get') else np.asarray(data)
+        np_data = StreamingPayloadMemoryAuthority.to_numpy(data)
 
         # Create shared memory with hash-based naming to avoid "File name too long" errors
         # Hash the timestamp and object ID to create a short, unique name
@@ -289,13 +284,7 @@ class StreamingBackend(DataSink):
             tracker.register_sent(image_id)
 
     def _build_component_modes(self, display_config) -> dict:
-        component_modes = {}
-        for comp_name in display_config.COMPONENT_ORDER:
-            mode_field = f"{comp_name}_mode"
-            if hasattr(display_config, mode_field):
-                mode = getattr(display_config, mode_field)
-                component_modes[comp_name] = mode.value
-        return component_modes
+        return display_config.component_modes()
 
     def _build_display_config_base(self, display_config, component_modes: dict) -> dict:
         return {
@@ -324,20 +313,14 @@ class StreamingBackend(DataSink):
 
         try:
             for comp_name in component_names:
-                method_name = f"get_{comp_name}_values"
-                method = getattr(microscope_handler.metadata_handler, method_name, None)
-                if callable(method):
-                    try:
-                        metadata = method(plate_path)
-                        if verbose and log_prefix:
-                            logger.info(f"{log_prefix}: Got {comp_name} metadata: {metadata}")
-                        if metadata:
-                            component_names_metadata[comp_name] = metadata
-                    except Exception as e:
-                        if verbose and log_prefix:
-                            logger.warning(f"{log_prefix}: Could not get {comp_name} metadata: {e}", exc_info=True)
-                elif verbose and log_prefix:
-                    logger.info(f"{log_prefix}: No method {method_name} on metadata_handler")
+                metadata = microscope_handler.metadata_handler.get_component_values(
+                    plate_path,
+                    comp_name,
+                )
+                if verbose and log_prefix:
+                    logger.info(f"{log_prefix}: Got {comp_name} metadata: {metadata}")
+                if metadata:
+                    component_names_metadata[comp_name] = metadata
         except Exception as e:
             if verbose and log_prefix:
                 logger.warning(f"{log_prefix}: Could not get component metadata: {e}", exc_info=True)
@@ -346,24 +329,23 @@ class StreamingBackend(DataSink):
 
     def _prepare_batch_items(
         self,
-        data_list: List[Any],
-        file_paths: List[Union[str, Path]],
-        microscope_handler,
-        source: str,
-        prepare_item: Callable[[Any, Union[str, Path], Any], tuple[dict, str]],
+        request: StreamingBatchRequest,
     ) -> tuple[list[dict], list[str]]:
         batch_images = []
         image_ids = []
 
-        for data, file_path in zip(data_list, file_paths):
+        for data, file_path in zip(request.data_list, request.file_paths):
             image_id = str(uuid.uuid4())
             image_ids.append(image_id)
 
             data_type = self._detect_data_type(data)
             component_metadata = self._parse_component_metadata(
-                file_path, microscope_handler, source
+                file_path,
+                request.microscope_handler,
+                request.source,
+                request.component_metadata,
             )
-            item_data, data_type_value = prepare_item(data, file_path, data_type)
+            item_data, data_type_value = request.prepare_item(data, file_path, data_type)
 
             batch_images.append(
                 {
@@ -383,9 +365,10 @@ class StreamingBackend(DataSink):
         microscope_handler,
         source: str,
         display_config,
-        prepare_item: Callable[[Any, Union[str, Path], Any], tuple[dict, str]],
+        prepare_item: PrepareStreamingItem,
         plate_path: Union[str, Path, None] = None,
         component_names_kwargs: dict | None = None,
+        component_metadata: Mapping[str, Any] | None = None,
         display_payload_extra: dict | None = None,
         message_extra: dict | None = None,
     ) -> tuple[dict, list[dict], list[str]]:
@@ -393,11 +376,14 @@ class StreamingBackend(DataSink):
             raise ValueError("data_list and file_paths must have the same length")
 
         batch_images, image_ids = self._prepare_batch_items(
-            data_list,
-            file_paths,
-            microscope_handler,
-            source,
-            prepare_item,
+            StreamingBatchRequest(
+                data_list=data_list,
+                file_paths=file_paths,
+                microscope_handler=microscope_handler,
+                source=source,
+                prepare_item=prepare_item,
+                component_metadata=component_metadata,
+            )
         )
 
         component_modes = self._build_component_modes(display_config)
