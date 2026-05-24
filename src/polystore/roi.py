@@ -107,6 +107,167 @@ class ROI:
                 raise ValueError(f"Shape {shape} must be an ROIShape")
 
 
+@dataclass(frozen=True, slots=True)
+class LabeledMaskROIExtractionRequest:
+    """Request to extract ROIs from a labeled mask or stack."""
+
+    labeled_mask: np.ndarray
+    min_area: int = 10
+    extract_contours: bool = True
+    spatial_origin_yx: Optional[Tuple[int, int]] = None
+    source_spatial_shape_yx: Optional[Tuple[int, int]] = None
+
+
+class LabeledMaskROIExtractor(ABC, metaclass=AutoRegisterMeta):
+    """Registered extraction behavior for one labeled-mask dimensional family."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_request(
+        cls,
+        request: LabeledMaskROIExtractionRequest,
+    ) -> "LabeledMaskROIExtractor":
+        for extractor_type in cls.__registry__.values():
+            extractor = extractor_type()
+            if extractor.accepts(request.labeled_mask):
+                return extractor
+        raise ValueError(
+            "No ROI extractor registered for labeled mask shape "
+            f"{request.labeled_mask.shape}."
+        )
+
+    @abstractmethod
+    def accepts(self, labeled_mask: np.ndarray) -> bool:
+        """Return whether this extractor owns the mask dimensionality."""
+
+    @abstractmethod
+    def extract(self, request: LabeledMaskROIExtractionRequest) -> List[ROI]:
+        """Extract ROIs from the request."""
+
+
+class TwoDimensionalLabeledMaskROIExtractor(LabeledMaskROIExtractor):
+    """Extract ROIs from a single 2D labeled mask."""
+
+    def accepts(self, labeled_mask: np.ndarray) -> bool:
+        return labeled_mask.ndim == 2
+
+    def extract(self, request: LabeledMaskROIExtractionRequest) -> List[ROI]:
+        from skimage import measure
+        from skimage.measure import regionprops
+        from scipy.ndimage import find_objects
+
+        labeled_mask = request.labeled_mask
+        if not np.issubdtype(labeled_mask.dtype, np.integer):
+            labeled_mask = labeled_mask.astype(np.int32)
+
+        regions = regionprops(labeled_mask)
+        slices = find_objects(labeled_mask)
+        origin_y, origin_x = request.spatial_origin_yx or (0, 0)
+
+        rois = []
+        for region in regions:
+            if region.area < request.min_area:
+                continue
+            min_y, min_x, max_y, max_x = region.bbox
+
+            metadata = {
+                "label": int(region.label),
+                "area": float(region.area),
+                "perimeter": float(region.perimeter),
+                "centroid": (
+                    float(region.centroid[0] + origin_y),
+                    float(region.centroid[1] + origin_x),
+                ),
+                "bbox": (
+                    int(min_y + origin_y),
+                    int(min_x + origin_x),
+                    int(max_y + origin_y),
+                    int(max_x + origin_x),
+                ),
+            }
+            if request.source_spatial_shape_yx is not None:
+                metadata["source_spatial_shape_yx"] = tuple(
+                    int(value) for value in request.source_spatial_shape_yx
+                )
+
+            shapes = []
+            if request.extract_contours:
+                label_idx = region.label - 1
+                if label_idx < len(slices) and slices[label_idx] is not None:
+                    slice_y, slice_x = slices[label_idx]
+                    cropped_mask = labeled_mask[slice_y, slice_x]
+                    binary_mask = (cropped_mask == region.label).astype(np.uint8)
+                    padded_mask = np.pad(binary_mask, pad_width=1, mode="constant", constant_values=0)
+                    contours = measure.find_contours(padded_mask, level=0.5)
+                    offset_y = slice_y.start
+                    offset_x = slice_x.start
+                    padding_offset = np.array([offset_y + origin_y, offset_x + origin_x]) - 1
+                    for contour in contours:
+                        if len(contour) >= 3:
+                            contour_full = contour + padding_offset
+                            shapes.append(PolygonShape(coordinates=contour_full))
+            else:
+                binary_mask = labeled_mask == region.label
+                shapes.append(MaskShape(mask=binary_mask, bbox=metadata["bbox"]))
+
+            if shapes:
+                rois.append(ROI(shapes=shapes, metadata=metadata))
+
+        logger.info(f"Extracted {len(rois)} ROIs from labeled mask")
+        return rois
+
+
+class NonSpatialLabeledMaskROIExtractor(LabeledMaskROIExtractor):
+    """Treat scalar and otherwise non-spatial label payloads as empty ROI sets."""
+
+    def accepts(self, labeled_mask: np.ndarray) -> bool:
+        return labeled_mask.ndim < 2
+
+    def extract(self, request: LabeledMaskROIExtractionRequest) -> List[ROI]:
+        return []
+
+
+class StackedLabeledMaskROIExtractor(LabeledMaskROIExtractor):
+    """Extract ROIs from all 2D planes in a labeled-mask stack."""
+
+    def accepts(self, labeled_mask: np.ndarray) -> bool:
+        return labeled_mask.ndim > 2
+
+    def extract(self, request: LabeledMaskROIExtractionRequest) -> List[ROI]:
+        stack = request.labeled_mask
+        plane_shape = stack.shape[-2:]
+        leading_shape = stack.shape[:-2]
+        rois: list[ROI] = []
+        for plane_indices in np.ndindex(leading_shape):
+            plane_request = LabeledMaskROIExtractionRequest(
+                labeled_mask=stack[plane_indices],
+                min_area=request.min_area,
+                extract_contours=request.extract_contours,
+                spatial_origin_yx=request.spatial_origin_yx,
+                source_spatial_shape_yx=request.source_spatial_shape_yx or plane_shape,
+            )
+            for roi in TwoDimensionalLabeledMaskROIExtractor().extract(plane_request):
+                rois.append(self._with_plane_metadata(roi, plane_indices, leading_shape))
+        return rois
+
+    @staticmethod
+    def _with_plane_metadata(
+        roi: ROI,
+        plane_indices: tuple[int, ...],
+        leading_shape: tuple[int, ...],
+    ) -> ROI:
+        return ROI(
+            shapes=roi.shapes,
+            metadata={
+                **roi.metadata,
+                "plane_indices": tuple(int(index) for index in plane_indices),
+                "plane_shape": tuple(int(size) for size in leading_shape),
+            },
+        )
+
+
 class ROIJsonShapeDecoder(ABC, metaclass=AutoRegisterMeta):
     """Decode one serialized ROI shape variant."""
 
@@ -181,71 +342,14 @@ def extract_rois_from_labeled_mask(
     source_spatial_shape_yx: Optional[Tuple[int, int]] = None,
 ) -> List[ROI]:
     """Extract ROIs from a labeled segmentation mask."""
-    from skimage import measure
-    from skimage.measure import regionprops
-    from scipy.ndimage import find_objects
-
-    if labeled_mask.ndim != 2:
-        raise ValueError(f"Labeled mask must be 2D, got shape {labeled_mask.shape}")
-
-    if not np.issubdtype(labeled_mask.dtype, np.integer):
-        labeled_mask = labeled_mask.astype(np.int32)
-
-    regions = regionprops(labeled_mask)
-    slices = find_objects(labeled_mask)
-    origin_y, origin_x = spatial_origin_yx or (0, 0)
-
-    rois = []
-    for region in regions:
-        if region.area < min_area:
-            continue
-        min_y, min_x, max_y, max_x = region.bbox
-
-        metadata = {
-            "label": int(region.label),
-            "area": float(region.area),
-            "perimeter": float(region.perimeter),
-            "centroid": (
-                float(region.centroid[0] + origin_y),
-                float(region.centroid[1] + origin_x),
-            ),
-            "bbox": (
-                int(min_y + origin_y),
-                int(min_x + origin_x),
-                int(max_y + origin_y),
-                int(max_x + origin_x),
-            ),
-        }
-        if source_spatial_shape_yx is not None:
-            metadata["source_spatial_shape_yx"] = tuple(
-                int(value) for value in source_spatial_shape_yx
-            )
-
-        shapes = []
-        if extract_contours:
-            label_idx = region.label - 1
-            if label_idx < len(slices) and slices[label_idx] is not None:
-                slice_y, slice_x = slices[label_idx]
-                cropped_mask = labeled_mask[slice_y, slice_x]
-                binary_mask = (cropped_mask == region.label).astype(np.uint8)
-                padded_mask = np.pad(binary_mask, pad_width=1, mode="constant", constant_values=0)
-                contours = measure.find_contours(padded_mask, level=0.5)
-                offset_y = slice_y.start
-                offset_x = slice_x.start
-                padding_offset = np.array([offset_y + origin_y, offset_x + origin_x]) - 1
-                for contour in contours:
-                    if len(contour) >= 3:
-                        contour_full = contour + padding_offset
-                        shapes.append(PolygonShape(coordinates=contour_full))
-        else:
-            binary_mask = (labeled_mask == region.label)
-            shapes.append(MaskShape(mask=binary_mask, bbox=metadata["bbox"]))
-
-        if shapes:
-            rois.append(ROI(shapes=shapes, metadata=metadata))
-
-    logger.info(f"Extracted {len(rois)} ROIs from labeled mask")
-    return rois
+    request = LabeledMaskROIExtractionRequest(
+        labeled_mask=np.asarray(labeled_mask),
+        min_area=min_area,
+        extract_contours=extract_contours,
+        spatial_origin_yx=spatial_origin_yx,
+        source_spatial_shape_yx=source_spatial_shape_yx,
+    )
+    return LabeledMaskROIExtractor.for_request(request).extract(request)
 
 
 def _get_backend_from_filemanager(filemanager: Any, backend: Union[str, Backend]):
