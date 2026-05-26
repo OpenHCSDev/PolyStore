@@ -19,6 +19,7 @@ class Backend(Enum):
     FIJI_STREAM = "fiji_stream"
     OMERO_LOCAL = "omero_local"
     VIRTUAL_WORKSPACE = "virtual_workspace"
+    BIOFORMATS = "bioformats"
 
 
 class TransportMode(Enum):

@@ -74,7 +74,7 @@ def create_storage_registry() -> Dict[str, DataSink]:
 
     # Backends that require context-specific initialization (e.g., plate_root)
     # These are registered lazily when needed, not at startup
-    SKIP_BACKENDS = {'virtual_workspace', 'omero_local'}
+    SKIP_BACKENDS = {'virtual_workspace', 'omero_local', 'bioformats'}
 
     registry = {}
     for backend_type in STORAGE_BACKENDS.keys():
@@ -157,4 +157,3 @@ def cleanup_all_backends() -> None:
 
     _backend_instances.clear()
     logger.info("All backend instances cleaned up")
-
