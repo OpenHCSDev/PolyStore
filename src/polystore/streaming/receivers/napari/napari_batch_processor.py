@@ -1,7 +1,26 @@
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class NapariBatchDisplayRequest:
+    """Nominal request for one debounced Napari display update."""
+
+    layer_key: str
+    items: List[Dict[str, Any]]
+    display_payload: object
+    component_names_metadata: Dict[str, Any]
+
+    def dispatch_to(self, napari_server) -> None:
+        napari_server.display_layer_batch(
+            layer_key=self.layer_key,
+            items=self.items,
+            display_payload=self.display_payload,
+            component_names_metadata=self.component_names_metadata,
+        )
 
 
 class NapariBatchProcessor:
@@ -43,7 +62,7 @@ class NapariBatchProcessor:
         self,
         layer_key: str,
         items: List[Dict[str, Any]],
-        display_config: Dict[str, Any],
+        display_payload: object,
         component_names_metadata: Dict[str, Any],
     ):
         """
@@ -52,17 +71,15 @@ class NapariBatchProcessor:
         Args:
             layer_key: Unique identifier for the layer
             items: List of items to add (images or ROIs)
-            display_config: Display configuration dict
+            display_payload: Viewer-owned display configuration object
             component_names_metadata: Component name mappings for dimension labels
         """
-        self._process_batch(
-            items,
-            {
-                "display_config": display_config,
-                "component_names_metadata": component_names_metadata,
-                "layer_key": layer_key,
-            },
-        )
+        NapariBatchDisplayRequest(
+            layer_key=layer_key,
+            items=items,
+            display_payload=display_payload,
+            component_names_metadata=component_names_metadata,
+        ).dispatch_to(self.napari_server)
         logger.debug(
             "NapariBatchProcessor: Added %d items to batch for layer '%s'",
             len(items),
@@ -71,12 +88,3 @@ class NapariBatchProcessor:
 
     def flush(self) -> None:
         """Compatibility no-op; OpenHCS owns the Qt-thread debounce timer."""
-
-    def _process_batch(self, items: List[Dict[str, Any]], context: Dict[str, Any]) -> None:
-        """Process callback used by shared debounced batch engine."""
-        self.napari_server.display_layer_batch(
-            layer_key=context["layer_key"],
-            items=items,
-            display_config=context["display_config"],
-            component_names_metadata=context["component_names_metadata"],
-        )

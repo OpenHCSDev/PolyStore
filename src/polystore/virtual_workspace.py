@@ -3,15 +3,131 @@
 import logging
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar, Dict, List, Mapping, Optional, Set, Union
 from fnmatch import fnmatch
 
 from .disk import DiskStorageBackend
 from .metadata_writer import get_metadata_path
 from .exceptions import StorageResolutionError
 from .base import ReadOnlyBackend
+from .constants import Backend
+from .registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
+
+
+class VirtualWorkspaceSourceRefResolver(ABC, metaclass=AutoRegisterMeta):
+    """Nominal loader family for virtual-workspace source references."""
+
+    __registry_key__ = "resolver_key"
+    __skip_if_no_key__ = True
+    resolver_key: ClassVar[str | None] = None
+    priority: ClassVar[int]
+
+    @classmethod
+    def for_ref(cls, source_ref: Any) -> "VirtualWorkspaceSourceRefResolver":
+        for resolver_type in sorted(
+            cls.__registry__.values(),
+            key=lambda registered_type: registered_type.priority,
+        ):
+            resolver = resolver_type()
+            if resolver.accepts(source_ref):
+                return resolver
+        raise StorageResolutionError(
+            f"Unsupported virtual workspace source reference: {source_ref!r}"
+        )
+
+    @abstractmethod
+    def accepts(self, source_ref: Any) -> bool:
+        """Return whether this resolver owns the reference shape."""
+
+    @abstractmethod
+    def source_path(self, plate_root: Path, source_ref: Any) -> Path:
+        """Return the concrete source path for existence and diagnostics."""
+
+    @abstractmethod
+    def load(
+        self,
+        disk_backend: DiskStorageBackend,
+        plate_root: Path,
+        source_ref: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Load the payload addressed by this source reference."""
+
+
+class PathSourceRefResolver(VirtualWorkspaceSourceRefResolver):
+    """Resolve legacy string path mappings."""
+
+    resolver_key = "path"
+    priority = 100
+
+    def accepts(self, source_ref: Any) -> bool:
+        return isinstance(source_ref, (str, Path))
+
+    def source_path(self, plate_root: Path, source_ref: Any) -> Path:
+        path = Path(source_ref)
+        return path if path.is_absolute() else plate_root / path
+
+    def load(
+        self,
+        disk_backend: DiskStorageBackend,
+        plate_root: Path,
+        source_ref: Any,
+        **kwargs: Any,
+    ) -> Any:
+        return disk_backend.load(self.source_path(plate_root, source_ref), **kwargs)
+
+
+class DiskSourceRefResolver(VirtualWorkspaceSourceRefResolver):
+    """Resolve structured disk refs, including single-plane TIFF pages."""
+
+    resolver_key = "disk"
+    priority = 10
+
+    def accepts(self, source_ref: Any) -> bool:
+        return (
+            isinstance(source_ref, Mapping)
+            and source_ref.get("backend", Backend.DISK.value) == Backend.DISK.value
+            and isinstance(source_ref.get("source_path"), (str, Path))
+        )
+
+    def source_path(self, plate_root: Path, source_ref: Any) -> Path:
+        path = Path(source_ref["source_path"])
+        return path if path.is_absolute() else plate_root / path
+
+    def load(
+        self,
+        disk_backend: DiskStorageBackend,
+        plate_root: Path,
+        source_ref: Any,
+        **kwargs: Any,
+    ) -> Any:
+        payload = disk_backend.load(self.source_path(plate_root, source_ref), **kwargs)
+        plane_index = source_ref.get("plane_index")
+        if plane_index is None:
+            return payload
+        return _payload_plane(payload, int(plane_index), source_ref)
+
+
+def _payload_plane(payload: Any, plane_index: int, source_ref: Mapping[str, Any]) -> Any:
+    if not hasattr(payload, "ndim") or not hasattr(payload, "shape"):
+        raise StorageResolutionError(
+            f"Source ref {source_ref!r} requested plane {plane_index}, but the loaded "
+            f"payload has no array shape."
+        )
+    if payload.ndim < 3:
+        raise StorageResolutionError(
+            f"Source ref {source_ref!r} requested plane {plane_index}, but loaded "
+            f"payload shape {payload.shape!r} is not a stack."
+        )
+    if plane_index < 0 or plane_index >= payload.shape[0]:
+        raise StorageResolutionError(
+            f"Source ref {source_ref!r} requested plane {plane_index}, but loaded "
+            f"payload shape is {payload.shape!r}."
+        )
+    return payload[plane_index]
 
 
 class VirtualWorkspaceBackend(ReadOnlyBackend):
@@ -53,7 +169,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
         """
         self.plate_root = Path(plate_root)
         self.disk_backend = DiskStorageBackend()
-        self._mapping_cache: Optional[Dict[str, str]] = None
+        self._mapping_cache: Optional[Dict[str, Any]] = None
         self._cache_mtime: Optional[float] = None
 
         # Load mapping eagerly - fail loud if metadata missing
@@ -76,7 +192,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
         normalized = path_str.replace('\\', '/')
         return '' if normalized == '.' else normalized
     
-    def _load_mapping(self) -> Dict[str, str]:
+    def _load_mapping(self) -> Dict[str, Any]:
         """
         Load workspace_mapping from metadata with mtime-based caching.
         
@@ -122,7 +238,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
         logger.info(f"Loaded {len(combined_mapping)} mappings for {self.plate_root}")
         return combined_mapping
     
-    def _resolve_path(self, path: Union[str, Path]) -> str:
+    def _resolve_ref(self, path: Union[str, Path]) -> Any:
         """
         Resolve virtual path to real plate path using plate-relative mapping.
 
@@ -163,20 +279,30 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
                 f"This path must be accessed through the virtual workspace mapping."
             )
 
-        real_relative = self._mapping_cache[relative_str]
-        real_absolute = self.plate_root / real_relative
-        logger.debug(f"Resolved virtual → real: {relative_str} → {real_relative}")
-        return str(real_absolute)
+        source_ref = self._mapping_cache[relative_str]
+        logger.debug("Resolved virtual source ref: %s -> %r", relative_str, source_ref)
+        return source_ref
+
+    def _resolve_path(self, path: Union[str, Path]) -> str:
+        """Resolve a virtual path to the concrete source path for diagnostics."""
+        source_ref = self._resolve_ref(path)
+        resolver = VirtualWorkspaceSourceRefResolver.for_ref(source_ref)
+        return str(resolver.source_path(self.plate_root, source_ref))
     
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
         """Load file from virtual workspace."""
-        real_path = self._resolve_path(file_path)
-        return self.disk_backend.load(real_path, **kwargs)
+        source_ref = self._resolve_ref(file_path)
+        resolver = VirtualWorkspaceSourceRefResolver.for_ref(source_ref)
+        return resolver.load(
+            self.disk_backend,
+            self.plate_root,
+            source_ref,
+            **kwargs,
+        )
     
     def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
         """Load multiple files from virtual workspace."""
-        real_paths = [self._resolve_path(fp) for fp in file_paths]
-        return self.disk_backend.load_batch(real_paths, **kwargs)
+        return [self.load(file_path, **kwargs) for file_path in file_paths]
     
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False,

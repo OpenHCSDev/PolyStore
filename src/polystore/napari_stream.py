@@ -22,9 +22,40 @@ import zmq
 from .constants import Backend, TransportMode
 from .streaming import StreamingBackend
 from .roi_converters import NapariROIConverter
+from .streaming.viewer_transport import (
+    ViewerAckPolicy,
+    ViewerStreamKwargs,
+    ViewerTransportConfigAuthority,
+    ViewerTransportDefaults,
+)
 from zmqruntime.transport import get_zmq_transport_url, coerce_transport_mode
 
 logger = logging.getLogger(__name__)
+NAPARI_TRANSPORT_DEFAULTS = ViewerTransportDefaults()
+NAPARI_ACK_POLICY = ViewerAckPolicy(
+    viewer_name="Napari",
+    timeout_ms=NAPARI_TRANSPORT_DEFAULTS.ack_timeout_ms,
+)
+
+
+class NapariDisplayPayload:
+    """Display payload projection for Napari stream messages."""
+
+    @staticmethod
+    def variable_size_handling_value(display_config):
+        if not hasattr(display_config, "variable_size_handling"):
+            return None
+        variable_size_handling = display_config.variable_size_handling
+        if variable_size_handling is None:
+            return None
+        return variable_size_handling.value
+
+    @classmethod
+    def from_display_config(cls, display_config) -> dict[str, Any]:
+        return {
+            "colormap": display_config.get_colormap_name(),
+            "variable_size_handling": cls.variable_size_handling_value(display_config),
+        }
 
 
 class NapariStreamingBackend(StreamingBackend):
@@ -75,52 +106,47 @@ class NapariStreamingBackend(StreamingBackend):
         if not data_list:
             return
 
-        # Extract kwargs using generic polymorphic names
-        host = kwargs.get('host', 'localhost')
-        port = kwargs['port']
-        transport_mode = kwargs['transport_mode']
-        transport_config = kwargs.get('transport_config')
-        display_config = kwargs['display_config']
-        microscope_handler = kwargs['microscope_handler']
-        source = kwargs.get('source', 'unknown_source')  # Pre-built source value
-        plate_path = kwargs.get('plate_path')
-        component_metadata = kwargs.get('component_metadata')
-        display_payload_extra = {
-            "colormap": display_config.get_colormap_name(),
-            "variable_size_handling": display_config.variable_size_handling.value
-            if hasattr(display_config, "variable_size_handling") and display_config.variable_size_handling
-            else None,
-        }
+        stream_request = ViewerStreamKwargs.from_kwargs(
+            kwargs,
+            NAPARI_TRANSPORT_DEFAULTS,
+        )
+        display_payload_extra = NapariDisplayPayload.from_display_config(
+            stream_request.display_config
+        )
 
         message, batch_images, image_ids = self._build_batch_message(
             data_list,
             file_paths,
-            microscope_handler,
-            source,
-            display_config,
+            stream_request.microscope_handler,
+            stream_request.source,
+            stream_request.display_config,
             self._prepare_batch_item,
-            plate_path=plate_path,
-            component_metadata=component_metadata,
+            plate_path=stream_request.plate_path,
+            component_metadata=stream_request.component_metadata,
+            component_metadata_by_path=stream_request.component_metadata_by_path,
             display_payload_extra=display_payload_extra,
         )
 
         # Register sent images with queue tracker BEFORE sending
         # This prevents race condition with IPC mode where acks arrive before registration
         self._register_with_queue_tracker(
-            port,
+            stream_request.port,
             image_ids,
-            transport_mode=transport_mode,
-            transport_config=transport_config,
+            transport_mode=stream_request.transport_mode,
+            transport_config=stream_request.transport_config,
         )
 
         # Create FRESH REQ socket for each send - REQ sockets cannot be reused
         # This prevents the "Operation cannot be accomplished in current state" error
         # when multiple streams happen concurrently
-        transport_config = transport_config or self._transport_config
+        transport_config = ViewerTransportConfigAuthority.resolve(
+            stream_request.transport_config,
+            self._transport_config,
+        )
         url = get_zmq_transport_url(
-            port,
-            host=host,
-            mode=coerce_transport_mode(transport_mode),
+            stream_request.port,
+            host=stream_request.host,
+            mode=coerce_transport_mode(stream_request.transport_mode),
             config=transport_config,
         )
 
@@ -128,6 +154,7 @@ class NapariStreamingBackend(StreamingBackend):
             self._context = zmq.Context()
 
         socket = self._context.socket(zmq.REQ)
+        NAPARI_ACK_POLICY.apply_socket_options(socket)
         socket.connect(url)
         time.sleep(0.1)  # Brief delay for connection to establish
 
@@ -135,13 +162,17 @@ class NapariStreamingBackend(StreamingBackend):
             # Send with REQ socket (BLOCKING - worker waits for Napari to acknowledge)
             # Worker blocks until Napari receives, copies data from shared memory, and sends ack
             # This guarantees no messages are lost and shared memory is only closed after Napari is done
-            logger.info(f"📤 NAPARI BACKEND: Sending batch of {len(batch_images)} images to Napari on port {port} (REQ/REP - blocking until ack)")
+            logger.info(f"📤 NAPARI BACKEND: Sending batch of {len(batch_images)} images to Napari on port {stream_request.port} (REQ/REP - blocking until ack)")
             socket.send_json(message)  # Blocking send
 
             # Wait for acknowledgment from Napari (REP socket)
             # Napari will only reply after it has copied all data from shared memory
-            ack_response = socket.recv_json()
-            logger.info(f"✅ NAPARI BACKEND: Received ack from Napari: {ack_response.get('status', 'unknown')}")
+            ack_response = NAPARI_ACK_POLICY.receive(
+                socket,
+                lambda: self._cleanup_shared_memory_blocks(batch_images, unlink=True),
+                port=stream_request.port,
+            )
+            logger.info(f"✅ NAPARI BACKEND: Received ack from Napari: {NAPARI_ACK_POLICY.status(ack_response)}")
 
         finally:
             # Always close the socket - never reuse REQ sockets

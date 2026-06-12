@@ -46,6 +46,37 @@ def test_streaming_batch_items_reject_unparsed_artifact_filename() -> None:
         )
 
 
+def test_streaming_batch_items_accept_per_path_component_metadata() -> None:
+    backend = MetadataProbeStreamingBackend()
+    microscope_handler = SimpleNamespace(
+        parser=SimpleNamespace(parse_filename=lambda _filename: None)
+    )
+
+    batch_images, _image_ids = backend._prepare_batch_items(
+        StreamingBatchRequest(
+            data_list=[object()],
+            file_paths=["A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"],
+            microscope_handler=microscope_handler,
+            source="IdentifyPrimaryObjects",
+            prepare_item=lambda _data, _path, _data_type: ({"payload": "ok"}, "image"),
+            component_metadata_by_path={
+                "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip": {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 1,
+                },
+            },
+        )
+    )
+
+    assert batch_images[0]["metadata"] == {
+        "well": "A01",
+        "site": 1,
+        "channel": 1,
+        "source": "IdentifyPrimaryObjects",
+    }
+
+
 def test_streaming_component_metadata_preserves_parsed_filename_fields() -> None:
     backend = MetadataProbeStreamingBackend()
     microscope_handler = SimpleNamespace(

@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Set, Union
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 PrepareStreamingItem = Callable[[Any, Union[str, Path], Any], tuple[dict, str]]
+ComponentMetadataByPath = (
+    Mapping[str, Mapping[str, Any] | None]
+    | Sequence[Mapping[str, Any] | None]
+    | None
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,7 @@ class StreamingBatchRequest:
     source: str
     prepare_item: PrepareStreamingItem
     component_metadata: Mapping[str, Any] | None = None
+    component_metadata_by_path: ComponentMetadataByPath = None
 
 
 class StreamingPayloadMemoryAuthority:
@@ -188,6 +195,30 @@ class StreamingBackend(DataSink):
                 f"or a parser-readable filename; got {filename!r}."
             )
         return StreamingComponentMetadata(parsed_metadata, source).to_payload()
+
+    @staticmethod
+    def _component_metadata_for_item(
+        *,
+        file_path: Union[str, Path],
+        index: int,
+        component_metadata: Mapping[str, Any] | None,
+        component_metadata_by_path: ComponentMetadataByPath,
+    ) -> Mapping[str, Any] | None:
+        """Return explicit component metadata for one batch item when provided."""
+        if component_metadata_by_path is None:
+            return component_metadata
+
+        if isinstance(component_metadata_by_path, Mapping):
+            path = Path(file_path)
+            for key in (str(file_path), path.as_posix(), path.name):
+                if key in component_metadata_by_path:
+                    return component_metadata_by_path[key]
+            return component_metadata
+
+        if index < len(component_metadata_by_path):
+            return component_metadata_by_path[index]
+
+        return component_metadata
 
     def _detect_data_type(self, data: Any):
         """
@@ -334,16 +365,24 @@ class StreamingBackend(DataSink):
         batch_images = []
         image_ids = []
 
-        for data, file_path in zip(request.data_list, request.file_paths):
+        for index, (data, file_path) in enumerate(
+            zip(request.data_list, request.file_paths)
+        ):
             image_id = str(uuid.uuid4())
             image_ids.append(image_id)
 
             data_type = self._detect_data_type(data)
+            explicit_component_metadata = self._component_metadata_for_item(
+                file_path=file_path,
+                index=index,
+                component_metadata=request.component_metadata,
+                component_metadata_by_path=request.component_metadata_by_path,
+            )
             component_metadata = self._parse_component_metadata(
                 file_path,
                 request.microscope_handler,
                 request.source,
-                request.component_metadata,
+                explicit_component_metadata,
             )
             item_data, data_type_value = request.prepare_item(data, file_path, data_type)
 
@@ -369,6 +408,7 @@ class StreamingBackend(DataSink):
         plate_path: Union[str, Path, None] = None,
         component_names_kwargs: dict | None = None,
         component_metadata: Mapping[str, Any] | None = None,
+        component_metadata_by_path: ComponentMetadataByPath = None,
         display_payload_extra: dict | None = None,
         message_extra: dict | None = None,
     ) -> tuple[dict, list[dict], list[str]]:
@@ -383,6 +423,7 @@ class StreamingBackend(DataSink):
                 source=source,
                 prepare_item=prepare_item,
                 component_metadata=component_metadata,
+                component_metadata_by_path=component_metadata_by_path,
             )
         )
 
