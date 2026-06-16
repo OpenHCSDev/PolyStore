@@ -22,6 +22,7 @@ from ..constants import TransportMode
 from ..streaming_constants import StreamingDataType
 from ..roi import ROI, PointShape
 from ..zmq_config import POLYSTORE_ZMQ_CONFIG
+from .identity import StreamProducerIdentity
 from zmqruntime.ack_listener import GlobalAckListener
 from zmqruntime.transport import coerce_transport_mode
 
@@ -41,7 +42,6 @@ class StreamingComponentMetadata:
     """Message metadata for one streamed item."""
 
     parsed_filename_metadata: Mapping[str, Any]
-    source: str
 
     def to_payload(self) -> dict[str, Any]:
         if isinstance(self.parsed_filename_metadata, Mapping):
@@ -51,7 +51,6 @@ class StreamingComponentMetadata:
                 "Streaming component metadata must be a mapping, "
                 f"got {type(self.parsed_filename_metadata).__name__}."
             )
-        metadata["source"] = self.source
         return metadata
 
 
@@ -62,7 +61,7 @@ class StreamingBatchRequest:
     data_list: List[Any]
     file_paths: List[Union[str, Path]]
     microscope_handler: Any
-    source: str
+    producer_identity: StreamProducerIdentity
     prepare_item: PrepareStreamingItem
     component_metadata: Mapping[str, Any] | None = None
     component_metadata_by_path: ComponentMetadataByPath = None
@@ -169,20 +168,9 @@ class StreamingBackend(DataSink):
         self,
         file_path: Union[str, Path],
         microscope_handler,
-        source: str,
         component_metadata: Mapping[str, Any] | None = None,
     ) -> dict:
-        """
-        Parse component metadata from filename (common for all streaming backends).
-
-        Args:
-            file_path: Path to parse
-            microscope_handler: Handler with parser
-            source: Pre-built source value (step_name during execution, subdir when loading from disk)
-
-        Returns:
-            Component metadata dict with source added
-        """
+        """Parse real source-plane component metadata for one stream item."""
         filename = os.path.basename(str(file_path))
         parsed_metadata = (
             component_metadata
@@ -194,7 +182,7 @@ class StreamingBackend(DataSink):
                 "Streaming component metadata requires explicit component_metadata "
                 f"or a parser-readable filename; got {filename!r}."
             )
-        return StreamingComponentMetadata(parsed_metadata, source).to_payload()
+        return StreamingComponentMetadata(parsed_metadata).to_payload()
 
     @staticmethod
     def _component_metadata_for_item(
@@ -381,7 +369,6 @@ class StreamingBackend(DataSink):
             component_metadata = self._parse_component_metadata(
                 file_path,
                 request.microscope_handler,
-                request.source,
                 explicit_component_metadata,
             )
             item_data, data_type_value = request.prepare_item(data, file_path, data_type)
@@ -391,6 +378,7 @@ class StreamingBackend(DataSink):
                     **item_data,
                     "data_type": data_type_value,
                     "metadata": component_metadata,
+                    "producer_identity": request.producer_identity.to_payload(),
                     "image_id": image_id,
                 }
             )
@@ -402,7 +390,7 @@ class StreamingBackend(DataSink):
         data_list: List[Any],
         file_paths: List[Union[str, Path]],
         microscope_handler,
-        source: str,
+        producer_identity: StreamProducerIdentity,
         display_config,
         prepare_item: PrepareStreamingItem,
         plate_path: Union[str, Path, None] = None,
@@ -420,7 +408,7 @@ class StreamingBackend(DataSink):
                 data_list=data_list,
                 file_paths=file_paths,
                 microscope_handler=microscope_handler,
-                source=source,
+                producer_identity=producer_identity,
                 prepare_item=prepare_item,
                 component_metadata=component_metadata,
                 component_metadata_by_path=component_metadata_by_path,

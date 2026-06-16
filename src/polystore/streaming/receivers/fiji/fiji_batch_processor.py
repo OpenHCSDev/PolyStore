@@ -65,7 +65,7 @@ class FijiBatchProcessor:
             window_key: Unique identifier for the Fiji window
             items: List of items to add (images)
             display_config: Display configuration dict
-            images_dir: Source image subdirectory
+            images_dir: Artifact image directory context.
             component_names_metadata: Component name mappings for dimension labels
         """
         context = {

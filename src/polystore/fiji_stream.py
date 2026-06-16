@@ -145,7 +145,7 @@ class FijiStreamingBackend(StreamingBackend):
             data_list,
             file_paths,
             stream_request.microscope_handler,
-            stream_request.source,
+            stream_request.producer_identity,
             stream_request.display_config,
             self._prepare_batch_item,
             plate_path=stream_request.plate_path,
@@ -167,7 +167,12 @@ class FijiStreamingBackend(StreamingBackend):
         # Log batch composition
         data_types = [item['data_type'] for item in batch_images]
         type_counts = {dt: data_types.count(dt) for dt in set(data_types)}
-        logger.info(f"📤 FIJI BACKEND: Sending batch message with {len(batch_images)} items to port {port}: {type_counts}")
+        logger.info(
+            "📤 FIJI BACKEND: Sending batch message with %d items to port %s: %s",
+            len(batch_images),
+            stream_request.port,
+            type_counts,
+        )
 
         # Register sent images with queue tracker BEFORE sending
         # This prevents race condition with IPC mode where acks arrive before registration

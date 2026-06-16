@@ -1,9 +1,10 @@
-"""Canonical napari layer-key construction from component metadata."""
+"""Canonical napari route-key construction."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from polystore.streaming.identity import StreamProducerIdentity, StreamRouteKeyAuthority
 from polystore.streaming_constants import StreamingDataType
 
 
@@ -17,19 +18,21 @@ def normalize_component_layout(display_config: Any) -> tuple[dict[str, str], lis
     return display_config.component_modes(), list(display_config.COMPONENT_ORDER)
 
 
-def build_layer_key(
+def build_route_key(
+    producer_identity: StreamProducerIdentity | dict[str, Any],
     component_info: dict[str, Any],
     component_modes: dict[str, str],
     component_order: list[str],
     data_type: StreamingDataType,
 ) -> str:
-    """Build canonical layer key from slice-mode components and payload type."""
-    layer_key_parts: list[str] = []
+    """Build hidden route key from producer identity, slice components, and type."""
+    producer = StreamProducerIdentity.from_payload(producer_identity)
+    route_parts: list[str] = list(producer.route_parts())
     for component in component_order:
         mode = component_modes[component]
         if mode == "slice" and component in component_info:
-            layer_key_parts.append(f"{component}_{component_info[component]}")
+            route_parts.append(f"{component}_{component_info[component]}")
 
-    layer_key = "_".join(layer_key_parts) if layer_key_parts else "default_layer"
+    route_key = StreamRouteKeyAuthority.join(route_parts)
 
-    return f"{layer_key}{data_type.napari_layer_suffix}"
+    return f"{route_key}{data_type.napari_layer_suffix}"

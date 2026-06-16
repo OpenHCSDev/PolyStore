@@ -118,7 +118,7 @@ class NapariStreamingBackend(StreamingBackend):
             data_list,
             file_paths,
             stream_request.microscope_handler,
-            stream_request.source,
+            stream_request.producer_identity,
             stream_request.display_config,
             self._prepare_batch_item,
             plate_path=stream_request.plate_path,

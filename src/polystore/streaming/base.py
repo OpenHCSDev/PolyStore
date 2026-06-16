@@ -27,7 +27,6 @@ class TypedData(Generic[T]):
     """
     items: List[T]
     metadata: Dict[str, Any]
-    source: str
 
 
 class ComponentAccessor(ABC):

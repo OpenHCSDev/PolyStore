@@ -15,7 +15,7 @@ from polystore.streaming.receivers.fiji.fiji_batch_processor import FijiBatchPro
 from polystore.streaming.receivers.napari import (
     NapariBatchProcessor,
     normalize_component_layout,
-    build_layer_key,
+    build_route_key,
 )
 
 __all__ = [
@@ -27,5 +27,5 @@ __all__ = [
     "FijiBatchProcessor",
     "NapariBatchProcessor",
     "normalize_component_layout",
-    "build_layer_key",
+    "build_route_key",
 ]

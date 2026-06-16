@@ -4,6 +4,7 @@ import pytest
 
 from polystore.streaming._streaming_backend import StreamingBackend
 from polystore.streaming._streaming_backend import StreamingBatchRequest
+from polystore.streaming.identity import StreamProducerIdentity
 
 
 class MetadataProbeStreamingBackend(StreamingBackend):
@@ -12,6 +13,14 @@ class MetadataProbeStreamingBackend(StreamingBackend):
 
     def save_batch(self, data_list, file_paths, **kwargs):
         raise NotImplementedError
+
+
+PRODUCER_IDENTITY = StreamProducerIdentity(
+    origin="pipeline",
+    output_kind="main",
+    output_key="main",
+    step_name="IdentifyPrimaryObjects",
+)
 
 
 def test_streaming_component_metadata_rejects_unparsed_artifact_filename() -> None:
@@ -24,7 +33,6 @@ def test_streaming_component_metadata_rejects_unparsed_artifact_filename() -> No
         backend._parse_component_metadata(
             "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
             microscope_handler,
-            source="IdentifyPrimaryObjects",
         )
 
 
@@ -40,7 +48,7 @@ def test_streaming_batch_items_reject_unparsed_artifact_filename() -> None:
                 data_list=[object()],
                 file_paths=["A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"],
                 microscope_handler=microscope_handler,
-                source="IdentifyPrimaryObjects",
+                producer_identity=PRODUCER_IDENTITY,
                 prepare_item=lambda _data, _path, _data_type: ({"payload": "ok"}, "image"),
             )
         )
@@ -57,7 +65,7 @@ def test_streaming_batch_items_accept_per_path_component_metadata() -> None:
             data_list=[object()],
             file_paths=["A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"],
             microscope_handler=microscope_handler,
-            source="IdentifyPrimaryObjects",
+            producer_identity=PRODUCER_IDENTITY,
             prepare_item=lambda _data, _path, _data_type: ({"payload": "ok"}, "image"),
             component_metadata_by_path={
                 "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip": {
@@ -73,8 +81,8 @@ def test_streaming_batch_items_accept_per_path_component_metadata() -> None:
         "well": "A01",
         "site": 1,
         "channel": 1,
-        "source": "IdentifyPrimaryObjects",
     }
+    assert batch_images[0]["producer_identity"] == PRODUCER_IDENTITY.to_payload()
 
 
 def test_streaming_component_metadata_preserves_parsed_filename_fields() -> None:
@@ -88,10 +96,9 @@ def test_streaming_component_metadata_preserves_parsed_filename_fields() -> None
     metadata = backend._parse_component_metadata(
         "A01_s001_w1_z001_t001.TIF",
         microscope_handler,
-        source="Crop",
     )
 
-    assert metadata == {"well": "A01", "channel": 1, "source": "Crop"}
+    assert metadata == {"well": "A01", "channel": 1}
 
 
 def test_streaming_component_metadata_prefers_explicit_metadata() -> None:
@@ -103,7 +110,6 @@ def test_streaming_component_metadata_prefers_explicit_metadata() -> None:
     metadata = backend._parse_component_metadata(
         "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
         microscope_handler,
-        source="IdentifyPrimaryObjects",
         component_metadata={"well": "A01", "site": 1, "channel": 1},
     )
 
@@ -111,7 +117,6 @@ def test_streaming_component_metadata_prefers_explicit_metadata() -> None:
         "well": "A01",
         "site": 1,
         "channel": 1,
-        "source": "IdentifyPrimaryObjects",
     }
 
 
@@ -125,5 +130,4 @@ def test_streaming_component_metadata_rejects_invalid_parser_result() -> None:
         backend._parse_component_metadata(
             "A01_s001_w1_z001_t001.TIF",
             microscope_handler,
-            source="Crop",
         )

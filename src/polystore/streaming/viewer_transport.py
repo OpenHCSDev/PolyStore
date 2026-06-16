@@ -7,13 +7,14 @@ from typing import Any, Mapping
 
 import zmq
 
+from polystore.streaming.identity import StreamProducerIdentity
+
 
 @dataclass(frozen=True)
 class ViewerTransportDefaults:
     """Declared transport defaults shared by viewer streaming backends."""
 
     host: str = "localhost"
-    source: str = "unknown_source"
     ack_timeout_ms: int = 30_000
 
 
@@ -27,7 +28,7 @@ class ViewerStreamKwargs:
     transport_config: Any
     display_config: Any
     microscope_handler: Any
-    source: str
+    producer_identity: StreamProducerIdentity
     plate_path: Any
     component_metadata: Any
     component_metadata_by_path: Any
@@ -48,7 +49,9 @@ class ViewerStreamKwargs:
             transport_config=ViewerKwargAuthority.optional(kwargs, "transport_config"),
             display_config=ViewerKwargAuthority.required(kwargs, "display_config"),
             microscope_handler=ViewerKwargAuthority.required(kwargs, "microscope_handler"),
-            source=ViewerKwargAuthority.value_or_default(kwargs, "source", defaults.source),
+            producer_identity=StreamProducerIdentity.from_payload(
+                ViewerKwargAuthority.required(kwargs, "producer_identity")
+            ),
             plate_path=ViewerKwargAuthority.optional(kwargs, "plate_path"),
             component_metadata=ViewerKwargAuthority.optional(kwargs, "component_metadata"),
             component_metadata_by_path=ViewerKwargAuthority.optional(
