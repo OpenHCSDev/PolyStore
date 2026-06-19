@@ -12,30 +12,37 @@ SHARED MEMORY OWNERSHIP MODEL:
 """
 
 import logging
-import time
-from pathlib import Path
-from typing import Any, List, Union
+from enum import Enum
 
-import zmq
-
-from .constants import Backend, TransportMode
+from .constants import Backend
 from .streaming_constants import StreamingDataType
-from .streaming import StreamingBackend
-from .roi_converters import FijiROIConverter
-from .streaming.viewer_transport import (
-    ViewerAckPolicy,
-    ViewerStreamKwargs,
-    ViewerTransportConfigAuthority,
-    ViewerTransportDefaults,
+from .streaming import (
+    FilePath,
+    RoiStreamPayload,
+    StreamingBuiltBatch,
+    StreamingBackend,
+    StreamingComponentNamesRequest,
+    StreamingItemPreparationRequest,
+    ViewerDisplayPayloadExtra,
 )
-from zmqruntime.transport import get_zmq_transport_url, coerce_transport_mode
+from .streaming.viewer_transport import ViewerStreamRequest
+from .roi_converters import FijiROIConverter
+from zmqruntime.viewer_protocol import (
+    ViewerBatchContextWireField,
+    ViewerBatchItemWireField,
+    ViewerBatchWireField,
+    ViewerWireMapping,
+    ViewerWireValue,
+)
 
 logger = logging.getLogger(__name__)
-FIJI_TRANSPORT_DEFAULTS = ViewerTransportDefaults()
-FIJI_ACK_POLICY = ViewerAckPolicy(
-    viewer_name="Fiji",
-    timeout_ms=FIJI_TRANSPORT_DEFAULTS.ack_timeout_ms,
-)
+
+
+class FijiDisplayWireField(str, Enum):
+    """Fiji-specific display fields inside the shared viewer display payload."""
+
+    LUT = "lut"
+    AUTO_CONTRAST = "auto_contrast"
 
 
 class FijiDisplayPayload:
@@ -43,15 +50,15 @@ class FijiDisplayPayload:
 
     @staticmethod
     def auto_contrast_value(display_config) -> bool:
-        if not hasattr(display_config, "auto_contrast"):
-            return True
         return display_config.auto_contrast
 
     @classmethod
-    def from_display_config(cls, display_config) -> dict[str, Any]:
+    def from_display_config(cls, display_config) -> dict[str, ViewerWireValue]:
         return {
-            "lut": display_config.get_lut_name(),
-            "auto_contrast": cls.auto_contrast_value(display_config),
+            FijiDisplayWireField.LUT.value: display_config.get_lut_name(),
+            FijiDisplayWireField.AUTO_CONTRAST.value: cls.auto_contrast_value(
+                display_config
+            ),
         }
 
 
@@ -59,20 +66,18 @@ class FijiMessageMetadata:
     """Typed access to optional Fiji message metadata."""
 
     @staticmethod
-    def component_names_metadata(message: dict) -> dict:
-        if "component_names_metadata" in message:
-            return message["component_names_metadata"]
-        return {}
+    def component_names_metadata(message: ViewerWireMapping) -> ViewerWireValue:
+        return message[ViewerBatchWireField.COMPONENT_NAMES_METADATA.value]
 
 
 class FijiRoiPayload:
     """ROI payload inspection for Fiji logging."""
 
     @staticmethod
-    def count(item_data: dict) -> int:
-        if "rois" not in item_data:
+    def count(item_data: ViewerWireMapping) -> int:
+        if ViewerBatchItemWireField.ROIS.value not in item_data:
             raise ValueError("Fiji ROI payload missing required 'rois' field")
-        return len(item_data["rois"])
+        return len(item_data[ViewerBatchItemWireField.ROIS.value])
 
 
 class FijiStreamingBackend(StreamingBackend):
@@ -82,7 +87,70 @@ class FijiStreamingBackend(StreamingBackend):
     VIEWER_TYPE = 'fiji'
     SHM_PREFIX = 'fiji_'
 
-    def _prepare_rois_data(self, data: Any, file_path: Union[str, Path]) -> dict:
+    def _display_payload_extra(
+        self,
+        stream_request: ViewerStreamRequest,
+    ) -> ViewerDisplayPayloadExtra:
+        return ViewerDisplayPayloadExtra.from_mapping(
+            FijiDisplayPayload.from_display_config(stream_request.display_config)
+        )
+
+    def _message_extra(
+        self,
+        stream_request: ViewerStreamRequest,
+    ) -> dict[str, ViewerWireValue]:
+        message_extra = stream_request.message_extra_payload()
+        message_extra[ViewerBatchContextWireField.IMAGES_DIR.value] = (
+            stream_request.images_dir
+        )
+        return message_extra
+
+    def _component_names_request(
+        self,
+        stream_request: ViewerStreamRequest,
+    ) -> StreamingComponentNamesRequest:
+        return StreamingComponentNamesRequest.from_stream_request(
+            stream_request,
+            log_prefix="🏷️  FIJI BACKEND",
+            verbose=True,
+        )
+
+    def _after_batch_message_built(
+        self,
+        stream_request: ViewerStreamRequest,
+        built_batch: StreamingBuiltBatch,
+    ) -> None:
+        logger.info(
+            "🏷️  FIJI BACKEND: Final component_names_metadata: %s",
+            FijiMessageMetadata.component_names_metadata(built_batch.message),
+        )
+
+        for item in built_batch.batch_images:
+            logger.info(
+                "🔍 FIJI BACKEND: Added %s item to batch",
+                item[ViewerBatchItemWireField.DATA_TYPE.value],
+            )
+
+        data_types = [
+            item[ViewerBatchItemWireField.DATA_TYPE.value]
+            for item in built_batch.batch_images
+        ]
+        type_counts = {
+            data_type: data_types.count(data_type)
+            for data_type in set(data_types)
+        }
+        logger.info(
+            "📤 FIJI BACKEND: Sending batch message with %d items to port %s: %s",
+            len(built_batch.batch_images),
+            stream_request.port,
+            type_counts,
+        )
+
+    def _prepare_rois_data(
+        self,
+        data: RoiStreamPayload,
+        file_path: FilePath,
+    ) -> dict[str, ViewerWireValue]:
         """
         Prepare ROIs data for transmission.
 
@@ -98,136 +166,44 @@ class FijiStreamingBackend(StreamingBackend):
         rois_encoded = FijiROIConverter.encode_rois_for_transmission(roi_bytes_list)
 
         return {
-            'path': str(file_path),
-            'rois': rois_encoded,
+            ViewerBatchItemWireField.PATH.value: str(file_path),
+            ViewerBatchItemWireField.ROIS.value: rois_encoded,
         }
 
-    def _prepare_batch_item(self, data: Any, file_path: Union[str, Path], data_type):
-        logger.info(f"🔍 FIJI BACKEND: Detected data type: {data_type} for path: {file_path}")
-        if data_type == StreamingDataType.SHAPES:
-            logger.info(f"🔍 FIJI BACKEND: Preparing ROI data for {file_path}")
-            item_data = self._prepare_rois_data(data, file_path)
-            data_type_value = "rois"
+    def _prepare_batch_item(
+        self,
+        request: StreamingItemPreparationRequest,
+    ) -> tuple[ViewerWireMapping, str]:
+        logger.info(
+            "🔍 FIJI BACKEND: Detected data type: %s for path: %s",
+            request.data_type,
+            request.item_path.value,
+        )
+        if request.data_type == StreamingDataType.SHAPES:
             logger.info(
-                f"🔍 FIJI BACKEND: ROI data prepared: {FijiRoiPayload.count(item_data)} ROIs"
+                "🔍 FIJI BACKEND: Preparing ROI data for %s",
+                request.item_path.value,
+            )
+            item_data = self._prepare_rois_data(
+                request.data,
+                request.item_path.value,
+            )
+            data_type_value = StreamingDataType.ROIS.value
+            logger.info(
+                "🔍 FIJI BACKEND: ROI data prepared: %d ROIs",
+                FijiRoiPayload.count(item_data),
             )
         else:
-            logger.info(f"🔍 FIJI BACKEND: Preparing image data for {file_path}")
-            item_data = self._create_shared_memory(data, file_path)
-            data_type_value = "image"
-        return item_data, data_type_value
-
-    def save_batch(self, data_list: List[Any], file_paths: List[Union[str, Path]], **kwargs) -> None:
-        """Stream batch of images or ROIs to Fiji via ZMQ."""
-
-        logger.info(f"📦 FIJI BACKEND: save_batch called with {len(data_list)} items")
-
-        # Filter to only supported file types
-        data_list, file_paths, skipped = self._filter_streamable_files(data_list, file_paths)
-        if not data_list:
-            return
-
-        stream_request = ViewerStreamKwargs.from_kwargs(
-            kwargs,
-            FIJI_TRANSPORT_DEFAULTS,
-            include_images_dir=True,
-        )
-        logger.info(f"🏷️  FIJI BACKEND: plate_path = {stream_request.plate_path}")
-        logger.info(f"🏷️  FIJI BACKEND: microscope_handler = {stream_request.microscope_handler}")
-        display_payload_extra = FijiDisplayPayload.from_display_config(
-            stream_request.display_config
-        )
-        message_extra = {
-            "images_dir": stream_request.images_dir,
-        }
-
-        message, batch_images, image_ids = self._build_batch_message(
-            data_list,
-            file_paths,
-            stream_request.microscope_handler,
-            stream_request.producer_identity,
-            stream_request.display_config,
-            self._prepare_batch_item,
-            plate_path=stream_request.plate_path,
-            component_metadata=stream_request.component_metadata,
-            component_metadata_by_path=stream_request.component_metadata_by_path,
-            component_names_kwargs={"log_prefix": "🏷️  FIJI BACKEND", "verbose": True},
-            display_payload_extra=display_payload_extra,
-            message_extra=message_extra,
-        )
-
-        logger.info(
-            "🏷️  FIJI BACKEND: Final component_names_metadata: %s",
-            FijiMessageMetadata.component_names_metadata(message),
-        )
-
-        for item in batch_images:
-            logger.info(f"🔍 FIJI BACKEND: Added {item['data_type']} item to batch")
-
-        # Log batch composition
-        data_types = [item['data_type'] for item in batch_images]
-        type_counts = {dt: data_types.count(dt) for dt in set(data_types)}
-        logger.info(
-            "📤 FIJI BACKEND: Sending batch message with %d items to port %s: %s",
-            len(batch_images),
-            stream_request.port,
-            type_counts,
-        )
-
-        # Register sent images with queue tracker BEFORE sending
-        # This prevents race condition with IPC mode where acks arrive before registration
-        self._register_with_queue_tracker(
-            stream_request.port,
-            image_ids,
-            transport_mode=stream_request.transport_mode,
-            transport_config=stream_request.transport_config,
-        )
-
-        # Create FRESH REQ socket for each send - REQ sockets cannot be reused
-        # This prevents the "Operation cannot be accomplished in current state" error
-        # when multiple streams happen concurrently
-        transport_config = ViewerTransportConfigAuthority.resolve(
-            stream_request.transport_config,
-            self._transport_config,
-        )
-        url = get_zmq_transport_url(
-            stream_request.port,
-            host=stream_request.host,
-            mode=coerce_transport_mode(stream_request.transport_mode),
-            config=transport_config,
-        )
-
-        if self._context is None:
-            self._context = zmq.Context()
-
-        socket = self._context.socket(zmq.REQ)
-        FIJI_ACK_POLICY.apply_socket_options(socket)
-        socket.connect(url)
-        time.sleep(0.1)  # Brief delay for connection to establish
-
-        try:
-            # Send with REQ socket (BLOCKING - worker waits for Fiji to acknowledge)
-            # Worker blocks until Fiji receives, copies data from shared memory, and sends ack
-            # This guarantees no messages are lost and shared memory is only closed after Fiji is done
-            logger.info(f"📤 FIJI BACKEND: Sending batch of {len(batch_images)} images to Fiji on port {stream_request.port} (REQ/REP - blocking until ack)")
-            socket.send_json(message)  # Blocking send
-
-            # Wait for acknowledgment from Fiji (REP socket)
-            # Fiji will only reply after it has copied all data from shared memory
-            ack_response = FIJI_ACK_POLICY.receive(
-                socket,
-                lambda: self._cleanup_shared_memory_blocks(batch_images, unlink=True),
-                port=stream_request.port,
+            logger.info(
+                "🔍 FIJI BACKEND: Preparing image data for %s",
+                request.item_path.value,
             )
-            logger.info(f"✅ FIJI BACKEND: Received ack from Fiji: {FIJI_ACK_POLICY.status(ack_response)}")
-
-        finally:
-            # Always close the socket - never reuse REQ sockets
-            socket.close()
-
-        # Clean up publisher's handles after successful send
-        # Receiver will unlink the shared memory after copying the data
-        self._cleanup_shared_memory_blocks(batch_images, unlink=False)
+            item_data = self.create_shared_memory_payload(
+                request.data,
+                request.item_path.value,
+            )
+            data_type_value = StreamingDataType.IMAGE.value
+        return item_data, data_type_value
 
     # cleanup() now inherited from ABC
 

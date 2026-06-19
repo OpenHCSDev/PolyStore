@@ -3,7 +3,48 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Mapping
+from enum import Enum
+from typing import ClassVar, Mapping, Sequence, TypeAlias
+
+
+StreamProducerPayloadValue: TypeAlias = str | int | None
+StreamProducerPayloadMapping: TypeAlias = Mapping[str, StreamProducerPayloadValue]
+RouteKeyPart: TypeAlias = str | int | float | bool | None
+
+
+class StreamProducerOrigin(str, Enum):
+    """Nominal stream producer origin values."""
+
+    PIPELINE = "pipeline"
+    MANUAL = "manual"
+    DIRECT = "direct"
+
+
+class FixedStreamProducerIdentityKind(str, Enum):
+    """Producer identities whose origin and output kind are intentionally equal."""
+
+    MANUAL = StreamProducerOrigin.MANUAL.value
+    DIRECT = StreamProducerOrigin.DIRECT.value
+
+
+class StreamProducerIdentityPayload(dict[str, StreamProducerPayloadValue]):
+    """Wire payload for one stream producer identity."""
+
+    @classmethod
+    def from_identity(
+        cls,
+        identity: "StreamProducerIdentity",
+    ) -> "StreamProducerIdentityPayload":
+        return cls(
+            origin=identity.origin,
+            output_kind=identity.output_kind,
+            output_key=identity.output_key,
+            step_name=identity.step_name,
+            pipeline_position=identity.pipeline_position,
+            step_scope_id=identity.step_scope_id,
+            invocation_key=identity.invocation_key,
+            artifact_kind=identity.artifact_kind,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,16 +59,6 @@ class StreamProducerIdentity:
     step_scope_id: str | None = None
     invocation_key: str | None = None
     artifact_kind: str | None = None
-    PAYLOAD_FIELDS: ClassVar[tuple[str, ...]] = (
-        "origin",
-        "output_kind",
-        "output_key",
-        "step_name",
-        "pipeline_position",
-        "step_scope_id",
-        "invocation_key",
-        "artifact_kind",
-    )
 
     @classmethod
     def pipeline_output(
@@ -42,7 +73,7 @@ class StreamProducerIdentity:
     ) -> "StreamProducerIdentity":
         """Build identity for one pipeline-produced stream output."""
         return cls(
-            origin="pipeline",
+            origin=StreamProducerOrigin.PIPELINE.value,
             output_kind=output_kind,
             output_key=output_key,
             step_name=step_name,
@@ -52,40 +83,23 @@ class StreamProducerIdentity:
         )
 
     @classmethod
-    def manual(cls, output_key: str) -> "StreamProducerIdentity":
-        """Build identity for one manual viewer action."""
-        return cls._fixed_origin_output(
-            origin="manual",
-            output_kind="manual",
-            output_key=output_key,
-        )
-
-    @classmethod
-    def direct(cls, output_key: str) -> "StreamProducerIdentity":
-        """Build identity for direct in-process display calls."""
-        return cls._fixed_origin_output(
-            origin="direct",
-            output_kind="direct",
-            output_key=output_key,
-        )
-
-    @classmethod
-    def _fixed_origin_output(
+    def fixed_output(
         cls,
-        *,
-        origin: str,
-        output_kind: str,
+        kind: FixedStreamProducerIdentityKind,
         output_key: str,
     ) -> "StreamProducerIdentity":
-        """Build identity variants whose origin and output kind match."""
+        """Build identity for producer kinds whose origin owns the output kind."""
         return cls(
-            origin=origin,
-            output_kind=output_kind,
+            origin=kind.value,
+            output_kind=kind.value,
             output_key=output_key,
         )
 
     @classmethod
-    def from_payload(cls, payload: "StreamProducerIdentity | Mapping[str, Any]") -> "StreamProducerIdentity":
+    def from_payload(
+        cls,
+        payload: "StreamProducerIdentity | StreamProducerPayloadMapping",
+    ) -> "StreamProducerIdentity":
         if isinstance(payload, cls):
             return payload
         if not isinstance(payload, Mapping):
@@ -93,32 +107,19 @@ class StreamProducerIdentity:
                 "Stream producer identity must be a mapping or StreamProducerIdentity, "
                 f"got {type(payload).__name__}."
             )
-        missing = [
-            field_name
-            for field_name in ("origin", "output_kind", "output_key")
-            if payload.get(field_name) in (None, "")
-        ]
-        if missing:
-            raise ValueError(f"Stream producer identity missing required fields: {missing}")
-        pipeline_position = payload.get("pipeline_position")
         return cls(
-            origin=str(payload["origin"]),
-            output_kind=str(payload["output_kind"]),
-            output_key=str(payload["output_key"]),
-            step_name=_optional_str(payload.get("step_name")),
-            pipeline_position=(
-                None if pipeline_position is None else int(pipeline_position)
-            ),
-            step_scope_id=_optional_str(payload.get("step_scope_id")),
-            invocation_key=_optional_str(payload.get("invocation_key")),
-            artifact_kind=_optional_str(payload.get("artifact_kind")),
+            origin=_required_payload_str(payload, "origin"),
+            output_kind=_required_payload_str(payload, "output_kind"),
+            output_key=_required_payload_str(payload, "output_key"),
+            step_name=_optional_payload_str(payload, "step_name"),
+            pipeline_position=_optional_payload_int(payload, "pipeline_position"),
+            step_scope_id=_optional_payload_str(payload, "step_scope_id"),
+            invocation_key=_optional_payload_str(payload, "invocation_key"),
+            artifact_kind=_optional_payload_str(payload, "artifact_kind"),
         )
 
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            field_name: getattr(self, field_name)
-            for field_name in self.PAYLOAD_FIELDS
-        }
+    def to_payload(self) -> StreamProducerIdentityPayload:
+        return StreamProducerIdentityPayload.from_identity(self)
 
     def route_parts(self) -> tuple[str, ...]:
         parts = [
@@ -139,7 +140,44 @@ class StreamProducerIdentity:
         return tuple(parts)
 
 
-def _optional_str(value: Any) -> str | None:
+def _required_payload_str(
+    payload: StreamProducerPayloadMapping,
+    field_name: str,
+) -> str:
+    if field_name not in payload:
+        raise ValueError(
+            f"Stream producer identity missing required field: {field_name}"
+        )
+    value = payload[field_name]
+    if value in (None, ""):
+        raise ValueError(
+            f"Stream producer identity missing required field: {field_name}"
+        )
+    return str(value)
+
+
+def _optional_payload_str(
+    payload: StreamProducerPayloadMapping,
+    field_name: str,
+) -> str | None:
+    if field_name not in payload:
+        return None
+    return _optional_str(payload[field_name])
+
+
+def _optional_payload_int(
+    payload: StreamProducerPayloadMapping,
+    field_name: str,
+) -> int | None:
+    if field_name not in payload:
+        return None
+    value = payload[field_name]
+    if value is None:
+        return None
+    return int(value)
+
+
+def _optional_str(value: StreamProducerPayloadValue) -> str | None:
     if value is None:
         return None
     text = str(value)
@@ -193,11 +231,11 @@ class StreamRouteKeyAuthority:
     """Own stable key-token projection for viewer route keys."""
 
     @staticmethod
-    def token(value: object) -> str:
+    def token(value: RouteKeyPart) -> str:
         return str(value).replace("/", "_").replace("\\", "_").replace(" ", "_")
 
     @classmethod
-    def join(cls, parts: tuple[object, ...] | list[object]) -> str:
+    def join(cls, parts: Sequence[RouteKeyPart]) -> str:
         if not parts:
             raise ValueError("Cannot build a stream route key with no parts.")
         return "_".join(cls.token(part) for part in parts)

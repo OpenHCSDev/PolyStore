@@ -5,17 +5,20 @@ import time
 
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import (
+    FixedStreamProducerIdentityKind,
     StreamProducerDisplayNameAuthority,
     StreamProducerIdentity,
 )
 from polystore.streaming.receivers.core import (
     DebouncedBatchEngine,
+    WindowProjectionSource,
     group_items_by_component_modes,
 )
 from polystore.streaming.receivers.napari import (
     normalize_component_layout,
     build_route_key,
 )
+from zmqruntime.viewer_protocol import ViewerBatchDisplayPayload
 
 class PipelineProducerFixture:
     """Nominal producer fixtures for receiver-core tests."""
@@ -83,9 +86,11 @@ def test_group_items_by_component_modes_keys_windows_by_producer_identity() -> N
     component_order = ["well", "channel"]
 
     grouped = group_items_by_component_modes(
-        items,
-        component_modes=component_modes,
-        component_order=component_order,
+        WindowProjectionSource.from_wire_payloads(items),
+        display_layout=ViewerBatchDisplayPayload(
+            component_modes=component_modes,
+            component_order=component_order,
+        ),
     )
 
     assert grouped.window_components == []
@@ -94,11 +99,33 @@ def test_group_items_by_component_modes_keys_windows_by_producer_identity() -> N
     assert grouped.slice_components == []
     assert grouped.fixed_window_labels[
         "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_artifact_object_labels"
-    ] == [("producer", "3. Segment Nuclei")]
+    ] == (("producer", "3. Segment Nuclei"),)
     assert set(grouped.windows) == {
         "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_artifact_object_labels",
         "origin_pipeline_kind_main_out_main_step_1_name_RawLoad",
     }
+
+
+def test_group_items_by_component_modes_rejects_missing_metadata() -> None:
+    producer = PipelineProducerFixture.main_output(
+        step_name="RawLoad",
+        pipeline_position=1,
+    )
+
+    try:
+        group_items_by_component_modes(
+            WindowProjectionSource.from_wire_payloads(
+                [{"producer_identity": producer.to_payload()}]
+            ),
+            display_layout=ViewerBatchDisplayPayload(
+                component_modes={"well": "window"},
+                component_order=["well"],
+            ),
+        )
+    except ValueError as error:
+        assert "metadata" in str(error)
+    else:
+        raise AssertionError("missing metadata must fail loudly")
 
 
 def test_stream_producer_display_name_authority_matches_pipeline_editor_indexing() -> None:
@@ -112,7 +139,10 @@ def test_stream_producer_display_name_authority_matches_pipeline_editor_indexing
         pipeline_position=8,
         artifact_kind="object_labels",
     )
-    manual_output = StreamProducerIdentity.manual("selected_rois")
+    manual_output = StreamProducerIdentity.fixed_output(
+        FixedStreamProducerIdentityKind.MANUAL,
+        "selected_rois",
+    )
 
     assert (
         StreamProducerDisplayNameAuthority.producer_label(main_output)
@@ -146,15 +176,19 @@ def test_napari_route_key_builder_uses_producer_slice_components_and_payload_typ
     key_image = build_route_key(
         producer_identity=producer,
         component_info=component_info,
-        component_modes=component_modes,
-        component_order=component_order,
+        display_layout=ViewerBatchDisplayPayload(
+            component_modes=component_modes,
+            component_order=component_order,
+        ),
         data_type=StreamingDataType.IMAGE,
     )
     key_shapes = build_route_key(
         producer_identity=producer,
         component_info=component_info,
-        component_modes=component_modes,
-        component_order=component_order,
+        display_layout=ViewerBatchDisplayPayload(
+            component_modes=component_modes,
+            component_order=component_order,
+        ),
         data_type=StreamingDataType.SHAPES,
     )
 
@@ -162,15 +196,38 @@ def test_napari_route_key_builder_uses_producer_slice_components_and_payload_typ
     assert key_shapes == "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_well_A01_site_3_shapes"
 
 
+def test_napari_route_key_builder_rejects_missing_slice_component() -> None:
+    producer = PipelineProducerFixture.artifact_output(
+        output_key="Nuclei",
+        step_name="Segment",
+        pipeline_position=2,
+    )
+
+    try:
+        build_route_key(
+            producer_identity=producer,
+            component_info={"well": "A01"},
+            display_layout=ViewerBatchDisplayPayload(
+                component_modes={"well": "slice", "site": "slice"},
+                component_order=["well", "site"],
+            ),
+            data_type=StreamingDataType.IMAGE,
+        )
+    except ValueError as error:
+        assert "site" in str(error)
+    else:
+        raise AssertionError("missing slice component must fail loudly")
+
+
 def test_normalize_component_layout_dict_config() -> None:
-    component_modes, component_order = normalize_component_layout(
+    display_layout = normalize_component_layout(
         {
             "component_modes": {"well": "slice", "channel": "stack"},
             "component_order": ["well", "channel"],
         }
     )
-    assert component_order == ["well", "channel"]
-    assert component_modes["well"] == "slice"
+    assert list(display_layout.component_order) == ["well", "channel"]
+    assert display_layout.component_modes["well"] == "slice"
 
 
 def test_debounced_batch_engine_flush_processes_pending_once() -> None:

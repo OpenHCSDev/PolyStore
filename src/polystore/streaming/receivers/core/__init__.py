@@ -7,6 +7,8 @@ from polystore.streaming.receivers.core.contracts import (
 )
 from polystore.streaming.receivers.core.window_projection import (
     GroupedWindowItems,
+    WindowProjectionPayloadProvider,
+    WindowProjectionSource,
     group_items_by_component_modes,
 )
 
@@ -15,6 +17,7 @@ __all__ = [
     "WindowProjectionABC",
     "DebouncedBatchEngine",
     "GroupedWindowItems",
+    "WindowProjectionPayloadProvider",
+    "WindowProjectionSource",
     "group_items_by_component_modes",
 ]
-

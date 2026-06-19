@@ -57,6 +57,7 @@ class FijiBatchProcessor:
         display_config: Dict[str, Any],
         images_dir: str,
         component_names_metadata: Dict[str, Any],
+        component_value_domain: Dict[str, Any],
     ):
         """
         Add items to the batch for processing.
@@ -67,11 +68,13 @@ class FijiBatchProcessor:
             display_config: Display configuration dict
             images_dir: Artifact image directory context.
             component_names_metadata: Component name mappings for dimension labels
+            component_value_domain: Component value domains for axis cardinality
         """
         context = {
             "display_config": display_config,
             "images_dir": images_dir,
             "component_names_metadata": component_names_metadata,
+            "component_value_domain": component_value_domain,
             "window_key": window_key,
         }
         self._engine.enqueue(items=items, context=context)
@@ -90,15 +93,17 @@ class FijiBatchProcessor:
         display_config = context["display_config"]
         images_dir = context["images_dir"]
         component_names_metadata = context["component_names_metadata"]
+        component_value_domain = context["component_value_domain"]
         window_key = context["window_key"]
         logger.info(
             "FijiBatchProcessor: Processing batch of %d items for window '%s'",
             len(items),
             window_key,
         )
-        self.fiji_server._process_items_from_batch(
+        self.fiji_server.batch_processor.process_wire_items(
             items=items,
-            display_config_dict=display_config,
+            display_config=display_config,
             images_dir=images_dir,
             component_names_metadata=component_names_metadata,
+            component_value_domain=component_value_domain,
         )

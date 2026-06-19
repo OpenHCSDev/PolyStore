@@ -9,6 +9,8 @@ from polystore.streaming.receivers.core import (
     WindowProjectionABC,
     DebouncedBatchEngine,
     GroupedWindowItems,
+    WindowProjectionPayloadProvider,
+    WindowProjectionSource,
     group_items_by_component_modes,
 )
 from polystore.streaming.receivers.fiji.fiji_batch_processor import FijiBatchProcessor
@@ -23,6 +25,8 @@ __all__ = [
     "WindowProjectionABC",
     "DebouncedBatchEngine",
     "GroupedWindowItems",
+    "WindowProjectionPayloadProvider",
+    "WindowProjectionSource",
     "group_items_by_component_modes",
     "FijiBatchProcessor",
     "NapariBatchProcessor",

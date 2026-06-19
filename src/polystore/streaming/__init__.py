@@ -10,7 +10,32 @@ This package contains:
 # This allows both:
 #   from polystore.streaming import StreamingBackend
 #   from polystore.streaming.receivers import FijiBatchProcessor
-from polystore.streaming._streaming_backend import StreamingBackend
+from polystore.streaming._streaming_backend import (
+    FilePath,
+    RoiStreamPayload,
+    StreamablePayload,
+    StreamingBatchItemPreparationAuthority,
+    StreamingBatchMessageBuilder,
+    StreamingBatchMessageRequest,
+    StreamingBuiltBatch,
+    StreamingPreparedBatchItems,
+    StreamingBackend,
+    StreamingComponentNamesRequest,
+    StreamingItemPreparationRequest,
+    ViewerDisplayPayloadExtra,
+)
 
-__all__ = ["StreamingBackend"]
-
+__all__ = [
+    "FilePath",
+    "RoiStreamPayload",
+    "StreamablePayload",
+    "StreamingBatchItemPreparationAuthority",
+    "StreamingBatchMessageBuilder",
+    "StreamingBatchMessageRequest",
+    "StreamingBuiltBatch",
+    "StreamingPreparedBatchItems",
+    "StreamingBackend",
+    "StreamingComponentNamesRequest",
+    "StreamingItemPreparationRequest",
+    "ViewerDisplayPayloadExtra",
+]

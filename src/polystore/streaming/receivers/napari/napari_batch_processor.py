@@ -1,18 +1,28 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from collections.abc import Sequence
+from typing import Generic, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
+NapariBatchItemT = TypeVar("NapariBatchItemT")
+NapariDisplayPayloadT = TypeVar("NapariDisplayPayloadT")
+NapariComponentNamesMetadataT = TypeVar("NapariComponentNamesMetadataT")
 
 
 @dataclass(frozen=True)
-class NapariBatchDisplayRequest:
+class NapariBatchDisplayRequest(
+    Generic[
+        NapariBatchItemT,
+        NapariDisplayPayloadT,
+        NapariComponentNamesMetadataT,
+    ]
+):
     """Nominal request for one debounced Napari display update."""
 
     layer_key: str
-    items: List[Dict[str, Any]]
-    display_payload: object
-    component_names_metadata: Dict[str, Any]
+    items: Sequence[NapariBatchItemT]
+    display_payload: NapariDisplayPayloadT
+    component_names_metadata: NapariComponentNamesMetadataT
 
     def dispatch_to(self, napari_server) -> None:
         napari_server.display_layer_batch(
@@ -61,9 +71,9 @@ class NapariBatchProcessor:
     def add_items(
         self,
         layer_key: str,
-        items: List[Dict[str, Any]],
-        display_payload: object,
-        component_names_metadata: Dict[str, Any],
+        items: Sequence[NapariBatchItemT],
+        display_payload: NapariDisplayPayloadT,
+        component_names_metadata: NapariComponentNamesMetadataT,
     ):
         """
         Display items already released by the Qt-thread debounce.
@@ -71,7 +81,7 @@ class NapariBatchProcessor:
         Args:
             layer_key: Unique identifier for the layer
             items: List of items to add (images or ROIs)
-            display_payload: Viewer-owned display configuration object
+            display_payload: Viewer-owned display payload object
             component_names_metadata: Component name mappings for dimension labels
         """
         NapariBatchDisplayRequest(
