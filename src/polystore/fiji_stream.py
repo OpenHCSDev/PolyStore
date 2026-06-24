@@ -25,10 +25,9 @@ from .streaming import (
     StreamingItemPreparationRequest,
     ViewerDisplayPayloadExtra,
 )
-from .streaming.viewer_transport import ViewerStreamRequest
+from .streaming.viewer_transport import ViewerStreamItemPayload, ViewerStreamRequest
 from .roi_converters import FijiROIConverter
 from zmqruntime.viewer_protocol import (
-    ViewerBatchContextWireField,
     ViewerBatchItemWireField,
     ViewerBatchWireField,
     ViewerWireMapping,
@@ -87,7 +86,7 @@ class FijiStreamingBackend(StreamingBackend):
     VIEWER_TYPE = 'fiji'
     SHM_PREFIX = 'fiji_'
 
-    def _display_payload_extra(
+    def display_payload_extra(
         self,
         stream_request: ViewerStreamRequest,
     ) -> ViewerDisplayPayloadExtra:
@@ -95,17 +94,13 @@ class FijiStreamingBackend(StreamingBackend):
             FijiDisplayPayload.from_display_config(stream_request.display_config)
         )
 
-    def _message_extra(
+    def message_extra(
         self,
         stream_request: ViewerStreamRequest,
     ) -> dict[str, ViewerWireValue]:
-        message_extra = stream_request.message_extra_payload()
-        message_extra[ViewerBatchContextWireField.IMAGES_DIR.value] = (
-            stream_request.images_dir
-        )
-        return message_extra
+        return stream_request.message_extra_payload_with_images_dir()
 
-    def _component_names_request(
+    def component_names_request(
         self,
         stream_request: ViewerStreamRequest,
     ) -> StreamingComponentNamesRequest:
@@ -115,7 +110,7 @@ class FijiStreamingBackend(StreamingBackend):
             verbose=True,
         )
 
-    def _after_batch_message_built(
+    def after_batch_message_built(
         self,
         stream_request: ViewerStreamRequest,
         built_batch: StreamingBuiltBatch,
@@ -173,13 +168,13 @@ class FijiStreamingBackend(StreamingBackend):
     def _prepare_batch_item(
         self,
         request: StreamingItemPreparationRequest,
-    ) -> tuple[ViewerWireMapping, str]:
+    ) -> ViewerStreamItemPayload:
         logger.info(
             "🔍 FIJI BACKEND: Detected data type: %s for path: %s",
-            request.data_type,
+            request.streaming_data_type,
             request.item_path.value,
         )
-        if request.data_type == StreamingDataType.SHAPES:
+        if request.streaming_data_type == StreamingDataType.SHAPES:
             logger.info(
                 "🔍 FIJI BACKEND: Preparing ROI data for %s",
                 request.item_path.value,
@@ -188,7 +183,7 @@ class FijiStreamingBackend(StreamingBackend):
                 request.data,
                 request.item_path.value,
             )
-            data_type_value = StreamingDataType.ROIS.value
+            output_streaming_data_type = StreamingDataType.ROIS
             logger.info(
                 "🔍 FIJI BACKEND: ROI data prepared: %d ROIs",
                 FijiRoiPayload.count(item_data),
@@ -202,8 +197,11 @@ class FijiStreamingBackend(StreamingBackend):
                 request.data,
                 request.item_path.value,
             )
-            data_type_value = StreamingDataType.IMAGE.value
-        return item_data, data_type_value
+            output_streaming_data_type = StreamingDataType.IMAGE
+        return ViewerStreamItemPayload(
+            item_payload=item_data,
+            streaming_data_type=output_streaming_data_type,
+        )
 
     # cleanup() now inherited from ABC
 

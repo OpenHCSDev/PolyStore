@@ -1,7 +1,9 @@
 import pytest
 
 from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming.viewer_transport import BatchViewerStreamSourceMetadata
 from polystore.streaming.viewer_transport import ExplicitViewerTransportConfig
+from polystore.streaming.viewer_transport import IndexedViewerStreamSourceMetadata
 from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
 from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
@@ -9,6 +11,7 @@ from polystore.streaming.viewer_transport import ViewerFilenameParserABC
 from polystore.streaming.viewer_transport import ViewerMetadataHandlerABC
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
 from polystore.streaming.viewer_transport import ViewerStreamRequest
+from polystore.streaming.viewer_transport import ViewerStreamProducer
 from polystore.streaming.viewer_transport import ViewerStreamSource
 from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
 from polystore.streaming.viewer_transport import ViewerStreamSourceMetadata
@@ -42,7 +45,9 @@ class MicroscopeHandlerFixture(ViewerMicroscopeHandlerABC):
     metadata_handler = MetadataHandlerFixture()
 
 
-EMPTY_SOURCE_METADATA = ViewerStreamSourceMetadata()
+EMPTY_SOURCE_METADATA = BatchViewerStreamSourceMetadata(
+    {"well": "A01", "site": 1, "channel": 1}
+)
 
 
 def stream_source(
@@ -68,11 +73,13 @@ def required_stream_request(**kwargs):
         ),
         "display_config": DisplayConfigFixture(),
         "source": stream_source(),
-        "producer_identity": StreamProducerIdentity.pipeline_output(
-            output_kind="main",
-            output_key="main",
-            step_name="IdentifyPrimaryObjects",
-            pipeline_position=2,
+        "producer": ViewerStreamProducer.from_identity(
+            StreamProducerIdentity.pipeline_output(
+                output_kind="main",
+                output_key="main",
+                step_name="IdentifyPrimaryObjects",
+                pipeline_position=2,
+            )
         ),
     }
     values.update(kwargs)
@@ -82,8 +89,8 @@ def required_stream_request(**kwargs):
 def test_viewer_stream_kwargs_declares_explicit_backend_request() -> None:
     stream_kwargs = required_stream_request(
         source=stream_source(
-            ViewerStreamSourceMetadata(
-                component_metadata_by_path=(
+            IndexedViewerStreamSourceMetadata(
+                metadata_by_index=(
                     {"well": "A01", "site": 1},
                     {"well": "A01", "site": 2},
                 ),
@@ -101,14 +108,13 @@ def test_viewer_stream_kwargs_declares_explicit_backend_request() -> None:
     assert stream_kwargs.host == "127.0.0.1"
     assert stream_kwargs.port == 5555
     assert stream_kwargs.transport_mode is TransportMode.TCP
-    assert stream_kwargs.producer_identity == StreamProducerIdentity.pipeline_output(
+    assert stream_kwargs.producer.identity == StreamProducerIdentity.pipeline_output(
         output_kind="main",
         output_key="main",
         step_name="IdentifyPrimaryObjects",
         pipeline_position=2,
     )
-    assert stream_kwargs.source.metadata.component_metadata is None
-    assert stream_kwargs.source.metadata.component_metadata_by_path == (
+    assert stream_kwargs.source.metadata.metadata_by_index == (
                 {"well": "A01", "site": 1},
                 {"well": "A01", "site": 2},
     )
@@ -116,14 +122,9 @@ def test_viewer_stream_kwargs_declares_explicit_backend_request() -> None:
     assert stream_kwargs.transport_config.resolve(default_config) is default_config
 
 
-def test_viewer_stream_kwargs_rejects_mixed_source_metadata() -> None:
-    with pytest.raises(ValueError, match="either component_metadata"):
-        ViewerStreamSourceMetadata(
-            component_metadata={"well": "A01", "site": 1},
-            component_metadata_by_path=(
-                {"well": "A01", "site": 1},
-            ),
-        )
+def test_viewer_stream_source_metadata_is_abstract_boundary() -> None:
+    with pytest.raises(TypeError, match="abstract"):
+        ViewerStreamSourceMetadata()
 
 
 def test_viewer_stream_backend_rejects_flat_kwargs() -> None:

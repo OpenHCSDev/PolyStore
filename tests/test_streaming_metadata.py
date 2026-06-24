@@ -6,11 +6,18 @@ from polystore.streaming._streaming_backend import StreamingBackend
 from polystore.streaming._streaming_backend import StreamingBatchItemPreparationAuthority
 from polystore.streaming._streaming_backend import StreamingBatchMessageBuilder
 from polystore.streaming._streaming_backend import StreamingBatchMessageRequest
+from polystore.streaming._streaming_backend import StreamingComponentNamesRequest
 from polystore.streaming._streaming_backend import StreamingItemPath
 from polystore.streaming._streaming_backend import StreamingItemPreparationRequest
+from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming.viewer_transport import BatchViewerStreamSourceMetadata
+from polystore.streaming.viewer_transport import IndexedViewerStreamSourceMetadata
+from polystore.streaming.viewer_transport import PathMappedViewerStreamSourceMetadata
 from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
+from polystore.streaming.viewer_transport import ViewerStreamProducer
+from polystore.streaming.viewer_transport import ViewerStreamItemPayload
 from polystore.streaming.viewer_transport import ViewerStreamRequest
 from polystore.streaming.viewer_transport import ViewerStreamSource
 from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
@@ -25,7 +32,10 @@ class MetadataProbeStreamingBackend(StreamingBackend):
     SHM_PREFIX = "probe_"
 
     def _prepare_batch_item(self, request: StreamingItemPreparationRequest):
-        return {"path": request.item_path.wire_value, "payload": "ok"}, "image"
+        return ViewerStreamItemPayload(
+            item_payload={"path": request.item_path.wire_value, "payload": "ok"},
+            streaming_data_type=StreamingDataType.IMAGE,
+        )
 
     def save_batch(self, data_list, file_paths, **kwargs):
         raise NotImplementedError
@@ -50,7 +60,9 @@ PRODUCER_IDENTITY = StreamProducerIdentity(
 )
 
 
-EMPTY_SOURCE_METADATA = ViewerStreamSourceMetadata()
+EMPTY_SOURCE_METADATA = BatchViewerStreamSourceMetadata(
+    {"well": "A01", "site": 1, "channel": 1}
+)
 
 
 def stream_request(
@@ -74,7 +86,7 @@ def stream_request(
             ),
             metadata=source_metadata,
         ),
-        producer_identity=PRODUCER_IDENTITY,
+        producer=ViewerStreamProducer.from_identity(PRODUCER_IDENTITY),
         message_extra=message_extra,
     )
 
@@ -84,6 +96,9 @@ def batch_message_request(data_list, file_paths, viewer_request):
         data_list=data_list,
         file_paths=file_paths,
         stream_request=viewer_request,
+        component_names_request=(
+            StreamingComponentNamesRequest.from_stream_request(viewer_request)
+        ),
     )
 
 
@@ -99,8 +114,8 @@ def microscope_handler_with_parser(parser):
     return microscope_handler
 
 
-def test_streaming_source_metadata_rejects_missing_component_metadata() -> None:
-    with pytest.raises(ValueError, match="explicit component_metadata"):
+def test_streaming_source_metadata_is_abstract_boundary() -> None:
+    with pytest.raises(TypeError, match="abstract"):
         ViewerStreamSourceMetadata().component_metadata_for_item(
             "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip",
             0,
@@ -113,13 +128,16 @@ def test_streaming_batch_items_reject_unparsed_artifact_filename() -> None:
         SimpleNamespace(parse_filename=lambda _filename: None)
     )
 
-    with pytest.raises(ValueError, match="explicit component_metadata"):
+    with pytest.raises(KeyError, match="path-mapped component metadata"):
         StreamingBatchItemPreparationAuthority.prepare(
             backend,
             batch_message_request(
                 [object()],
                 ["A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"],
-                stream_request(microscope_handler),
+                stream_request(
+                    microscope_handler,
+                    PathMappedViewerStreamSourceMetadata(metadata_by_path={}),
+                ),
             )
         )
 
@@ -137,8 +155,8 @@ def test_streaming_batch_items_accept_per_path_component_metadata() -> None:
             ["A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"],
             stream_request(
                 microscope_handler,
-                ViewerStreamSourceMetadata(
-                    component_metadata_by_path={
+                PathMappedViewerStreamSourceMetadata(
+                    metadata_by_path={
                         "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip": {
                             "well": "A01",
                             "site": 1,
@@ -162,8 +180,8 @@ def test_streaming_batch_items_accept_per_path_component_metadata() -> None:
 
 
 def test_streaming_item_component_metadata_preserves_explicit_fields() -> None:
-    metadata = ViewerStreamSourceMetadata(
-        component_metadata={"well": "A01", "site": 1, "channel": 1},
+    metadata = BatchViewerStreamSourceMetadata(
+        {"well": "A01", "site": 1, "channel": 1},
     ).component_metadata_for_item(
         StreamingItemPath("A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip").value,
         0,
@@ -189,8 +207,8 @@ def test_streaming_batch_message_declares_component_value_domain() -> None:
             ["A01_s001_w1_z001_t001.tif", "A01_s002_w2_z001_t001.tif"],
             stream_request(
                 microscope_handler,
-                ViewerStreamSourceMetadata(
-                    component_metadata_by_path=(
+                IndexedViewerStreamSourceMetadata(
+                    metadata_by_index=(
                         {"well": "A01", "site": 1, "channel": 1},
                         {"well": "A01", "site": 2, "channel": 2},
                     ),
@@ -219,8 +237,8 @@ def test_streaming_batch_message_honors_declared_component_metadata_payload() ->
             ["A01_s001_w1_z001_t001.tif"],
             stream_request(
                 microscope_handler,
-                ViewerStreamSourceMetadata(
-                    component_metadata={"well": "A01", "site": 1, "channel": 1},
+                BatchViewerStreamSourceMetadata(
+                    {"well": "A01", "site": 1, "channel": 1}
                 ),
                 message_extra={
                     "component_value_domain": {"well": ["A01", "B01"]},
@@ -250,8 +268,8 @@ def test_streaming_batch_message_rejects_partial_declared_component_metadata_pay
                 ["A01_s001_w1_z001_t001.tif"],
                 stream_request(
                     microscope_handler,
-                    ViewerStreamSourceMetadata(
-                        component_metadata={"well": "A01", "site": 1, "channel": 1},
+                    BatchViewerStreamSourceMetadata(
+                        {"well": "A01", "site": 1, "channel": 1}
                     ),
                     message_extra={"component_value_domain": {"well": ["A01"]}},
                 ),
@@ -261,8 +279,8 @@ def test_streaming_batch_message_rejects_partial_declared_component_metadata_pay
 
 def test_streaming_component_metadata_rejects_invalid_explicit_metadata() -> None:
     with pytest.raises(TypeError, match="must be a mapping"):
-        ViewerStreamSourceMetadata(
-            component_metadata=["not", "metadata"],
+        BatchViewerStreamSourceMetadata(
+            ["not", "metadata"],
         ).component_metadata_for_item(
             StreamingItemPath("A01_s001_w1_z001_t001.TIF").value,
             0,

@@ -1,8 +1,12 @@
 import numpy as np
+import pytest
 
+from polystore.disk import DiskStorageBackend
+from polystore.roi import ROI
 from polystore.roi import MaskShape
 from polystore.roi import PolygonShape
 from polystore.roi import load_rois_from_json
+from polystore.roi import load_rois_from_zip
 from polystore.roi import extract_rois_from_labeled_mask
 
 
@@ -53,6 +57,30 @@ def test_extract_rois_from_labeled_mask_records_source_canvas_shape():
 
     assert len(rois) == 1
     assert rois[0].metadata["source_spatial_shape_yx"] == (100, 200)
+
+
+def test_roi_zip_roundtrip_preserves_source_canvas_shape_metadata(tmp_path):
+    pytest.importorskip("roifile")
+    path = tmp_path / "labels.roi.zip"
+    rois = [
+        ROI(
+            shapes=[
+                PolygonShape(
+                    np.array(
+                        [[10, 20], [10, 22], [12, 22], [12, 20]],
+                        dtype=float,
+                    )
+                )
+            ],
+            metadata={"label": 7, "source_spatial_shape_yx": (100, 200)},
+        )
+    ]
+
+    DiskStorageBackend()._save_rois(rois, path)
+    loaded_rois = load_rois_from_zip(path)
+
+    assert loaded_rois[0].metadata["label"] == 7
+    assert loaded_rois[0].metadata["source_spatial_shape_yx"] == (100, 200)
 
 
 def test_load_rois_from_json_decodes_shapes_through_nominal_registry(tmp_path):

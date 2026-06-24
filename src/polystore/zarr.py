@@ -11,9 +11,8 @@ import fnmatch
 import logging
 import os
 import threading
-from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import zarr
@@ -29,83 +28,13 @@ ATTR_FILENAME_MAP = f"{_ATTR_PREFIX}_filename_map"
 ATTR_OUTPUT_PATHS = f"{_ATTR_PREFIX}_output_paths"
 ATTR_DIMENSIONS = f"{_ATTR_PREFIX}_dimensions"
 DEFAULT_PLATE_NAME = os.getenv("POLYSTORE_PLATE_NAME", "Polystore_Plate")
+DISK_PASSTHROUGH_EXTENSIONS = ('.json', '.csv', '.txt', '.roi.zip', '.zip')
 
 
 def _get_attr(attrs: Dict[str, Any], key: str):
     if key in attrs:
         return attrs[key]
     return None
-
-
-# Decorator for passthrough to disk backend
-def passthrough_to_disk(*extensions: str, ensure_parent_dir: bool = False):
-    """
-    Decorator to automatically passthrough certain file types to disk backend.
-
-    Zarr only supports array data, so non-array files (JSON, CSV, TXT, ROI.ZIP, etc.)
-    are automatically delegated to the disk backend.
-
-    Uses introspection to automatically find the path parameter (any parameter with 'path' in its name).
-
-    Args:
-        *extensions: File extensions to passthrough (e.g., '.json', '.csv', '.txt')
-        ensure_parent_dir: If True, ensure parent directory exists before calling disk backend (for save operations)
-
-    Usage:
-        @passthrough_to_disk('.json', '.csv', '.txt', '.roi.zip', '.zip', ensure_parent_dir=True)
-        def save(self, data, output_path, **kwargs):
-            # Zarr-specific save logic here
-            ...
-    """
-    import inspect
-
-    def decorator(method: Callable) -> Callable:
-        # Use introspection to find the path parameter index at decoration time
-        sig = inspect.signature(method)
-        path_param_index = None
-
-        for i, (param_name, param) in enumerate(sig.parameters.items()):
-            if param_name == 'self':
-                continue
-            # Find first parameter with 'path' in its name
-            if 'path' in param_name.lower():
-                # Adjust for self parameter (subtract 1 since we skip 'self' in args)
-                path_param_index = i - 1
-                break
-
-        if path_param_index is None:
-            raise ValueError(f"No path parameter found in {method.__name__} signature. "
-                           f"Expected a parameter with 'path' in its name.")
-
-        @wraps(method)
-        def wrapper(self, *args, **kwargs):
-            # Extract path from args at the discovered index
-            path_arg = None
-
-            if len(args) > path_param_index:
-                arg = args[path_param_index]
-                if isinstance(arg, (str, Path)):
-                    path_arg = str(arg)
-
-            # Check if path matches passthrough extensions
-            if path_arg and any(path_arg.endswith(ext) for ext in extensions):
-                from .constants import Backend
-                from .backend_registry import get_backend_instance
-                disk_backend = get_backend_instance(Backend.DISK.value)
-
-                # Ensure parent directory exists if requested (for save operations)
-                if ensure_parent_dir:
-                    parent_dir = Path(path_arg).parent
-                    disk_backend.ensure_directory(parent_dir)
-
-                # Call the same method on disk backend
-                return getattr(disk_backend, method.__name__)(*args, **kwargs)
-
-            # Otherwise, call the original method
-            return method(self, *args, **kwargs)
-
-        return wrapper
-    return decorator
 
 
 def _load_ome_zarr():
@@ -175,11 +104,11 @@ except ImportError:
     FCNTL_AVAILABLE = False
 
 from .constants import Backend
-from .base import StorageBackend
+from .base import PicklableBackend, StorageBackend
 from .exceptions import StorageResolutionError
 
 
-class ZarrStorageBackend(StorageBackend):
+class ZarrStorageBackend(StorageBackend, PicklableBackend):
     """Zarr storage backend with automatic registration."""
     _backend_type = Backend.ZARR.value
     supports_arbitrary_files = False  # Class attribute: zarr only handles array data
@@ -214,16 +143,26 @@ class ZarrStorageBackend(StorageBackend):
         if zarr_config is None:
             zarr_config = ZarrConfig()
 
+        self._configure(zarr_config)
+
+    def _configure(self, zarr_config: "ZarrConfig") -> None:
         self.config = zarr_config
-
-        # Convenience attributes
         self.compression_level = zarr_config.compression_level
-
-        # Create actual compressor from config (shuffle always enabled for Blosc)
-        self.compressor = self.config.compressor.create_compressor(
+        self.compressor = self.config.compressor_factory.create(
             self.config.compression_level,
-            shuffle=True  # Always enable shuffle for better compression
+            shuffle=True,
         )
+
+    def get_connection_params(self) -> Optional[Dict[str, Any]]:
+        return {"zarr_config": self.config}
+
+    def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
+        from .config import ZarrConfig
+
+        if params is None:
+            self._configure(ZarrConfig())
+            return
+        self._configure(params["zarr_config"])
 
     def _get_compressor(self) -> Optional[Any]:
         """
@@ -232,25 +171,36 @@ class ZarrStorageBackend(StorageBackend):
         Returns:
             Configured compressor instance or None for no compression
         """
-        if self.compressor is None:
-            return None
-
-        # If compression_level is specified and compressor supports it
-        if self.compression_level is not None:
-            # Check if compressor has level parameter
-            if hasattr(self.compressor, '__class__'):
-                try:
-                    # Create new instance with compression level
-                    compressor_class = self.compressor.__class__
-                    if 'level' in compressor_class.__init__.__code__.co_varnames:
-                        return compressor_class(level=self.compression_level)
-                    elif 'clevel' in compressor_class.__init__.__code__.co_varnames:
-                        return compressor_class(clevel=self.compression_level)
-                except (AttributeError, TypeError):
-                    # Fall back to original compressor if level setting fails
-                    pass
-
         return self.compressor
+
+    @staticmethod
+    def _as_cpu_array(data: Any) -> Any:
+        try:
+            import cupy
+        except ImportError:
+            pass
+        else:
+            if isinstance(data, cupy.ndarray):
+                return data.get()
+
+        try:
+            import torch
+        except ImportError:
+            pass
+        else:
+            if isinstance(data, torch.Tensor):
+                return data.cpu().numpy()
+
+        try:
+            import jax
+            from jax import Array as JaxArray
+        except ImportError:
+            pass
+        else:
+            if isinstance(data, JaxArray):
+                return jax.device_get(data)
+
+        return data
 
     def _calculate_chunks(self, data_shape: Tuple[int, ...]) -> Tuple[int, ...]:
         """
@@ -304,7 +254,6 @@ class ZarrStorageBackend(StorageBackend):
         store = zarr.DirectoryStore(str(store_path), dimension_separator='/')
         return store, relative_key
 
-    @passthrough_to_disk('.json', '.csv', '.txt', '.roi.zip', '.zip', ensure_parent_dir=True)
     def save(self, data: Any, output_path: Union[str, Path], **kwargs):
         """
         Save data to Zarr at the given output_path.
@@ -316,7 +265,15 @@ class ZarrStorageBackend(StorageBackend):
             FileExistsError: If destination key already exists
             StorageResolutionError: If creation fails
         """
-        # Zarr-specific save logic (non-array files automatically passthrough to disk)
+        output_path_text = str(output_path)
+        if output_path_text.endswith(DISK_PASSTHROUGH_EXTENSIONS):
+            from .backend_registry import get_backend_instance
+
+            disk_backend = get_backend_instance(Backend.DISK.value)
+            disk_backend.ensure_directory(Path(output_path_text).parent)
+            disk_backend.save(data, output_path, **kwargs)
+            return
+
         store, key = self._split_store_and_key(output_path)
         group = zarr.group(store=store)
 
@@ -470,17 +427,7 @@ class ZarrStorageBackend(StorageBackend):
         logger.debug(f"Saving batch for chunk {chunk_name} with {len(data_list)} images to row={row}, col={col}")
 
         # Convert GPU arrays to CPU arrays before saving
-        cpu_data_list = []
-        for data in data_list:
-            if hasattr(data, 'get'):  # CuPy array
-                cpu_data_list.append(data.get())
-            elif hasattr(data, 'cpu'):  # PyTorch tensor
-                cpu_data_list.append(data.cpu().numpy())
-            elif hasattr(data, 'device') and 'cuda' in str(data.device).lower():  # JAX on GPU
-                import jax
-                cpu_data_list.append(jax.device_get(data))
-            else:  # Already CPU array (NumPy, etc.)
-                cpu_data_list.append(data)
+        cpu_data_list = [self._as_cpu_array(data) for data in data_list]
 
         # Ensure parent directory exists
         store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -921,9 +868,13 @@ class ZarrStorageBackend(StorageBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to recursively delete Zarr path: {path}") from e
 
-    @passthrough_to_disk('.json', '.csv', '.txt')
     def exists(self, path: Union[str, Path]) -> bool:
-        # Zarr-specific existence check (text files automatically passthrough to disk)
+        if str(path).endswith(DISK_PASSTHROUGH_EXTENSIONS):
+            from .backend_registry import get_backend_instance
+
+            disk_backend = get_backend_instance(Backend.DISK.value)
+            return disk_backend.exists(path)
+
         path = Path(path)
 
         # If path has no file extension, treat as directory existence check
@@ -990,21 +941,36 @@ class ZarrStorageBackend(StorageBackend):
 
         try:
             obj = group[key]
-            attrs = getattr(obj, "attrs", {})
-
-            if "_symlink" not in attrs:
-                return False
-
-            # Enforce that the _symlink attr matches schema (e.g. str or list of path components)
-            if not isinstance(attrs["_symlink"], str):
-                raise StorageResolutionError(f"Invalid symlink format in Zarr attrs at: {path}")
-
-            return True
+            return self._symlink_target(obj, path) is not None
         except KeyError:
             # Key doesn't exist, so it's not a symlink
             return False
         except Exception as e:
             raise StorageResolutionError(f"Failed to inspect Zarr symlink at: {path}") from e
+
+    def _symlink_target(self, obj: Any, path: Union[str, Path]) -> str | None:
+        if not isinstance(obj, (zarr.core.Array, zarr.hierarchy.Group)):
+            raise StorageResolutionError(f"Unknown Zarr object at: {path}")
+        if "_symlink" not in obj.attrs:
+            return None
+        target = obj.attrs["_symlink"]
+        if not isinstance(target, str):
+            raise StorageResolutionError(f"Invalid symlink format in Zarr attrs at: {path}")
+        return target
+
+    def _resolve_symlink(self, group: Any, key: str) -> tuple[str, Any]:
+        seen_keys = set()
+        while True:
+            if key not in group:
+                raise FileNotFoundError(f"Zarr key does not exist: {key}")
+            obj = group[key]
+            target = self._symlink_target(obj, key)
+            if target is None:
+                return key, obj
+            if key in seen_keys:
+                raise StorageResolutionError(f"Symlink cycle detected in Zarr at: {key}")
+            seen_keys.add(key)
+            key = target
 
     def _auto_chunks(self, data: Any, chunk_divisor: int = 1) -> Tuple[int, ...]:
         shape = data.shape
@@ -1036,22 +1002,7 @@ class ZarrStorageBackend(StorageBackend):
             store, key = self._split_store_and_key(path)
             group = zarr.group(store=store)
 
-            # Resolve symlinks (Zarr-native, via .attrs)
-            seen_keys = set()
-            while True:
-                if key not in group:
-                    raise FileNotFoundError(f"Zarr key does not exist: {key}")
-                obj = group[key]
-
-                if hasattr(obj, "attrs") and "_symlink" in obj.attrs:
-                    if key in seen_keys:
-                        raise StorageResolutionError(f"Symlink cycle detected in Zarr at: {key}")
-                    seen_keys.add(key)
-                    key = obj.attrs["_symlink"]
-                    continue
-                break  # resolution complete
-
-            # Now obj is the resolved target
+            _, obj = self._resolve_symlink(group, key)
             if isinstance(obj, zarr.core.Array):
                 return True
             elif isinstance(obj, zarr.hierarchy.Group):
@@ -1090,24 +1041,8 @@ class ZarrStorageBackend(StorageBackend):
         try:
             store, key = self._split_store_and_key(path)
             group = zarr.group(store=store)
-    
-            seen_keys = set()
-    
-            # Resolve symlink chain
-            while True:
-                if key not in group:
-                    raise FileNotFoundError(f"Zarr key does not exist: {key}")
-                obj = group[key]
-    
-                if hasattr(obj, "attrs") and "_symlink" in obj.attrs:
-                    if key in seen_keys:
-                        raise StorageResolutionError(f"Symlink cycle detected in Zarr at: {key}")
-                    seen_keys.add(key)
-                    key = obj.attrs["_symlink"]
-                    continue
-                break
-            
-            # obj is resolved
+
+            _, obj = self._resolve_symlink(group, key)
             if isinstance(obj, zarr.hierarchy.Group):
                 return True
             elif isinstance(obj, zarr.core.Array):
@@ -1146,16 +1081,7 @@ class ZarrStorageBackend(StorageBackend):
         if dst_key in dst_group:
             raise FileExistsError(f"Zarr destination key already exists: {dst_key}")
     
-        obj = src_group[src_key]
-    
-        # Resolve symlinks if present
-        seen_keys = set()
-        while hasattr(obj, "attrs") and "_symlink" in obj.attrs:
-            if src_key in seen_keys:
-                raise StorageResolutionError(f"Symlink cycle detected at: {src_key}")
-            seen_keys.add(src_key)
-            src_key = obj.attrs["_symlink"]
-            obj = src_group[src_key]
+        src_key, obj = self._resolve_symlink(src_group, src_key)
     
         try:
             if src_store is dst_store:
@@ -1194,15 +1120,7 @@ class ZarrStorageBackend(StorageBackend):
         if dst_key in dst_group:
             raise FileExistsError(f"Zarr destination key already exists: {dst_key}")
 
-        obj = src_group[src_key]
-
-        seen_keys = set()
-        while hasattr(obj, "attrs") and "_symlink" in obj.attrs:
-            if src_key in seen_keys:
-                raise StorageResolutionError(f"Symlink cycle detected at: {src_key}")
-            seen_keys.add(src_key)
-            src_key = obj.attrs["_symlink"]
-            obj = src_group[src_key]
+        src_key, obj = self._resolve_symlink(src_group, src_key)
 
         try:
             obj.copy(dst_group, name=dst_key)
@@ -1230,13 +1148,8 @@ class ZarrStorageBackend(StorageBackend):
         try:
             if key in group:
                 obj = group[key]
-                attrs = getattr(obj, "attrs", {})
-                is_link = "_symlink" in attrs
-
-                if is_link:
-                    target = attrs["_symlink"]
-                    if not isinstance(target, str):
-                        raise StorageResolutionError(f"Invalid symlink format at {key}")
+                target = self._symlink_target(obj, key)
+                if target is not None:
                     return {
                         "type": "symlink",
                         "key": key,

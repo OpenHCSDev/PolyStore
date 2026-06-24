@@ -23,7 +23,7 @@ from .streaming import (
     StreamingItemPreparationRequest,
     ViewerDisplayPayloadExtra,
 )
-from .streaming.viewer_transport import ViewerStreamRequest
+from .streaming.viewer_transport import ViewerStreamItemPayload, ViewerStreamRequest
 from .roi_converters import NapariROIConverter
 from zmqruntime.viewer_protocol import (
     ViewerBatchItemWireField,
@@ -68,7 +68,7 @@ class NapariStreamingBackend(StreamingBackend):
     VIEWER_TYPE = 'napari'
     SHM_PREFIX = 'napari_'
 
-    def _display_payload_extra(
+    def display_payload_extra(
         self,
         stream_request: ViewerStreamRequest,
     ) -> ViewerDisplayPayloadExtra:
@@ -101,20 +101,21 @@ class NapariStreamingBackend(StreamingBackend):
     def _prepare_batch_item(
         self,
         request: StreamingItemPreparationRequest,
-    ) -> tuple[ViewerWireMapping, str]:
-        if request.data_type.uses_napari_vector_payload:
+    ) -> ViewerStreamItemPayload:
+        if request.streaming_data_type.uses_napari_vector_payload:
             item_data = self._prepare_shapes_data(
                 request.data,
                 request.item_path.value,
             )
-            data_type_value = request.data_type.value
         else:
             item_data = self.create_shared_memory_payload(
                 request.data,
                 request.item_path.value,
             )
-            data_type_value = request.data_type.value
-        return item_data, data_type_value
+        return ViewerStreamItemPayload(
+            item_payload=item_data,
+            streaming_data_type=request.streaming_data_type,
+        )
 
     # cleanup() now inherited from ABC
 

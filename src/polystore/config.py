@@ -13,7 +13,7 @@ class CompressorConfig:
     """Minimal compressor config used by Zarr backend when real compressors aren't provided."""
     name: str = 'none'
 
-    def create_compressor(self, level: Optional[int], shuffle: bool = True) -> Optional[Any]:
+    def create(self, level: Optional[int], shuffle: bool = True) -> Optional[Any]:
         """Return a compressor object acceptable to zarr or None to disable compression."""
         # Minimal fallback: return None (no compression)
         return None
@@ -25,3 +25,7 @@ class ZarrConfig:
     compression_level: Optional[int] = None
     compressor: CompressorConfig = field(default_factory=CompressorConfig)
     chunk_strategy: ZarrChunkStrategy = ZarrChunkStrategy.WELL
+
+    @property
+    def compressor_factory(self) -> CompressorConfig:
+        return self.compressor

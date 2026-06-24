@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import importlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
@@ -74,6 +75,30 @@ class FileFormatRegistry:
         return ext.lower() in self._writers and ext.lower() in self._readers
 
 
+@dataclass(frozen=True, slots=True)
+class DiskFileFormatRegistration:
+    """One disk file format registration with explicit dependency availability."""
+
+    file_format: FileFormat
+    writer: Callable
+    reader: Callable
+
+
+@dataclass(frozen=True, slots=True)
+class DiskGlobPattern:
+    """Nominal glob pattern used by disk file listing."""
+
+    value: str
+
+    @classmethod
+    def from_optional(cls, pattern: Optional[str]) -> "DiskGlobPattern":
+        if pattern is None:
+            return cls("*")
+        if pattern == "":
+            raise ValueError("Disk file listing pattern cannot be empty.")
+        return cls(pattern)
+
+
 class DiskStorageBackend(StorageBackend):
     """Disk storage backend with automatic registration."""
     _backend_type = Backend.DISK.value
@@ -89,33 +114,59 @@ class DiskStorageBackend(StorageBackend):
         Complex formats (CSV, JSON, TIFF, ROI.ZIP, TEXT) use custom handlers.
         Simple formats (NumPy, Torch, CuPy, JAX, TensorFlow) use library save/load directly.
         """
-        # Format handler metadata: (FileFormat enum, module_check, writer, reader)
-        # None for writer/reader means use the format's library save/load directly
-        format_handlers = [
-            # Simple formats - use library save/load directly
-            (FileFormat.NUMPY, True, np.save, np.load),
-            (FileFormat.TORCH, torch, torch.save if torch else None, torch.load if torch else None),
-            (FileFormat.JAX, (jax and jnp), self._jax_writer, self._jax_reader),
-            (FileFormat.CUPY, cupy, self._cupy_writer, self._cupy_reader),
-            (FileFormat.TENSORFLOW, tf, self._tensorflow_writer, self._tensorflow_reader),
-
-            # Complex formats - use custom handlers
-            (FileFormat.TIFF, tifffile, self._tiff_writer, self._tiff_reader),
-            (FileFormat.RASTER_IMAGE, imageio, self._image_writer, self._image_reader),
-            (FileFormat.TEXT, True, self._text_writer, self._text_reader),
-            (FileFormat.JSON, True, self._json_writer, self._json_reader),
-            (FileFormat.CSV, True, self._csv_writer, self._csv_reader),
-            (FileFormat.ROI, True, self._roi_zip_writer, self._roi_zip_reader),
-        ]
+        format_handlers = self._available_format_registrations()
 
         # Register all available formats
-        for file_format, module_available, writer, reader in format_handlers:
-            if not module_available or writer is None or reader is None:
-                continue
-
+        for registration in format_handlers:
             # Register all extensions for this format
-            for ext in file_format.extensions:
-                self.format_registry.register(ext.lower(), writer, reader)
+            for ext in registration.file_format.extensions:
+                self.format_registry.register(
+                    ext.lower(),
+                    registration.writer,
+                    registration.reader,
+                )
+
+    def _available_format_registrations(self) -> List[DiskFileFormatRegistration]:
+        registrations = [
+            DiskFileFormatRegistration(FileFormat.NUMPY, np.save, np.load),
+            DiskFileFormatRegistration(FileFormat.TEXT, self._text_writer, self._text_reader),
+            DiskFileFormatRegistration(FileFormat.JSON, self._json_writer, self._json_reader),
+            DiskFileFormatRegistration(FileFormat.CSV, self._csv_writer, self._csv_reader),
+            DiskFileFormatRegistration(FileFormat.ROI, self._roi_zip_writer, self._roi_zip_reader),
+        ]
+        if torch is not None:
+            registrations.append(
+                DiskFileFormatRegistration(FileFormat.TORCH, torch.save, torch.load)
+            )
+        if jax is not None and jnp is not None:
+            registrations.append(
+                DiskFileFormatRegistration(FileFormat.JAX, self._jax_writer, self._jax_reader)
+            )
+        if cupy is not None:
+            registrations.append(
+                DiskFileFormatRegistration(FileFormat.CUPY, self._cupy_writer, self._cupy_reader)
+            )
+        if tf is not None:
+            registrations.append(
+                DiskFileFormatRegistration(
+                    FileFormat.TENSORFLOW,
+                    self._tensorflow_writer,
+                    self._tensorflow_reader,
+                )
+            )
+        if tifffile is not None:
+            registrations.append(
+                DiskFileFormatRegistration(FileFormat.TIFF, self._tiff_writer, self._tiff_reader)
+            )
+        if imageio is not None:
+            registrations.append(
+                DiskFileFormatRegistration(
+                    FileFormat.RASTER_IMAGE,
+                    self._image_writer,
+                    self._image_reader,
+                )
+            )
+        return registrations
 
     # Format-specific writer/reader functions (pickleable)
     # Only needed for formats that require special handling beyond library save/load
@@ -367,13 +418,7 @@ class DiskStorageBackend(StorageBackend):
                 else:
                     cpu_data_list.append(np.asarray(data))
             else:
-                # Fallback conversion without arraybridge
-                if hasattr(data, "cpu") and hasattr(data, "numpy"):
-                    cpu_data_list.append(data.cpu().numpy())
-                elif hasattr(data, "get"):
-                    cpu_data_list.append(data.get())
-                else:
-                    cpu_data_list.append(np.asarray(data))
+                cpu_data_list.append(np.asarray(data))
 
         # Save converted data using existing save method
         for cpu_data, output_path in zip(cpu_data_list, output_paths):
@@ -408,7 +453,7 @@ class DiskStorageBackend(StorageBackend):
             # Use breadth-first traversal to prioritize shallower files
             files = self._list_files_breadth_first(disk_directory, pattern)
         else:
-            glob_pattern = pattern if pattern else "*"
+            glob_pattern = DiskGlobPattern.from_optional(pattern).value
             # Include both regular files and symlinks (even broken ones)
             files = [p for p in disk_directory.glob(glob_pattern) if p.is_file() or p.is_symlink()]
 
@@ -749,90 +794,36 @@ class DiskStorageBackend(StorageBackend):
             Path where ROIs were saved
         """
         import zipfile
-        import numpy as np
-        from .roi import PolygonShape, PolylineShape, MaskShape, PointShape, EllipseShape
+        from .roi import (
+            ROI_ZIP_METADATA_MEMBER,
+            ROIArchivePath,
+            roi_zip_metadata_payload,
+        )
+        from .roi_converters import FijiROIConverter
 
-        output_path = Path(output_path)
+        output_path = ROIArchivePath.from_output_path(output_path).path
 
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Ensure output path has .roi.zip extension
-        if not output_path.name.endswith('.roi.zip'):
-            output_path = output_path.with_suffix('.roi.zip')
-
-        try:
-            from roifile import ImagejRoi, ROI_TYPE
-        except ImportError:
-            logger.error("roifile library not available - cannot save ROIs")
-            raise ImportError("roifile library required for ROI saving. Install with: pip install roifile")
-
         # Create .roi.zip archive
-        roi_count = 0
+        roi_members = FijiROIConverter.rois_to_imagej_members(rois)
+        metadata_by_filename = {}
+
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for idx, roi in enumerate(rois):
-                for shape in roi.shapes:
-                    if isinstance(shape, PolygonShape):
-                        # Convert polygon to ImageJ ROI
-                        # roifile expects (x, y) coordinates, but we have (y, x)
-                        coords_xy = shape.coordinates[:, [1, 0]]  # Swap columns
-                        ij_roi = ImagejRoi.frompoints(coords_xy)
+            for roi_count, member in enumerate(roi_members, start=1):
+                roi_filename = f"{roi_count:04d}.roi"
+                imagej_roi = member.imagej_roi
+                imagej_roi.name = f"ROI_{roi_count}"
+                metadata_by_filename[roi_filename] = member.metadata
+                zf.writestr(roi_filename, imagej_roi.tobytes())
+            if metadata_by_filename:
+                zf.writestr(
+                    ROI_ZIP_METADATA_MEMBER,
+                    roi_zip_metadata_payload(metadata_by_filename),
+                )
 
-                        # Use incrementing counter for unique filenames (avoid duplicate names from label values)
-                        ij_roi.name = f"ROI_{roi_count + 1}"
-
-                        # Write to zip archive
-                        roi_bytes = ij_roi.tobytes()
-                        zf.writestr(f"{roi_count + 1:04d}.roi", roi_bytes)
-                        roi_count += 1
-
-                    elif isinstance(shape, PolylineShape):
-                        # Convert polyline to ImageJ polyline ROI
-                        # roifile expects (x, y) coordinates, but we have (y, x)
-                        coords_xy = shape.coordinates[:, [1, 0]]  # Swap columns
-                        ij_roi = ImagejRoi.frompoints(coords_xy)
-                        ij_roi.roitype = ROI_TYPE.POLYLINE
-
-                        # Use incrementing counter for unique filenames
-                        ij_roi.name = f"ROI_{roi_count + 1}"
-
-                        # Write to zip archive
-                        roi_bytes = ij_roi.tobytes()
-                        zf.writestr(f"{roi_count + 1:04d}.roi", roi_bytes)
-                        roi_count += 1
-
-                    elif isinstance(shape, PointShape):
-                        # Convert point to ImageJ ROI
-                        coords_xy = np.array([[shape.x, shape.y]])
-                        ij_roi = ImagejRoi.frompoints(coords_xy)
-
-                        ij_roi.name = f"ROI_{roi_count + 1}"
-
-                        roi_bytes = ij_roi.tobytes()
-                        zf.writestr(f"{roi_count + 1:04d}.roi", roi_bytes)
-                        roi_count += 1
-
-                    elif isinstance(shape, EllipseShape):
-                        # Convert ellipse to polygon approximation (ImageJ ROI format limitation)
-                        # Generate 64 points around the ellipse
-                        theta = np.linspace(0, 2 * np.pi, 64)
-                        x = shape.center_x + shape.radius_x * np.cos(theta)
-                        y = shape.center_y + shape.radius_y * np.sin(theta)
-                        coords_xy = np.column_stack([x, y])
-
-                        ij_roi = ImagejRoi.frompoints(coords_xy)
-                        ij_roi.name = f"ROI_{roi_count + 1}"
-
-                        roi_bytes = ij_roi.tobytes()
-                        zf.writestr(f"{roi_count + 1:04d}.roi", roi_bytes)
-                        roi_count += 1
-
-                    elif isinstance(shape, MaskShape):
-                        # Skip mask shapes - ImageJ ROI format doesn't support binary masks
-                        logger.warning(f"Skipping mask shape for ROI {idx} - not supported in ImageJ .roi format")
-                        continue
-
-        logger.info(f"Saved {roi_count} ROIs to .roi.zip archive: {output_path}")
+        logger.info(f"Saved {len(roi_members)} ROIs to .roi.zip archive: {output_path}")
         return str(output_path)
 
 

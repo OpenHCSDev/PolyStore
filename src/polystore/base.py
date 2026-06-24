@@ -10,6 +10,7 @@ that all storage backends must fulfill.
 import logging
 import threading
 from abc import ABC, abstractmethod
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 from .constants import Backend
@@ -34,12 +35,28 @@ class PicklableBackend(ABC):
 
     The pattern is:
     1. Main process: Backend stores connection params via get_connection_params()
-    2. Pickling: ProcessingContext preserves these params
+    2. Pickling: FileManager preserves these params
     3. Worker process: Backend recreates connection using set_connection_params()
 
     This uses nominal typing (ABC) not structural typing (Protocol), so
     explicit inheritance is required for isinstance() checks to work.
     """
+
+    @classmethod
+    def from_connection_params(
+        cls,
+        params: Optional[Dict[str, Any]],
+    ) -> "PicklableBackend":
+        """
+        Recreate a backend instance from worker-safe connection parameters.
+
+        The default contract is a no-argument constructor followed by
+        set_connection_params(). Backends with required constructor arguments
+        must override this method.
+        """
+        backend = cls()
+        backend.set_connection_params(params)
+        return backend
 
     @abstractmethod
     def get_connection_params(self) -> Optional[Dict[str, Any]]:
@@ -514,7 +531,7 @@ def get_backend(backend_type: str) -> DataSink:
     """
     ensure_storage_registry()
 
-    if hasattr(backend_type, "value"):
+    if isinstance(backend_type, Enum):
         backend_type = backend_type.value
     backend_key = str(backend_type).lower()
     if backend_key not in storage_registry:

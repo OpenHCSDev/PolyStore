@@ -6,11 +6,12 @@ including directory listing, existence checking, mkdir, symlink, and mirror oper
 """
 
 import logging
+from enum import Enum
 from pathlib import Path
 from typing import List, Set, Union, Tuple, Any
 
 from .formats import DEFAULT_IMAGE_EXTENSIONS
-from .base import DataSink
+from .base import DataSink, PicklableBackend
 from .exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,28 @@ class FileManager:
 
         logger.debug("FileManager initialized with registry")
 
+    def __getstate__(self) -> dict[str, Any]:
+        picklable_backends = {}
+        for backend_key, backend_instance in self.registry.items():
+            if isinstance(backend_instance, PicklableBackend):
+                picklable_backends[backend_key] = (
+                    backend_instance.get_connection_params()
+                )
+        return {"picklable_backends": picklable_backends}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        from .backend_registry import STORAGE_BACKENDS
+        from .base import ensure_storage_registry, storage_registry
+
+        ensure_storage_registry()
+        STORAGE_BACKENDS._discover()
+        for backend_key, connection_params in state["picklable_backends"].items():
+            backend_class = STORAGE_BACKENDS[backend_key]
+            storage_registry[backend_key] = backend_class.from_connection_params(
+                connection_params
+            )
+        self.registry = storage_registry
+
     def _get_backend(self, backend_name: str) -> DataSink:
         """
         Get a backend by name.
@@ -75,7 +98,7 @@ class FileManager:
         # Normalize backend name
         if backend_name is None:
             raise StorageResolutionError("Backend name must be provided")
-        if hasattr(backend_name, "value"):
+        if isinstance(backend_name, Enum):
             backend_name = backend_name.value
         backend_name = str(backend_name).lower()
 
@@ -139,14 +162,7 @@ class FileManager:
         try:
             backend_instance = self._get_backend(backend)
 
-            # If materialization context exists, merge it into kwargs
-            # This allows backends to access context like images_dir for OMERO ROI/analysis linking
-            if hasattr(self, '_materialization_context') and self._materialization_context:
-                # Merge context into kwargs (kwargs takes precedence if keys overlap)
-                merged_kwargs = {**self._materialization_context, **kwargs}
-                backend_instance.save(data, output_path, **merged_kwargs)
-            else:
-                backend_instance.save(data, output_path, **kwargs)
+            backend_instance.save(data, output_path, **kwargs)
         except StorageResolutionError: # Allow specific backend errors to propagate if they are StorageResolutionError
             raise
         except Exception as e:

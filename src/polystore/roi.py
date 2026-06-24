@@ -14,10 +14,98 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
+from zmqruntime.viewer_protocol import (
+    ViewerSourceSpatialDomainPayload,
+    ViewerSourceSpatialWireField,
+)
 
 from .constants import Backend
+from .formats import FileFormat
 
 logger = logging.getLogger(__name__)
+
+
+ROI_ZIP_EXTENSION = FileFormat.ROI.extensions[0]
+ROI_ZIP_METADATA_MEMBER = "__polystore_roi_metadata__.json"
+ROI_ZIP_SUFFIXES = tuple(Path(f"archive{ROI_ZIP_EXTENSION}").suffixes)
+ROI_TUPLE_METADATA_KEYS = frozenset(
+    (
+        "bbox",
+        "centroid",
+        "plane_indices",
+        "plane_shape",
+        ViewerSourceSpatialWireField.SOURCE_SPATIAL_SHAPE_YX.value,
+        ViewerSourceSpatialWireField.SPATIAL_ORIGIN_YX.value,
+    )
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ROIArchivePath:
+    """Normalized filesystem path for an ImageJ ROI zip archive."""
+
+    path: Path
+
+    @classmethod
+    def from_output_path(cls, output_path: Union[str, Path]) -> "ROIArchivePath":
+        path = Path(output_path)
+        if tuple(path.suffixes[-len(ROI_ZIP_SUFFIXES):]) == ROI_ZIP_SUFFIXES:
+            return cls(path)
+        return cls(path.with_suffix(ROI_ZIP_EXTENSION))
+
+
+def roi_zip_metadata_payload(metadata_by_filename: Dict[str, Dict[str, Any]]) -> str:
+    """Serialize per-ROI metadata into an ImageJ-compatible zip sidecar."""
+    import json
+
+    return json.dumps(
+        {
+            filename: _jsonable_roi_metadata(metadata)
+            for filename, metadata in metadata_by_filename.items()
+        },
+        sort_keys=True,
+    )
+
+
+def load_roi_zip_metadata(zip_file: Any) -> Dict[str, Dict[str, Any]]:
+    """Load per-ROI metadata sidecar from a .roi.zip archive."""
+    import json
+
+    if ROI_ZIP_METADATA_MEMBER not in zip_file.namelist():
+        return {}
+    payload = json.loads(zip_file.read(ROI_ZIP_METADATA_MEMBER).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"Invalid ROI metadata sidecar in {ROI_ZIP_METADATA_MEMBER}: expected mapping."
+        )
+    return {
+        str(filename): _restore_roi_metadata(metadata)
+        for filename, metadata in payload.items()
+        if isinstance(metadata, dict)
+    }
+
+
+def _jsonable_roi_metadata(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, tuple):
+        return [_jsonable_roi_metadata(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable_roi_metadata(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable_roi_metadata(item) for key, item in value.items()}
+    return value
+
+
+def _restore_roi_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    restored = dict(metadata)
+    for key in ROI_TUPLE_METADATA_KEYS:
+        value = restored.get(key)
+        if isinstance(value, list):
+            restored[key] = tuple(value)
+    return restored
 
 
 class ShapeType(Enum):
@@ -29,17 +117,26 @@ class ShapeType(Enum):
     ELLIPSE = "ellipse"
 
 
+class ShapeTypeRegistryBase(ABC):
+    """Shared declaration surface for shape-type keyed registries."""
+
+    __registry_key__ = "shape_type"
+    __skip_if_no_key__ = True
+
+    shape_type: ClassVar[ShapeType | None] = None
+
+
 class ROIShape(ABC):
     """Nominal base for all ROI shape records."""
 
-    shape_type: ShapeType
+    shape_type: ClassVar[ShapeType]
 
 
 @dataclass(frozen=True)
 class PolygonShape(ROIShape):
     """Polygon ROI shape defined by vertex coordinates."""
     coordinates: np.ndarray  # Nx2 array of (y, x) coordinates
-    shape_type: ShapeType = field(default=ShapeType.POLYGON, init=False)
+    shape_type: ClassVar[ShapeType] = ShapeType.POLYGON
 
     def __post_init__(self):
         if self.coordinates.ndim != 2 or self.coordinates.shape[1] != 2:
@@ -52,7 +149,7 @@ class PolygonShape(ROIShape):
 class PolylineShape(ROIShape):
     """Polyline ROI shape defined by path coordinates (open path, not closed polygon)."""
     coordinates: np.ndarray  # Nx2 array of (y, x) coordinates
-    shape_type: ShapeType = field(default=ShapeType.POLYLINE, init=False)
+    shape_type: ClassVar[ShapeType] = ShapeType.POLYLINE
 
     def __post_init__(self):
         if self.coordinates.ndim != 2 or self.coordinates.shape[1] != 2:
@@ -66,7 +163,7 @@ class MaskShape(ROIShape):
     """Binary mask ROI shape."""
     mask: np.ndarray  # 2D boolean array
     bbox: Tuple[int, int, int, int]  # (min_y, min_x, max_y, max_x)
-    shape_type: ShapeType = field(default=ShapeType.MASK, init=False)
+    shape_type: ClassVar[ShapeType] = ShapeType.MASK
 
     def __post_init__(self):
         if self.mask.ndim != 2:
@@ -80,7 +177,7 @@ class PointShape(ROIShape):
     """Point ROI shape."""
     y: float
     x: float
-    shape_type: ShapeType = field(default=ShapeType.POINT, init=False)
+    shape_type: ClassVar[ShapeType] = ShapeType.POINT
 
 
 @dataclass(frozen=True)
@@ -90,7 +187,7 @@ class EllipseShape(ROIShape):
     center_x: float
     radius_y: float
     radius_x: float
-    shape_type: ShapeType = field(default=ShapeType.ELLIPSE, init=False)
+    shape_type: ClassVar[ShapeType] = ShapeType.ELLIPSE
 
 
 @dataclass(frozen=True)
@@ -187,10 +284,12 @@ class TwoDimensionalLabeledMaskROIExtractor(LabeledMaskROIExtractor):
                     int(max_x + origin_x),
                 ),
             }
-            if request.source_spatial_shape_yx is not None:
-                metadata["source_spatial_shape_yx"] = tuple(
-                    int(value) for value in request.source_spatial_shape_yx
-                )
+            metadata.update(
+                ViewerSourceSpatialDomainPayload(
+                    origin_yx=request.spatial_origin_yx,
+                    source_shape_yx=request.source_spatial_shape_yx,
+                ).to_wire_mapping()
+            )
 
             shapes = []
             if request.extract_contours:
@@ -237,7 +336,6 @@ class StackedLabeledMaskROIExtractor(LabeledMaskROIExtractor):
 
     def extract(self, request: LabeledMaskROIExtractionRequest) -> List[ROI]:
         stack = request.labeled_mask
-        plane_shape = stack.shape[-2:]
         leading_shape = stack.shape[:-2]
         rois: list[ROI] = []
         for plane_indices in np.ndindex(leading_shape):
@@ -246,7 +344,7 @@ class StackedLabeledMaskROIExtractor(LabeledMaskROIExtractor):
                 min_area=request.min_area,
                 extract_contours=request.extract_contours,
                 spatial_origin_yx=request.spatial_origin_yx,
-                source_spatial_shape_yx=request.source_spatial_shape_yx or plane_shape,
+                source_spatial_shape_yx=request.source_spatial_shape_yx,
             )
             for roi in TwoDimensionalLabeledMaskROIExtractor().extract(plane_request):
                 rois.append(self._with_plane_metadata(roi, plane_indices, leading_shape))
@@ -268,22 +366,17 @@ class StackedLabeledMaskROIExtractor(LabeledMaskROIExtractor):
         )
 
 
-class ROIJsonShapeDecoder(ABC, metaclass=AutoRegisterMeta):
+class ROIJsonShapeDecoder(ShapeTypeRegistryBase, ABC, metaclass=AutoRegisterMeta):
     """Decode one serialized ROI shape variant."""
 
-    __registry_key__ = "shape_type"
-    __skip_if_no_key__ = True
-
-    shape_type: ClassVar[ShapeType | None] = None
-
     @classmethod
-    def for_serialized_shape(cls, shape_dict: Dict[str, Any]) -> "ROIJsonShapeDecoder | None":
-        shape_type = shape_dict.get("type")
+    def for_serialized_shape(cls, shape_dict: Dict[str, Any]) -> "ROIJsonShapeDecoder":
+        record = SerializedROIShapeRecord(shape_dict)
+        shape_type = record.shape_type()
         try:
             shape_key = ShapeType(shape_type)
         except ValueError:
-            logger.warning(f"Unknown shape type: {shape_type}, skipping")
-            return None
+            raise ValueError(f"Unknown ROI shape type: {shape_type!r}") from None
         return cls.__registry__[shape_key]()
 
     @abstractmethod
@@ -291,27 +384,118 @@ class ROIJsonShapeDecoder(ABC, metaclass=AutoRegisterMeta):
         """Return the concrete ROI shape represented by ``shape_dict``."""
 
 
+@dataclass(frozen=True, slots=True)
+class SerializedROIShapeRecord:
+    """Typed access to one serialized ROI shape record."""
+
+    payload: Dict[str, Any]
+
+    def shape_type(self) -> str:
+        value = self.required("type")
+        if not isinstance(value, str):
+            raise TypeError("Serialized ROI shape 'type' must be a string.")
+        return value
+
+    def coordinates(self) -> np.ndarray:
+        return np.array(self.required("coordinates"))
+
+    def mask(self) -> np.ndarray:
+        return np.array(self.required("mask"), dtype=bool)
+
+    def bbox(self) -> Tuple[int, int, int, int]:
+        return tuple(self.required("bbox"))
+
+    def point_yx(self) -> Tuple[float, float]:
+        return (self.numeric("y"), self.numeric("x"))
+
+    def ellipse(self) -> "SerializedEllipseShape":
+        return SerializedEllipseShape(
+            center_y=self.numeric("center_y"),
+            center_x=self.numeric("center_x"),
+            radius_y=self.numeric("radius_y"),
+            radius_x=self.numeric("radius_x"),
+        )
+
+    def numeric(self, key: str) -> float:
+        value = self.required(key)
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Serialized ROI shape field {key!r} must be numeric.")
+        return float(value)
+
+    def required(self, key: str) -> Any:
+        if key not in self.payload:
+            raise ValueError(f"Serialized ROI shape missing required field {key!r}.")
+        return self.payload[key]
+
+
+@dataclass(frozen=True, slots=True)
+class SerializedEllipseShape:
+    """Nominal serialized ellipse shape fields."""
+
+    center_y: float
+    center_x: float
+    radius_y: float
+    radius_x: float
+
+    def to_shape(self) -> EllipseShape:
+        return EllipseShape(
+            center_y=self.center_y,
+            center_x=self.center_x,
+            radius_y=self.radius_y,
+            radius_x=self.radius_x,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SerializedROIRecord:
+    """Typed access to one serialized ROI record."""
+
+    payload: Dict[str, Any]
+
+    def metadata(self) -> Dict[str, Any]:
+        value = self.required("metadata")
+        if not isinstance(value, dict):
+            raise TypeError("Serialized ROI 'metadata' must be a mapping.")
+        return value
+
+    def shapes(self) -> Tuple[Dict[str, Any], ...]:
+        value = self.required("shapes")
+        if not isinstance(value, list):
+            raise TypeError("Serialized ROI 'shapes' must be a list.")
+        return tuple(value)
+
+    def required(self, key: str) -> Any:
+        if key not in self.payload:
+            raise ValueError(f"Serialized ROI missing required field {key!r}.")
+        return self.payload[key]
+
+
 class PolygonROIJsonShapeDecoder(ROIJsonShapeDecoder):
     shape_type = ShapeType.POLYGON
 
     def decode(self, shape_dict: Dict[str, Any]) -> PolygonShape:
-        return PolygonShape(coordinates=np.array(shape_dict["coordinates"]))
+        return PolygonShape(
+            coordinates=SerializedROIShapeRecord(shape_dict).coordinates()
+        )
 
 
 class PolylineROIJsonShapeDecoder(ROIJsonShapeDecoder):
     shape_type = ShapeType.POLYLINE
 
     def decode(self, shape_dict: Dict[str, Any]) -> PolylineShape:
-        return PolylineShape(coordinates=np.array(shape_dict["coordinates"]))
+        return PolylineShape(
+            coordinates=SerializedROIShapeRecord(shape_dict).coordinates()
+        )
 
 
 class MaskROIJsonShapeDecoder(ROIJsonShapeDecoder):
     shape_type = ShapeType.MASK
 
     def decode(self, shape_dict: Dict[str, Any]) -> MaskShape:
+        record = SerializedROIShapeRecord(shape_dict)
         return MaskShape(
-            mask=np.array(shape_dict["mask"], dtype=bool),
-            bbox=tuple(shape_dict["bbox"]),
+            mask=record.mask(),
+            bbox=record.bbox(),
         )
 
 
@@ -319,19 +503,15 @@ class PointROIJsonShapeDecoder(ROIJsonShapeDecoder):
     shape_type = ShapeType.POINT
 
     def decode(self, shape_dict: Dict[str, Any]) -> PointShape:
-        return PointShape(y=shape_dict["y"], x=shape_dict["x"])
+        y, x = SerializedROIShapeRecord(shape_dict).point_yx()
+        return PointShape(y=y, x=x)
 
 
 class EllipseROIJsonShapeDecoder(ROIJsonShapeDecoder):
     shape_type = ShapeType.ELLIPSE
 
     def decode(self, shape_dict: Dict[str, Any]) -> EllipseShape:
-        return EllipseShape(
-            center_y=shape_dict["center_y"],
-            center_x=shape_dict["center_x"],
-            radius_y=shape_dict["radius_y"],
-            radius_x=shape_dict["radius_x"],
-        )
+        return SerializedROIShapeRecord(shape_dict).ellipse().to_shape()
 
 
 def extract_rois_from_labeled_mask(
@@ -353,12 +533,8 @@ def extract_rois_from_labeled_mask(
 
 
 def _get_backend_from_filemanager(filemanager: Any, backend: Union[str, Backend]):
-    backend_name = backend.value if hasattr(backend, "value") else str(backend)
-    if hasattr(filemanager, "_get_backend"):
-        return filemanager._get_backend(backend_name)
-    if hasattr(filemanager, "registry"):
-        return filemanager.registry[backend_name]
-    raise AttributeError("FileManager does not provide backend lookup")
+    backend_name = backend.value if isinstance(backend, Backend) else str(backend)
+    return filemanager._get_backend(backend_name)
 
 
 def materialize_rois(
@@ -366,17 +542,11 @@ def materialize_rois(
     output_path: str,
     filemanager: Any,
     backend: Union[str, Backend],
+    images_dir: str | None = None,
 ) -> str:
     """Materialize ROIs to backend-specific format."""
     backend_obj = _get_backend_from_filemanager(filemanager, backend)
-
-    images_dir = None
-    if hasattr(filemanager, "_materialization_context"):
-        images_dir = filemanager._materialization_context.get("images_dir")
-
-    if hasattr(backend_obj, "_save_rois"):
-        return backend_obj._save_rois(rois, Path(output_path), images_dir=images_dir)
-    raise NotImplementedError(f"Backend {backend} does not support ROI saving")
+    return backend_obj._save_rois(rois, Path(output_path), images_dir=images_dir)
 
 
 def load_rois_from_json(json_path: Path) -> List[ROI]:
@@ -394,12 +564,12 @@ def load_rois_from_json(json_path: Path) -> List[ROI]:
 
     rois = []
     for roi_dict in rois_data:
-        metadata = roi_dict.get("metadata", {})
+        record = SerializedROIRecord(roi_dict)
+        metadata = record.metadata()
         shapes = []
-        for shape_dict in roi_dict.get("shapes", []):
+        for shape_dict in record.shapes():
             decoder = ROIJsonShapeDecoder.for_serialized_shape(shape_dict)
-            if decoder is not None:
-                shapes.append(decoder.decode(shape_dict))
+            shapes.append(decoder.decode(shape_dict))
 
         if shapes:
             rois.append(ROI(shapes=shapes, metadata=metadata))
@@ -422,23 +592,26 @@ def load_rois_from_zip(zip_path: Path) -> List[ROI]:
 
     rois = []
     with zipfile.ZipFile(zip_path, "r") as zf:
+        metadata_by_filename = load_roi_zip_metadata(zf)
         for filename in zf.namelist():
             if not filename.endswith(".roi"):
                 continue
-            try:
-                roi_bytes = zf.read(filename)
-                ij_roi = ImagejRoi.frombytes(roi_bytes)
-                coords = ij_roi.coordinates()
-                if coords is not None and len(coords) > 0:
-                    coords_yx = coords[:, [1, 0]]
-                    if ij_roi.roitype == ROI_TYPE.POLYLINE:
-                        shape = PolylineShape(coordinates=coords_yx)
-                    else:
-                        shape = PolygonShape(coordinates=coords_yx)
-                    rois.append(ROI(shapes=[shape], metadata={"label": ij_roi.name or filename.replace(".roi", "")}))
-            except Exception as exc:
-                logger.warning(f"Failed to load ROI from {filename}: {exc}")
-                continue
+            roi_bytes = zf.read(filename)
+            ij_roi = ImagejRoi.frombytes(roi_bytes)
+            coords = ij_roi.coordinates()
+            if coords is None or len(coords) == 0:
+                raise ValueError(f"ImageJ ROI member {filename!r} has no coordinates.")
+            coords_yx = coords[:, [1, 0]]
+            if ij_roi.roitype == ROI_TYPE.POLYLINE:
+                shape = PolylineShape(coordinates=coords_yx)
+            else:
+                shape = PolygonShape(coordinates=coords_yx)
+            if filename not in metadata_by_filename:
+                raise ValueError(
+                    f"ROI archive {zip_path} missing metadata sidecar entry for {filename!r}."
+                )
+            metadata = dict(metadata_by_filename[filename])
+            rois.append(ROI(shapes=[shape], metadata=metadata))
 
     if not rois:
         raise ValueError(f"No valid ROIs found in {zip_path}")

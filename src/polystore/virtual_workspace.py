@@ -1,16 +1,19 @@
 """Virtual Workspace Backend - Symlink-free workspace using metadata mapping."""
 
-import logging
 import json
+import logging
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, List, Mapping, Optional, Set, Union
+from dataclasses import dataclass
+from typing import Any, ClassVar, Dict, Hashable, List, Mapping, Optional, Set, Union
 from fnmatch import fnmatch
+
+import numpy as np
 
 from .disk import DiskStorageBackend
 from .metadata_writer import get_metadata_path
 from .exceptions import StorageResolutionError
-from .base import ReadOnlyBackend
+from .base import PicklableBackend, ReadOnlyBackend
 from .constants import Backend
 from .registry import AutoRegisterMeta
 
@@ -55,6 +58,23 @@ class VirtualWorkspaceSourceRefResolver(ABC, metaclass=AutoRegisterMeta):
         **kwargs: Any,
     ) -> Any:
         """Load the payload addressed by this source reference."""
+
+    def batch_key(self, plate_root: Path, source_ref: Any) -> Hashable:
+        """Return the physical source identity shared by batch-compatible refs."""
+        return self.source_path(plate_root, source_ref)
+
+    def load_batch(
+        self,
+        disk_backend: DiskStorageBackend,
+        plate_root: Path,
+        source_refs: tuple[Any, ...],
+        **kwargs: Any,
+    ) -> tuple[Any, ...]:
+        """Load a batch of references owned by this resolver."""
+        return tuple(
+            self.load(disk_backend, plate_root, source_ref, **kwargs)
+            for source_ref in source_refs
+        )
 
 
 class PathSourceRefResolver(VirtualWorkspaceSourceRefResolver):
@@ -110,27 +130,62 @@ class DiskSourceRefResolver(VirtualWorkspaceSourceRefResolver):
             return payload
         return _payload_plane(payload, int(plane_index), source_ref)
 
+    def load_batch(
+        self,
+        disk_backend: DiskStorageBackend,
+        plate_root: Path,
+        source_refs: tuple[Any, ...],
+        **kwargs: Any,
+    ) -> tuple[Any, ...]:
+        if not source_refs:
+            return ()
+        source_paths = tuple(self.source_path(plate_root, ref) for ref in source_refs)
+        unique_source_paths = tuple(dict.fromkeys(source_paths))
+        if len(unique_source_paths) != 1:
+            raise StorageResolutionError(
+                f"{type(self).__name__}.load_batch requires one physical source path, "
+                f"got {len(unique_source_paths)}."
+            )
+        payload = disk_backend.load(unique_source_paths[0], **kwargs)
+        return tuple(
+            payload
+            if source_ref.get("plane_index") is None
+            else _payload_plane(payload, int(source_ref["plane_index"]), source_ref)
+            for source_ref in source_refs
+        )
+
 
 def _payload_plane(payload: Any, plane_index: int, source_ref: Mapping[str, Any]) -> Any:
-    if not hasattr(payload, "ndim") or not hasattr(payload, "shape"):
-        raise StorageResolutionError(
-            f"Source ref {source_ref!r} requested plane {plane_index}, but the loaded "
-            f"payload has no array shape."
-        )
-    if payload.ndim < 3:
+    array = np.asarray(payload)
+    if array.ndim < 3:
         raise StorageResolutionError(
             f"Source ref {source_ref!r} requested plane {plane_index}, but loaded "
-            f"payload shape {payload.shape!r} is not a stack."
+            f"payload shape {array.shape!r} is not a stack."
         )
-    if plane_index < 0 or plane_index >= payload.shape[0]:
+    if plane_index < 0 or plane_index >= array.shape[0]:
         raise StorageResolutionError(
             f"Source ref {source_ref!r} requested plane {plane_index}, but loaded "
-            f"payload shape is {payload.shape!r}."
+            f"payload shape is {array.shape!r}."
         )
-    return payload[plane_index]
+    return array[plane_index]
 
 
-class VirtualWorkspaceBackend(ReadOnlyBackend):
+@dataclass(frozen=True, slots=True)
+class VirtualWorkspaceResolvedRef:
+    """Resolved source reference for one virtual workspace request."""
+
+    output_index: int
+    source_ref: Any
+    resolver: VirtualWorkspaceSourceRefResolver
+
+    def batch_key(self, plate_root: Path) -> tuple[type[VirtualWorkspaceSourceRefResolver], Hashable]:
+        return (type(self.resolver), self.resolver.batch_key(plate_root, self.source_ref))
+
+
+_UNSET_BATCH_OUTPUT = object()
+
+
+class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
     """
     Read-only path translation layer for virtual workspace.
 
@@ -173,6 +228,27 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
         self._cache_mtime: Optional[float] = None
 
         # Load mapping eagerly - fail loud if metadata missing
+        self._load_mapping()
+
+    @classmethod
+    def from_connection_params(
+        cls,
+        params: Optional[Dict[str, Any]],
+    ) -> "VirtualWorkspaceBackend":
+        if not params:
+            raise ValueError("VirtualWorkspaceBackend requires plate_root.")
+        return cls(plate_root=Path(params["plate_root"]))
+
+    def get_connection_params(self) -> Optional[Dict[str, Any]]:
+        return {"plate_root": str(self.plate_root)}
+
+    def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
+        if not params:
+            raise ValueError("VirtualWorkspaceBackend requires plate_root.")
+        self.plate_root = Path(params["plate_root"])
+        self.disk_backend = DiskStorageBackend()
+        self._mapping_cache = None
+        self._cache_mtime = None
         self._load_mapping()
 
     @staticmethod
@@ -302,7 +378,55 @@ class VirtualWorkspaceBackend(ReadOnlyBackend):
     
     def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
         """Load multiple files from virtual workspace."""
-        return [self.load(file_path, **kwargs) for file_path in file_paths]
+        resolved_refs = tuple(
+            self._resolved_ref(index, file_path)
+            for index, file_path in enumerate(file_paths)
+        )
+        grouped_refs: dict[
+            tuple[type[VirtualWorkspaceSourceRefResolver], Hashable],
+            list[VirtualWorkspaceResolvedRef],
+        ] = {}
+        for resolved_ref in resolved_refs:
+            grouped_refs.setdefault(
+                resolved_ref.batch_key(self.plate_root),
+                [],
+            ).append(resolved_ref)
+
+        ordered_outputs: list[Any] = [_UNSET_BATCH_OUTPUT] * len(file_paths)
+        for group in grouped_refs.values():
+            resolver = group[0].resolver
+            source_refs = tuple(ref.source_ref for ref in group)
+            outputs = resolver.load_batch(
+                self.disk_backend,
+                self.plate_root,
+                source_refs,
+                **kwargs,
+            )
+            if len(outputs) != len(group):
+                raise StorageResolutionError(
+                    f"{type(resolver).__name__}.load_batch returned {len(outputs)} "
+                    f"outputs for {len(group)} virtual workspace refs."
+                )
+            for resolved_ref, output in zip(group, outputs, strict=True):
+                ordered_outputs[resolved_ref.output_index] = output
+
+        if any(output is _UNSET_BATCH_OUTPUT for output in ordered_outputs):
+            raise StorageResolutionError(
+                "Virtual workspace batch load did not populate every requested path."
+            )
+        return ordered_outputs
+
+    def _resolved_ref(
+        self,
+        output_index: int,
+        file_path: Union[str, Path],
+    ) -> VirtualWorkspaceResolvedRef:
+        source_ref = self._resolve_ref(file_path)
+        return VirtualWorkspaceResolvedRef(
+            output_index=output_index,
+            source_ref=source_ref,
+            resolver=VirtualWorkspaceSourceRefResolver.for_ref(source_ref),
+        )
     
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False,

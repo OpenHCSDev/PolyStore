@@ -8,20 +8,31 @@ Tests cover:
 - Advanced features (symlinks, find, mirror)
 """
 
+import json
+import pickle
 import tempfile
 import shutil
 from pathlib import Path
 import numpy as np
 import pytest
 
-from polystore import FileManager, BackendRegistry
+from polystore import FileManager
+from polystore.constants import Backend
+from polystore.disk import DiskBackend
 from polystore.exceptions import StorageResolutionError
+from polystore.memory import MemoryBackend
+from polystore.metadata_writer import get_metadata_path
+from polystore.virtual_workspace import VirtualWorkspaceBackend
+from polystore.zarr import ZarrStorageBackend
 
 
 @pytest.fixture
 def registry():
     """Create a backend registry with disk and memory backends."""
-    return BackendRegistry()
+    return {
+        Backend.DISK.value: DiskBackend(),
+        Backend.MEMORY.value: MemoryBackend(),
+    }
 
 
 @pytest.fixture
@@ -50,6 +61,33 @@ class TestFileManagerInit:
         """Test successful initialization with valid registry."""
         fm = FileManager(registry)
         assert fm.registry is registry
+
+    def test_pickle_preserves_picklable_registry_backends(self, tmp_path):
+        """FileManager owns worker-safe recreation of context-specific backends."""
+        (tmp_path / "real.tif").write_bytes(b"placeholder")
+        get_metadata_path(tmp_path).write_text(json.dumps({
+            "subdirectories": {
+                ".": {
+                    "workspace_mapping": {"virtual.tif": "real.tif"},
+                    "available_backends": {Backend.VIRTUAL_WORKSPACE.value: True},
+                }
+            }
+        }))
+
+        filemanager = FileManager({
+            Backend.ZARR.value: ZarrStorageBackend(),
+            Backend.VIRTUAL_WORKSPACE.value: VirtualWorkspaceBackend(tmp_path),
+        })
+
+        restored = pickle.loads(pickle.dumps(filemanager))
+
+        assert Backend.ZARR.value in restored.registry
+        assert Backend.VIRTUAL_WORKSPACE.value in restored.registry
+        assert restored.registry[Backend.VIRTUAL_WORKSPACE.value].plate_root == tmp_path
+        assert (
+            restored.registry[Backend.ZARR.value].config
+            == filemanager.registry[Backend.ZARR.value].config
+        )
 
 
 class TestFileManagerBackendResolution:

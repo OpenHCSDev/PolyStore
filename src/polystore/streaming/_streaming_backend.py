@@ -12,7 +12,6 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from multiprocessing import resource_tracker, shared_memory
 from pathlib import Path
 from types import MappingProxyType
@@ -23,21 +22,23 @@ from arraybridge import convert_memory, detect_memory_type
 from arraybridge.types import MemoryType as ArrayBridgeMemoryType
 
 from ..base import DataSink
+from ..formats import DEFAULT_IMAGE_EXTENSIONS
 from ..streaming_constants import StreamingDataType
-from ..roi import ROI, PointShape
+from ..roi import ROI, ROI_ZIP_EXTENSION
+from ..roi_converters import ROIShapeNapariPayloadConverter
 from ..zmq_config import POLYSTORE_ZMQ_CONFIG
 from .viewer_transport import (
-    ViewerDisplayConfigABC,
     ViewerMicroscopeHandlerABC,
+    ViewerStreamBatchItemInput,
+    ViewerStreamBatchItemSource,
     ViewerStreamBackendKwargs,
+    ViewerStreamItemPayload,
     ViewerStreamRequest,
     ViewerTransportDefaults,
 )
 from zmqruntime.ack_listener import GlobalAckListener
 from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import (
-    ViewerBatchDisplayPayload,
-    ViewerBatchItemPayload,
     ViewerBatchItemWireField,
     ViewerBatchMessagePayload,
     ViewerComponentMetadataPayload,
@@ -83,6 +84,56 @@ class ViewerDisplayPayloadExtra:
 EMPTY_DISPLAY_PAYLOAD_EXTRA = ViewerDisplayPayloadExtra()
 
 
+@dataclass(frozen=True)
+class StreamingComponentDomainValue:
+    """Viewer component value normalized for a batch-level domain."""
+
+    value: ComponentValue
+
+    @classmethod
+    def from_wire(
+        cls,
+        value: ViewerWireValue,
+    ) -> "StreamingComponentDomainValue":
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return cls(value)
+        if isinstance(value, tuple):
+            return cls(value)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return cls(tuple(value))
+        raise TypeError(
+            "Streaming component values must be JSON scalar or tuple-like, "
+            f"got {type(value).__name__}."
+        )
+
+
+@dataclass(frozen=True)
+class StreamingBatchImageMetadata:
+    """Validated metadata carried by one prepared viewer batch item."""
+
+    values: ViewerWireMapping
+
+    @classmethod
+    def from_image_payload(
+        cls,
+        image_payload: ViewerWireMapping,
+    ) -> "StreamingBatchImageMetadata":
+        metadata = image_payload[ViewerBatchItemWireField.METADATA.value]
+        if not isinstance(metadata, Mapping):
+            raise TypeError(
+                "Streaming batch item metadata must be a mapping, "
+                f"got {type(metadata).__name__}."
+            )
+        return cls(dict(metadata))
+
+    def component_value(self, component: str) -> ComponentValue | None:
+        if component not in self.values:
+            return None
+        return StreamingComponentDomainValue.from_wire(
+            self.values[component]
+        ).value
+
+
 class StreamingComponentValueDomainAuthority:
     """Build batch-level component value domains from stream item metadata."""
 
@@ -91,21 +142,16 @@ class StreamingComponentValueDomainAuthority:
         stream_request: ViewerStreamRequest,
         batch_images: Sequence[ViewerWireMapping],
     ) -> dict[str, ViewerWireValue]:
-        component_order = tuple(
-            str(component)
-            for component in stream_request.display_config.COMPONENT_ORDER
-        )
+        component_order = stream_request.display_semantics.component_order
         values_by_component: dict[str, list[ComponentValue]] = {
             component: [] for component in component_order
         }
         for image_payload in batch_images:
-            metadata = StreamingComponentValueDomainAuthority._metadata(image_payload)
+            metadata = StreamingBatchImageMetadata.from_image_payload(image_payload)
             for component in component_order:
-                if component not in metadata:
+                value = metadata.component_value(component)
+                if value is None:
                     continue
-                value = StreamingComponentValueDomainAuthority._component_value(
-                    metadata[component]
-                )
                 if value not in values_by_component[component]:
                     values_by_component[component].append(value)
         return {
@@ -113,29 +159,6 @@ class StreamingComponentValueDomainAuthority:
             for component, values in values_by_component.items()
             if values
         }
-
-    @staticmethod
-    def _metadata(image_payload: ViewerWireMapping) -> ViewerWireMapping:
-        metadata = image_payload[ViewerBatchItemWireField.METADATA.value]
-        if not isinstance(metadata, Mapping):
-            raise TypeError(
-                "Streaming batch item metadata must be a mapping, "
-                f"got {type(metadata).__name__}."
-            )
-        return dict(metadata)
-
-    @staticmethod
-    def _component_value(value: ViewerWireValue) -> ComponentValue:
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
-        if isinstance(value, tuple):
-            return value
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            return tuple(value)
-        raise TypeError(
-            "Streaming component values must be JSON scalar or tuple-like, "
-            f"got {type(value).__name__}."
-        )
 
 @dataclass(frozen=True)
 class StreamingComponentNamesRequest:
@@ -153,10 +176,7 @@ class StreamingComponentNamesRequest:
         verbose: bool = False,
     ) -> "StreamingComponentNamesRequest":
         return cls(
-            component_names=tuple(
-                str(component)
-                for component in stream_request.display_config.COMPONENT_ORDER
-            ),
+            component_names=stream_request.display_semantics.component_order,
             log_prefix=log_prefix,
             verbose=verbose,
         )
@@ -169,17 +189,10 @@ class StreamingBatchMessageRequest:
     data_list: list[StreamablePayload]
     file_paths: list[FilePath]
     stream_request: ViewerStreamRequest
-    component_names_request: StreamingComponentNamesRequest | None = None
+    component_names_request: StreamingComponentNamesRequest
     display_payload_extra: ViewerDisplayPayloadExtra = field(
         default_factory=ViewerDisplayPayloadExtra
     )
-
-    def resolved_component_names_request(self) -> StreamingComponentNamesRequest:
-        if self.component_names_request is not None:
-            return self.component_names_request
-        return StreamingComponentNamesRequest.from_stream_request(
-            self.stream_request
-        )
 
 
 @dataclass(frozen=True)
@@ -220,7 +233,7 @@ class StreamingPayloadFileRequest:
 class StreamingItemPreparationRequest(StreamingPayloadFileRequest):
     """Inputs needed to prepare one payload for a viewer batch item."""
 
-    data_type: StreamingDataType
+    streaming_data_type: StreamingDataType
 
 
 @dataclass(frozen=True)
@@ -256,6 +269,20 @@ class StreamingSharedMemoryBlock:
     payload: StreamingSharedMemoryPayload
 
 
+@dataclass(frozen=True)
+class StreamingSharedMemoryName:
+    """Unique shared-memory name for one viewer transfer block."""
+
+    value: str
+
+    @classmethod
+    def unique(
+        cls,
+        shm_prefix: str,
+    ) -> "StreamingSharedMemoryName":
+        return cls(f"{shm_prefix}{uuid.uuid4().hex[:12]}")
+
+
 class StreamingPayloadMemoryAuthority:
     """Memory conversion authority for streamable image payloads."""
 
@@ -282,7 +309,7 @@ class StreamingSharedMemoryAuthority:
         request: StreamingSharedMemoryRequest,
     ) -> StreamingSharedMemoryBlock:
         np_data = StreamingPayloadMemoryAuthority.to_numpy(request.data)
-        shm_name = cls._name(request.shm_prefix)
+        shm_name = StreamingSharedMemoryName.unique(request.shm_prefix).value
         shm = shared_memory.SharedMemory(
             create=True,
             size=np_data.nbytes,
@@ -303,10 +330,6 @@ class StreamingSharedMemoryAuthority:
             ),
         )
 
-    @staticmethod
-    def _name(shm_prefix: str) -> str:
-        return f"{shm_prefix}{uuid.uuid4().hex[:12]}"
-
 
 class StreamingDataTypeAuthority:
     """Detect the viewer payload kind for one streamed object."""
@@ -318,12 +341,7 @@ class StreamingDataTypeAuthority:
         if not is_roi:
             return StreamingDataType.IMAGE
 
-        all_points = all(
-            roi.shapes and all(isinstance(shape, PointShape) for shape in roi.shapes)
-            for roi in data
-        )
-
-        return StreamingDataType.POINTS if all_points else StreamingDataType.SHAPES
+        return ROIShapeNapariPayloadConverter.streaming_data_type_for_rois(data)
 
 
 class StreamingComponentNamesMetadataCollector:
@@ -367,17 +385,9 @@ class StreamingDisplayPayloadBuilder:
     def build(
         stream_request: ViewerStreamRequest,
         display_payload_extra: ViewerDisplayPayloadExtra,
-    ) -> ViewerBatchDisplayPayload:
-        return ViewerBatchDisplayPayload(
-            component_modes={
-                str(component): str(mode.value if isinstance(mode, Enum) else mode)
-                for component, mode in stream_request.display_config.component_modes().items()
-            },
-            component_order=tuple(
-                str(component)
-                for component in stream_request.display_config.COMPONENT_ORDER
-            ),
-            extra=display_payload_extra.to_wire_mapping(),
+    ):
+        return stream_request.display_semantics.batch_display_payload(
+            display_payload_extra.to_wire_mapping()
         )
 
 
@@ -399,30 +409,27 @@ class StreamingBatchItemPreparationAuthority:
             image_id = str(uuid.uuid4())
             image_ids.append(image_id)
 
-            data_type = StreamingDataTypeAuthority.detect(data)
-            explicit_component_metadata = (
-                request.stream_request.source.metadata.component_metadata_for_item(
-                    item_path.value,
-                    index,
-                )
-            )
-            item_data, data_type_value = backend._prepare_batch_item(
+            streaming_data_type = StreamingDataTypeAuthority.detect(data)
+            item_payload = backend._prepare_batch_item(
                 StreamingItemPreparationRequest(
                     data=data,
                     item_path=item_path,
-                    data_type=data_type,
+                    streaming_data_type=streaming_data_type,
                 )
             )
 
             batch_images.append(
-                ViewerBatchItemPayload.from_parts(
-                    item_payload=item_data,
-                    data_type=data_type_value,
-                    metadata=explicit_component_metadata,
-                    producer_identity=(
-                        request.stream_request.producer_identity.to_payload()
-                    ),
-                    image_id=image_id,
+                request.stream_request.producer.batch_item_payload(
+                    ViewerStreamBatchItemSource.from_input(
+                        ViewerStreamBatchItemInput(
+                            stream_source=request.stream_request.source,
+                            item_payload=item_payload.item_payload,
+                            streaming_data_type=item_payload.streaming_data_type,
+                            file_path=item_path.value,
+                            index=index,
+                            image_id=image_id,
+                        )
+                    )
                 ).to_wire_mapping()
             )
 
@@ -450,7 +457,7 @@ class StreamingComponentMetadataPayloadAuthority:
                 StreamingComponentNamesMetadataCollector.collect(
                     request.stream_request.source.identity.plate_path,
                     request.stream_request.source.identity.microscope_handler,
-                    request.resolved_component_names_request(),
+                    request.component_names_request,
                 )
             ),
             component_value_domain=(
@@ -496,7 +503,7 @@ class StreamingBatchMessageBuilder:
             component_metadata=component_metadata_payload,
             timestamp=time.time(),
             extra=ViewerComponentMetadataPayload.strip_component_metadata(
-                backend._message_extra(request.stream_request)
+                backend.message_extra(request.stream_request)
             ),
         ).to_wire_mapping()
 
@@ -533,7 +540,9 @@ class StreamingBackend(DataSink):
 
     # Extensions that streaming backends can handle
     # Subclasses can override to add support for specific formats
-    SUPPORTED_EXTENSIONS: set[str] = {'.tif', '.tiff', '.png', '.jpg', '.jpeg', '.roi.zip'}
+    SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
+        (*DEFAULT_IMAGE_EXTENSIONS, ROI_ZIP_EXTENSION)
+    )
 
     @property
     def requires_filesystem_validation(self) -> bool:
@@ -646,28 +655,28 @@ class StreamingBackend(DataSink):
     def _prepare_batch_item(
         self,
         request: StreamingItemPreparationRequest,
-    ) -> tuple[ViewerWireMapping, str]:
+    ) -> ViewerStreamItemPayload:
         raise NotImplementedError
 
-    def _display_payload_extra(
+    def display_payload_extra(
         self,
         stream_request: ViewerStreamRequest,
     ) -> ViewerDisplayPayloadExtra:
         return EMPTY_DISPLAY_PAYLOAD_EXTRA
 
-    def _message_extra(
+    def message_extra(
         self,
         stream_request: ViewerStreamRequest,
     ) -> dict[str, ViewerWireValue]:
         return stream_request.message_extra_payload()
 
-    def _component_names_request(
+    def component_names_request(
         self,
         stream_request: ViewerStreamRequest,
     ) -> StreamingComponentNamesRequest:
         return StreamingComponentNamesRequest.from_stream_request(stream_request)
 
-    def _after_batch_message_built(
+    def after_batch_message_built(
         self,
         stream_request: ViewerStreamRequest,
         built_batch: StreamingBuiltBatch,
@@ -695,11 +704,11 @@ class StreamingBackend(DataSink):
                 data_list=data_list,
                 file_paths=file_paths,
                 stream_request=stream_request,
-                component_names_request=self._component_names_request(stream_request),
-                display_payload_extra=self._display_payload_extra(stream_request),
+                component_names_request=self.component_names_request(stream_request),
+                display_payload_extra=self.display_payload_extra(stream_request),
             ),
         )
-        self._after_batch_message_built(stream_request, built_batch)
+        self.after_batch_message_built(stream_request, built_batch)
 
         transport_config = stream_request.transport_config.resolve(
             self._transport_config

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import (
@@ -13,10 +13,14 @@ from typing import (
 )
 
 from polystore.registry import AutoRegisterMeta
+from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
 from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import (
     ViewerAckPolicy,
+    ViewerBatchDisplayPayload,
+    ViewerBatchContextWireField,
+    ViewerBatchItemPayload,
     ViewerTransportEndpoint,
     ViewerTransportMode,
     ViewerWireMapping,
@@ -26,11 +30,8 @@ from zmqruntime.viewer_protocol import (
 
 DisplayComponentToken: TypeAlias = str | Enum
 DisplayModeToken: TypeAlias = str | Enum | None
-ViewerComponentMetadataByPath: TypeAlias = (
-    Mapping[str, ViewerWireMapping]
-    | Sequence[ViewerWireMapping]
-    | None
-)
+ViewerIndexedComponentMetadata: TypeAlias = Sequence[ViewerWireMapping]
+ViewerPathComponentMetadata: TypeAlias = Mapping[str, ViewerWireMapping]
 
 
 class ViewerDisplayConfigABC(ABC):
@@ -154,88 +155,175 @@ class ViewerTransportDefaults:
         )
 
 
-@dataclass(frozen=True)
-class ViewerStreamSourceMetadata:
-    """Component metadata authority for streamed source items."""
+class ViewerSourceComponentMetadataPayload(dict[str, ViewerWireValue]):
+    """Validated component metadata payload for one streamed source item."""
 
-    component_metadata: ViewerWireMapping | None = None
-    component_metadata_by_path: ViewerComponentMetadataByPath = None
-
-    def __post_init__(self) -> None:
-        if (
-            self.component_metadata is not None
-            and self.component_metadata_by_path is not None
-        ):
-            raise ValueError(
-                "Viewer stream source context accepts either component_metadata "
-                "or component_metadata_by_path, not both."
-            )
-
-    def component_metadata_for_item(
-        self,
-        file_path: str | Path,
-        index: int,
-    ) -> dict[str, ViewerWireValue]:
-        """Return explicit component metadata for one batch item."""
-        if self.component_metadata_by_path is None:
-            return self._batch_component_metadata(file_path)
-
-        if isinstance(self.component_metadata_by_path, Mapping):
-            return self._mapping_component_metadata(
-                file_path,
-                self.component_metadata_by_path,
-            )
-
-        if index < len(self.component_metadata_by_path):
-            return self.component_metadata_by_path[index]
-
-        raise IndexError(
-            "Viewer stream component_metadata_by_path has no entry for "
-            f"item {index} at {file_path!r}."
-        )
-
-    def _batch_component_metadata(
-        self,
-        file_path: str | Path,
-    ) -> dict[str, ViewerWireValue]:
-        if self.component_metadata is None:
-            raise ValueError(
-                "Viewer stream item requires explicit component_metadata or "
-                f"component_metadata_by_path; got no metadata for {file_path!r}."
-            )
-        return self._metadata_payload(
-            self.component_metadata,
-            f"batch metadata for {file_path!r}",
-        )
-
-    def _mapping_component_metadata(
-        self,
-        file_path: str | Path,
-        metadata_by_path: Mapping[str, ViewerWireMapping],
-    ) -> dict[str, ViewerWireValue]:
-        path = Path(file_path)
-        for key in (str(file_path), path.as_posix(), path.name):
-            if key in metadata_by_path:
-                return self._metadata_payload(
-                    metadata_by_path[key],
-                    f"path metadata for {file_path!r}",
-                )
-        raise KeyError(
-            "Viewer stream component_metadata_by_path has no entry for "
-            f"{file_path!r}."
-        )
-
-    @staticmethod
-    def _metadata_payload(
+    @classmethod
+    def from_mapping(
+        cls,
         value: ViewerWireMapping,
+        *,
         source_label: str,
-    ) -> dict[str, ViewerWireValue]:
+    ) -> "ViewerSourceComponentMetadataPayload":
         if not isinstance(value, Mapping):
             raise TypeError(
                 "Viewer stream component metadata must be a mapping "
                 f"for {source_label}; got {type(value).__name__}."
             )
-        return dict(value)
+        return cls(dict(value))
+
+
+class ViewerStreamSourceMetadata(ABC, metaclass=AutoRegisterMeta):
+    """Component metadata authority for streamed source items."""
+
+    __registry_key__ = "metadata_kind"
+    __skip_if_no_key__ = True
+    metadata_kind: ClassVar[str | None] = None
+
+    @abstractmethod
+    def component_metadata_for_item(
+        self,
+        file_path: str | Path,
+        index: int,
+    ) -> ViewerSourceComponentMetadataPayload:
+        """Return explicit component metadata for one batch item."""
+
+
+@dataclass(frozen=True)
+class BatchViewerStreamSourceMetadata(ViewerStreamSourceMetadata):
+    """One component metadata payload shared by every streamed item."""
+
+    metadata_kind: ClassVar[str] = "batch"
+    component_metadata: ViewerWireMapping
+
+    def component_metadata_for_item(
+        self,
+        file_path: str | Path,
+        index: int,
+    ) -> ViewerSourceComponentMetadataPayload:
+        return ViewerSourceComponentMetadataPayload.from_mapping(
+            self.component_metadata,
+            source_label=f"batch metadata for {file_path!r}",
+        )
+
+
+@dataclass(frozen=True)
+class PathMappedViewerStreamSourceMetadata(ViewerStreamSourceMetadata):
+    """Component metadata selected by stream item path identity."""
+
+    metadata_kind: ClassVar[str] = "path_mapped"
+    metadata_by_path: ViewerPathComponentMetadata
+
+    def component_metadata_for_item(
+        self,
+        file_path: str | Path,
+        index: int,
+    ) -> ViewerSourceComponentMetadataPayload:
+        path = Path(file_path)
+        for key in (str(file_path), path.as_posix(), path.name):
+            if key in self.metadata_by_path:
+                return ViewerSourceComponentMetadataPayload.from_mapping(
+                    self.metadata_by_path[key],
+                    source_label=f"path metadata for {file_path!r}",
+                )
+        raise KeyError(
+            "Viewer stream path-mapped component metadata has no entry for "
+            f"{file_path!r}."
+        )
+
+
+@dataclass(frozen=True)
+class IndexedViewerStreamSourceMetadata(ViewerStreamSourceMetadata):
+    """Component metadata selected by stream item batch position."""
+
+    metadata_kind: ClassVar[str] = "indexed"
+    metadata_by_index: ViewerIndexedComponentMetadata
+
+    def component_metadata_for_item(
+        self,
+        file_path: str | Path,
+        index: int,
+    ) -> ViewerSourceComponentMetadataPayload:
+        if index >= len(self.metadata_by_index):
+            raise IndexError(
+                "Viewer stream indexed component metadata has no entry for "
+                f"item {index} at {file_path!r}."
+            )
+        return ViewerSourceComponentMetadataPayload.from_mapping(
+            self.metadata_by_index[index],
+            source_label=f"indexed metadata for {file_path!r}",
+        )
+
+
+@dataclass(frozen=True)
+class ViewerStreamProducer:
+    """Producer identity carrier that owns viewer item identity projection."""
+
+    identity: StreamProducerIdentity
+
+    @classmethod
+    def from_identity(
+        cls,
+        identity: StreamProducerIdentity,
+    ) -> "ViewerStreamProducer":
+        return cls(identity=identity)
+
+    def batch_item_payload(
+        self,
+        item_source: "ViewerStreamBatchItemSource",
+    ) -> ViewerBatchItemPayload:
+        return ViewerBatchItemPayload.from_parts(
+            item_payload=item_source.item_payload,
+            data_type=item_source.wire_data_type,
+            metadata=item_source.metadata,
+            producer_identity=self.identity.to_payload(),
+            image_id=item_source.image_id,
+        )
+
+
+@dataclass(frozen=True)
+class ViewerStreamItemPayload:
+    """Typed item payload produced by a concrete viewer streaming backend."""
+
+    item_payload: ViewerWireMapping
+    streaming_data_type: StreamingDataType
+
+    @property
+    def wire_data_type(self) -> str:
+        return self.streaming_data_type.value
+
+
+@dataclass(frozen=True)
+class ViewerStreamBatchItemInput(ViewerStreamItemPayload):
+    """Nominal input for constructing one viewer batch item source."""
+
+    stream_source: "ViewerStreamSource"
+    file_path: str | Path
+    index: int
+    image_id: str
+
+
+@dataclass(frozen=True)
+class ViewerStreamBatchItemSource(ViewerStreamItemPayload):
+    """Declared source payload for one viewer batch item."""
+
+    metadata: ViewerSourceComponentMetadataPayload
+    image_id: str
+
+    @classmethod
+    def from_input(
+        cls,
+        source_input: ViewerStreamBatchItemInput,
+    ) -> "ViewerStreamBatchItemSource":
+        return cls(
+            item_payload=source_input.item_payload,
+            streaming_data_type=source_input.streaming_data_type,
+            metadata=source_input.stream_source.metadata.component_metadata_for_item(
+                source_input.file_path,
+                source_input.index,
+            ),
+            image_id=source_input.image_id,
+        )
 
 
 @dataclass(frozen=True)
@@ -257,22 +345,87 @@ class ViewerStreamSource:
     """Source provenance and metadata authority for one viewer stream."""
 
     identity: ViewerStreamSourceIdentity
-    metadata: ViewerStreamSourceMetadata = field(
-        default_factory=ViewerStreamSourceMetadata
-    )
+    metadata: ViewerStreamSourceMetadata
 
 
 @dataclass(frozen=True)
-class ViewerStreamRequest:
+class ViewerStreamDisplaySemantics:
+    """Normalized display-axis semantics for a viewer stream request."""
+
+    display_config: ViewerDisplayConfigABC
+
+    @property
+    def component_order(self) -> tuple[str, ...]:
+        return tuple(str(component) for component in self.display_config.COMPONENT_ORDER)
+
+    @property
+    def component_modes(self) -> dict[str, str]:
+        return {
+            str(component): str(mode.value if isinstance(mode, Enum) else mode)
+            for component, mode in self.display_config.component_modes().items()
+        }
+
+    def batch_display_payload(
+        self,
+        extra: Mapping[str | Enum, ViewerWireValue] | None = None,
+    ) -> ViewerBatchDisplayPayload:
+        if extra is None:
+            extra_payload: dict[str | Enum, ViewerWireValue] = {}
+        else:
+            extra_payload = dict(extra)
+        return ViewerBatchDisplayPayload(
+            component_modes=self.component_modes,
+            component_order=self.component_order,
+            extra=extra_payload,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ViewerStreamMessageContext:
+    """Viewer message context carried through stream request boundaries."""
+
+    message_extra: ViewerWireMapping | None = None
+    images_dir: str | None = None
+
+    def message_extra_payload(self) -> dict[str, ViewerWireValue]:
+        return ViewerMessageExtraAuthority.payload(self.message_extra)
+
+    def message_extra_payload_with_images_dir(self) -> dict[str, ViewerWireValue]:
+        payload = self.message_extra_payload()
+        payload[ViewerBatchContextWireField.IMAGES_DIR.value] = self.images_dir
+        return payload
+
+
+@dataclass(frozen=True, kw_only=True)
+class ViewerStreamRequest(ViewerStreamMessageContext):
     """Typed view of backend kwargs at the viewer streaming boundary."""
 
     viewer_transport: ViewerTransportEndpoint
     display_config: ViewerDisplayConfigABC
     source: ViewerStreamSource
-    producer_identity: StreamProducerIdentity
+    producer: ViewerStreamProducer
     transport_config: ViewerTransportConfigSelection = DefaultViewerTransportConfig()
-    message_extra: ViewerWireMapping | None = None
-    images_dir: str | None = None
+
+    @classmethod
+    def from_message_context(
+        cls,
+        *,
+        message_context: ViewerStreamMessageContext,
+        viewer_transport: ViewerTransportEndpoint,
+        display_config: ViewerDisplayConfigABC,
+        source: ViewerStreamSource,
+        producer: ViewerStreamProducer,
+        transport_config: ViewerTransportConfigSelection = DefaultViewerTransportConfig(),
+    ) -> "ViewerStreamRequest":
+        return cls(
+            viewer_transport=viewer_transport,
+            display_config=display_config,
+            source=source,
+            producer=producer,
+            transport_config=transport_config,
+            message_extra=message_context.message_extra,
+            images_dir=message_context.images_dir,
+        )
 
     @property
     def host(self) -> str:
@@ -286,8 +439,9 @@ class ViewerStreamRequest:
     def transport_mode(self) -> ViewerTransportMode:
         return self.viewer_transport.transport_mode
 
-    def message_extra_payload(self) -> dict[str, ViewerWireValue]:
-        return ViewerMessageExtraAuthority.payload(self.message_extra)
+    @property
+    def display_semantics(self) -> ViewerStreamDisplaySemantics:
+        return ViewerStreamDisplaySemantics(self.display_config)
 
 
 ViewerStreamKwargPayloadMapping: TypeAlias = Mapping[
@@ -320,6 +474,20 @@ class ViewerStreamBackendKwargs:
 
     def to_kwargs(self) -> dict[str, ViewerStreamRequest]:
         return {ViewerStreamKwarg.STREAM_REQUEST.value: self.stream_request}
+
+    def with_single_item_component_metadata(
+        self,
+        component_metadata: ViewerWireMapping,
+    ) -> "ViewerStreamBackendKwargs":
+        """Return kwargs with component metadata for a single streamed item."""
+        stream_request = self.stream_request
+        source = replace(
+            stream_request.source,
+            metadata=BatchViewerStreamSourceMetadata(
+                component_metadata=dict(component_metadata),
+            ),
+        )
+        return type(self)(replace(stream_request, source=source))
 
 
 class ViewerMessageExtraAuthority:
