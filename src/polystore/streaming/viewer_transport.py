@@ -23,6 +23,7 @@ from zmqruntime.viewer_protocol import (
     ViewerBatchItemPayload,
     ViewerTransportEndpoint,
     ViewerTransportMode,
+    ViewerWirePayload,
     ViewerWireMapping,
     ViewerWireValue,
 )
@@ -170,7 +171,12 @@ class ViewerSourceComponentMetadataPayload(dict[str, ViewerWireValue]):
                 "Viewer stream component metadata must be a mapping "
                 f"for {source_label}; got {type(value).__name__}."
             )
-        return cls(dict(value))
+        return cls(
+            ViewerWirePayload.mapping(
+                value,
+                context=f"viewer stream component metadata for {source_label}",
+            )
+        )
 
 
 class ViewerStreamSourceMetadata(ABC, metaclass=AutoRegisterMeta):
@@ -484,7 +490,10 @@ class ViewerStreamBackendKwargs:
         source = replace(
             stream_request.source,
             metadata=BatchViewerStreamSourceMetadata(
-                component_metadata=dict(component_metadata),
+                component_metadata=ViewerWirePayload.mapping(
+                    component_metadata,
+                    context="single-item viewer stream component metadata",
+                ),
             ),
         )
         return type(self)(replace(stream_request, source=source))
@@ -497,4 +506,7 @@ class ViewerMessageExtraAuthority:
     def payload(message_extra: Mapping[str, ViewerWireValue] | None) -> dict[str, ViewerWireValue]:
         if message_extra is None:
             return {}
-        return dict(message_extra)
+        return ViewerWirePayload.mapping(
+            message_extra,
+            context="viewer message extra",
+        )

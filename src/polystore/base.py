@@ -127,6 +127,11 @@ class BackendBase(metaclass=AutoRegisterMeta):
     Default is True for backwards compatibility.
     """
 
+    def supports_file_path(self, path: Union[str, Path]) -> bool:
+        """Return whether this backend can save the requested file path."""
+        del path
+        return self.supports_arbitrary_files
+
 
 class DataSink(BackendBase):
     """

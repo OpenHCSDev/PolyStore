@@ -121,7 +121,7 @@ def required_shape_metadata(shape_dict: Mapping[str, Any]) -> Mapping[str, Any]:
     metadata = shape_dict["metadata"]
     if not isinstance(metadata, Mapping):
         raise TypeError("Napari shape payload 'metadata' must be a mapping.")
-        return metadata
+    return metadata
 
 
 @dataclass(slots=True)

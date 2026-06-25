@@ -130,6 +130,7 @@ dna/
 torbi/
 
 # Development/analysis folders (local only)
+.nra-cache/
 archive/
 audit/
 plans/

@@ -44,6 +44,7 @@ from zmqruntime.viewer_protocol import (
     ViewerComponentMetadataPayload,
     ViewerDisplayConfigWireField,
     ViewerTransportEndpoint,
+    ViewerWirePayload,
     ViewerWireMapping,
     ViewerWireValue,
 )
@@ -78,7 +79,10 @@ class ViewerDisplayPayloadExtra:
         return cls(values)
 
     def to_wire_mapping(self) -> dict[str, ViewerWireValue]:
-        return dict(self.values)
+        return ViewerWirePayload.mapping(
+            self.values,
+            context="viewer display payload extra",
+        )
 
 
 EMPTY_DISPLAY_PAYLOAD_EXTRA = ViewerDisplayPayloadExtra()
@@ -124,7 +128,12 @@ class StreamingBatchImageMetadata:
                 "Streaming batch item metadata must be a mapping, "
                 f"got {type(metadata).__name__}."
             )
-        return cls(dict(metadata))
+        return cls(
+            ViewerWirePayload.mapping(
+                metadata,
+                context="streaming batch item metadata",
+            )
+        )
 
     def component_value(self, component: str) -> ComponentValue | None:
         if component not in self.values:
@@ -544,6 +553,11 @@ class StreamingBackend(DataSink):
         (*DEFAULT_IMAGE_EXTENSIONS, ROI_ZIP_EXTENSION)
     )
 
+    def supports_file_path(self, path: FilePath) -> bool:
+        """Return whether the stream backend can render this output path."""
+        name = Path(path).name.lower()
+        return any(name.endswith(ext) for ext in self.SUPPORTED_EXTENSIONS)
+
     @property
     def requires_filesystem_validation(self) -> bool:
         """Streaming backends don't require filesystem validation."""
@@ -569,13 +583,7 @@ class StreamingBackend(DataSink):
         skipped_paths = []
 
         for data, path in zip(data_list, file_paths):
-            path_obj = Path(path)
-            name = path_obj.name.lower()
-            
-            # Check if extension is supported
-            is_supported = any(name.endswith(ext) for ext in self.SUPPORTED_EXTENSIONS)
-            
-            if is_supported:
+            if self.supports_file_path(path):
                 filtered_data.append(data)
                 filtered_paths.append(path)
             else:
