@@ -75,7 +75,7 @@ class MemoryStorageBackend(StorageBackend):
         key = self._normalize(output_path)
 
         # Check if parent directory exists (simple flat structure)
-        parent_path = self._normalize(Path(key).parent)
+        parent_path = self._parent_key(key)
         if parent_path != '.' and parent_path not in self._memory_store:
             raise FileNotFoundError(f"Parent path does not exist: {output_path}")
 
@@ -86,6 +86,15 @@ class MemoryStorageBackend(StorageBackend):
         self._memory_store[key] = data
 
         # Save the file
+
+    @staticmethod
+    def _parent_key(key: str) -> str:
+        """Return the normalized parent key for an already-normalized memory path."""
+        normalized = key.rstrip("/")
+        if "/" not in normalized:
+            return "."
+        parent = normalized.rsplit("/", 1)[0]
+        return parent or "/"
 
     def load_batch(self, file_paths: List[Union[str, Path]]) -> List[Any]:
         """
@@ -119,8 +128,18 @@ class MemoryStorageBackend(StorageBackend):
         if len(data_list) != len(output_paths):
             raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
 
-        for data, output_path in zip(data_list, output_paths):
-            self.save(data, output_path)
+        keys = [self._normalize(output_path) for output_path in output_paths]
+        seen_keys = set()
+        for key, output_path in zip(keys, output_paths):
+            parent_path = self._parent_key(key)
+            if parent_path != "." and parent_path not in self._memory_store:
+                raise FileNotFoundError(f"Parent path does not exist: {output_path}")
+            if key in self._memory_store or key in seen_keys:
+                raise FileExistsError(f"Path already exists: {output_path}")
+            seen_keys.add(key)
+
+        for data, key in zip(data_list, keys):
+            self._memory_store[key] = data
 
     def list_files(
         self,

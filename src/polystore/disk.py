@@ -542,7 +542,9 @@ class DiskStorageBackend(StorageBackend):
             raise FileNotFoundError(f"Cannot delete: path does not exist: {path}")
 
         try:
-            if path.is_dir():
+            if path.is_symlink():
+                path.unlink()
+            elif path.is_dir():
                 # Do not allow recursive deletion
                 path.rmdir()  # will raise OSError if directory is not empty
             else:
@@ -571,7 +573,9 @@ class DiskStorageBackend(StorageBackend):
             raise FileNotFoundError(f"Path does not exist: {path}")
 
         try:
-            if path.is_file():
+            if path.is_symlink():
+                path.unlink()
+            elif path.is_file():
                 path.unlink()
             else:
                 # Safe, recursive removal of directories
