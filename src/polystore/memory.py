@@ -36,7 +36,20 @@ class MemoryStorageBackend(StorageBackend):
         self._memory_store = shared_dict if shared_dict is not None else {}
         self._prefixes = set()  # Declared directory-like namespaces
 
-    def _normalize(self, path: Union[str, Path],bypass_normalization=False) -> str:
+    @staticmethod
+    def _is_canonical_posix_path_text(path: str) -> bool:
+        """Return whether Path(path).as_posix() would preserve path exactly."""
+        if not path:
+            return False
+        if "\\" in path or "//" in path:
+            return False
+        if path.startswith("./") or "/./" in path:
+            return False
+        if path != "/" and path.endswith(("/", "/.")):
+            return False
+        return True
+
+    def _normalize(self, path: Union[str, Path], bypass_normalization=False) -> str:
         """
         Normalize paths for memory backend storage.
 
@@ -50,6 +63,9 @@ class MemoryStorageBackend(StorageBackend):
         Returns:
             Normalized relative path string
         """
+        if isinstance(path, str) and self._is_canonical_posix_path_text(path):
+            return path
+
         path_obj = Path(path)
 
         if bypass_normalization:
@@ -363,6 +379,10 @@ class MemoryStorageBackend(StorageBackend):
             raise IsADirectoryError(f"Path is a directory: {path}")
 
         return True
+
+    def exists(self, path: Union[str, Path]) -> bool:
+        """Check whether a normalized memory key exists without exception probes."""
+        return self._normalize(path) in self._memory_store
     
     def is_dir(self, path: Union[str, Path]) -> bool:
         """
