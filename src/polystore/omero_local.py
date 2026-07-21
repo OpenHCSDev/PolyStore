@@ -10,7 +10,7 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Union, Tuple
 from collections import defaultdict
 from datetime import datetime
 import threading
@@ -109,6 +109,15 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
     # Class-level lock dictionary for thread-safe well creation
     _well_locks: Dict[str, threading.Lock] = {}
     _well_locks_lock = threading.Lock()  # Lock for the lock dictionary itself
+
+    def contextual_save_kwargs(
+        self,
+        *,
+        images_dir: str | None,
+    ) -> Mapping[str, Any]:
+        """Bind the image workspace needed to link saved OMERO artifacts."""
+
+        return {"images_dir": images_dir}
 
     def __init__(
         self,

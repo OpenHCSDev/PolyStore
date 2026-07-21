@@ -227,6 +227,16 @@ class DataSink(BackendBase):
     Inherits from BackendBase for automatic registration.
     """
 
+    def contextual_save_kwargs(
+        self,
+        *,
+        images_dir: str | None,
+    ) -> Mapping[str, Any]:
+        """Return backend-owned save context for artifact materialization."""
+
+        del images_dir
+        return {}
+
     @abstractmethod
     def save(self, data: Any, identifier: Union[str, Path], **kwargs) -> None:
         """
