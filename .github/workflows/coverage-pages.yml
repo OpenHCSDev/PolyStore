@@ -103,9 +103,11 @@ jobs:
           echo "Set 'Source' to 'GitHub Actions' to enable GitHub Pages deployment."
 
       - name: Setup Pages
+        continue-on-error: true
         uses: actions/configure-pages@v4
 
       - name: Upload Pages artifact
+        continue-on-error: true
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'site'
@@ -113,5 +115,6 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
         uses: actions/deploy-pages@v4
         timeout-minutes: 10
