@@ -1,11 +1,8 @@
-API Reference
-=============
-
-This section documents the complete API for polystore.
+API orientation
+===============
 
 .. toctree::
-   :maxdepth: 2
-   :caption: API Documentation:
+   :maxdepth: 1
 
    filemanager
    backends
@@ -13,97 +10,27 @@ This section documents the complete API for polystore.
    atomic
    exceptions
 
-Core Components
+Primary imports
 ---------------
-
-FileManager
-~~~~~~~~~~~
-
-.. autoclass:: polystore.FileManager
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-BackendRegistry
-~~~~~~~~~~~~~~~
-
-.. autoclass:: polystore.BackendRegistry
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Overview
---------
-
-The polystore API is organized around several key concepts:
-
-**FileManager**
-  The main interface for saving and loading data. Coordinates between different storage backends.
-
-**Storage Backends**
-  Pluggable storage implementations (disk, memory, zarr, streaming). Each backend implements the same interface.
-
-**Backend Registry**
-  Auto-discovers and manages available storage backends using metaclass registration.
-
-**Atomic Operations**
-  Utilities for atomic file writes with automatic locking.
-
-**Exceptions**
-  Custom exception hierarchy for storage operations.
-
-Quick Reference
----------------
-
-Common Imports
-~~~~~~~~~~~~~~
 
 .. code-block:: python
 
    from polystore import (
-       FileManager,
-       BackendRegistry,
-       MemoryBackend,
+       BackendBase,
+       DataSink,
+       DataSource,
        DiskBackend,
-       ZarrBackend,
-       atomic_write,
-       atomic_write_json,
+       FileManager,
+       MemoryBackend,
+       ReadOnlyBackend,
+       STORAGE_BACKENDS,
+       StorageBackend,
+       ensure_storage_registry,
+       storage_registry,
    )
 
-Main Classes
-~~~~~~~~~~~~
-
-========================  =========================================================
-Class                     Description
-========================  =========================================================
-``FileManager``           High-level API for storage operations
-``BackendRegistry``       Registry of available storage backends
-``MemoryBackend``         In-memory storage backend
-``DiskBackend``           Local filesystem storage backend
-``ZarrBackend``           Zarr/OME-Zarr array storage backend
-``StreamingBackend``      ZeroMQ streaming backend (optional)
-========================  =========================================================
-
-Main Functions
-~~~~~~~~~~~~~~
-
-=========================  ========================================================
-Function                   Description
-=========================  ========================================================
-``atomic_write()``         Context manager for atomic file writes
-``atomic_write_json()``    Atomically write JSON data to file
-=========================  ========================================================
-
-Exceptions
-~~~~~~~~~~
-
-===========================  ====================================================
-Exception                    Description
-===========================  ====================================================
-``StorageError``             Base exception for storage operations
-``StorageResolutionError``   Failed to resolve storage path or backend
-``BackendNotFoundError``     Requested backend not available
-``UnsupportedFormatError``   File format not supported
-``ImageLoadError``           Failed to load image
-``ImageSaveError``           Failed to save image
-===========================  ====================================================
+``FileManager`` routes operations through an explicit mapping of backend names
+to instances. ``BackendBase.__registry__`` (exported as
+``STORAGE_BACKENDS``) is the nominal catalog of backend classes. The lazy
+``storage_registry`` is a convenience collection of context-free instances,
+not a semantic fallback for FileManager.

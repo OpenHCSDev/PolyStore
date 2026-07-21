@@ -1,189 +1,66 @@
-# polystore
+# PolyStore
 
-**Framework-agnostic multi-backend storage abstraction for ML and scientific computing**
+Framework-agnostic storage primitives for scientific applications.
 
 [![PyPI version](https://badge.fury.io/py/polystore.svg)](https://badge.fury.io/py/polystore)
-[![Documentation Status](https://readthedocs.org/projects/polystore/badge/?version=latest)](https://polystore.readthedocs.io/en/latest/?badge=latest)
+[![Documentation Status](https://readthedocs.org/projects/polystore/badge/?version=latest)](https://polystore.readthedocs.io/en/latest/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Coverage](https://raw.githubusercontent.com/trissim/polystore/main/.github/badges/coverage.svg)](https://trissim.github.io/polystore/coverage/)
 
-## Features
+PolyStore owns backend interfaces, execution-local backend registries,
+``FileManager`` routing, storage formats, ROI values, virtual-workspace source
+references, and viewer-streaming payload mechanics. Applications retain
+ownership of domain artifact names and materialization policy.
 
-- **Pluggable Backends**: Disk, memory, Zarr, and streaming backends with auto-registration
-- **Multi-Framework I/O**: Seamless support for NumPy, PyTorch, JAX, TensorFlow, CuPy
-- **Atomic Operations**: Cross-platform atomic file writes with automatic locking
-- **Batch Operations**: Efficient batch loading and saving
-- **Format Detection**: Automatic format detection and routing
-- **Type-Safe**: Full type hints and mypy support
-- **Zero Dependencies**: Core requires only NumPy (framework support is optional)
+## Quick start
 
-## Quick Start
+Pass an explicit mapping of backend names to instances. ``FileManager`` has no
+global fallback and does not infer a backend from a path.
 
 ```python
-from polystore import FileManager, BackendRegistry
-
-# Create registry and file manager
-registry = BackendRegistry()
-fm = FileManager(registry)
-
-# Save data to disk
+from pathlib import Path
 import numpy as np
-data = np.array([[1, 2], [3, 4]])
-fm.save(data, "output.npy", backend="disk")
 
-# Load data back
-loaded = fm.load("output.npy", backend="disk")
+from polystore import DiskBackend, FileManager, MemoryBackend
 
-# Use memory backend for testing
-fm.save(data, "test.npy", backend="memory")
-cached = fm.load("test.npy", backend="memory")
+registry = {
+    "disk": DiskBackend(),
+    "memory": MemoryBackend(),
+}
+files = FileManager(registry)
+
+data = np.arange(6).reshape(2, 3)
+files.save(data, Path("output.npy"), backend="disk")
+loaded = files.load(Path("output.npy"), backend="disk")
 ```
+
+For application startup where every discoverable context-free backend is
+wanted, use the package-owned lazy registry:
+
+```python
+from polystore import FileManager, ensure_storage_registry, storage_registry
+
+ensure_storage_registry()
+files = FileManager(dict(storage_registry))
+```
+
+Backends requiring context-specific construction, including virtual workspaces
+and OMERO, must be instantiated by the application and added to its registry.
+
+## Nominal backend extension
+
+Concrete backends inherit ``DataSource``, ``DataSink``, ``StorageBackend``, or
+``ReadOnlyBackend`` and declare their backend key. The authoritative class
+catalog is ``BackendBase.__registry__`` (also exported as
+``STORAGE_BACKENDS``). Do not build a second backend class table.
 
 ## Installation
 
 ```bash
-# Base installation (NumPy only)
-pip install polystore
-
-# With specific frameworks
-pip install polystore[zarr]
-pip install polystore[torch]
-pip install polystore[jax]
-pip install polystore[tensorflow]
-pip install polystore[cupy]
-
-# With streaming support
-pip install polystore[streaming]
-
-# With all optional dependencies
-pip install polystore[all]
+python -m pip install polystore
 ```
 
-## Supported Backends
+The core install includes NumPy, ArrayBridge, metaclass-registry, file locking,
+image I/O, and Zarr/OME-Zarr support. Framework and streaming extras add their
+corresponding optional runtimes.
 
-| Backend | Description | Storage | Dependencies |
-|---------|-------------|---------|--------------|
-| **disk** | Local filesystem | Persistent | None |
-| **memory** | In-memory cache | Volatile | None |
-| **zarr** | Zarr/OME-Zarr arrays | Persistent | zarr, ome-zarr |
-| **streaming** | ZeroMQ streaming | None | pyzmq |
-
-## Supported Formats
-
-| Format | Extensions | Frameworks |
-|--------|-----------|------------|
-| **NumPy** | `.npy`, `.npz` | NumPy, PyTorch, JAX, TensorFlow, CuPy |
-| **TIFF** | `.tif`, `.tiff` | NumPy, PyTorch, JAX, TensorFlow, CuPy |
-| **Zarr** | `.zarr` | NumPy, PyTorch, JAX, TensorFlow, CuPy |
-| **PyTorch** | `.pt`, `.pth` | PyTorch |
-| **CSV** | `.csv` | NumPy, pandas |
-| **JSON** | `.json` | Python dicts |
-
-## Architecture
-
-```
-polystore/
-├── base.py              # Abstract interfaces (DataSink, DataSource, StorageBackend)
-├── backend_registry.py  # Auto-registration system
-├── disk.py              # Disk storage backend
-├── memory.py            # In-memory backend
-├── zarr.py              # Zarr backend
-├── streaming.py         # ZeroMQ streaming backend
-├── filemanager.py       # High-level API
-├── atomic.py            # Atomic file operations
-└── exceptions.py        # Custom exceptions
-```
-
-## Advanced Usage
-
-### Custom Backends
-
-```python
-from polystore import StorageBackend
-
-class MyBackend(StorageBackend):
-    _backend_type = 'my_backend'  # Auto-registers
-    
-    def save(self, data, file_path, **kwargs):
-        # Your save logic
-        pass
-    
-    def load(self, file_path, **kwargs):
-        # Your load logic
-        pass
-```
-
-### Batch Operations
-
-```python
-# Save multiple files
-data_list = [np.random.rand(100, 100) for _ in range(10)]
-paths = [f"image_{i}.npy" for i in range(10)]
-fm.save_batch(data_list, paths, backend="disk")
-
-# Load multiple files
-loaded_list = fm.load_batch(paths, backend="disk")
-```
-
-### Atomic Writes
-
-```python
-from polystore import atomic_write, atomic_write_json
-
-# Atomic file write with automatic locking
-with atomic_write("output.txt") as f:
-    f.write("data")
-
-# Atomic JSON write
-atomic_write_json({"key": "value"}, "config.json")
-```
-
-## Why polystore?
-
-**Before** (Manual backend management):
-```python
-if backend == 'disk':
-    np.save(path, data)
-elif backend == 'memory':
-    cache[path] = data
-elif backend == 'zarr':
-    zarr.save(path, data)
-# ... 50 more lines of if/elif ...
-```
-
-**After** (polystore):
-```python
-fm.save(data, path, backend=backend)
-```
-
-## Documentation
-
-Full documentation available at [polystore.readthedocs.io](https://polystore.readthedocs.io)
-
-## Addons
-
-Extend polystore with additional backends:
-
-- **polystore-napari**: Napari viewer streaming backend
-- **polystore-fiji**: Fiji/ImageJ streaming backend
-- **polystore-omero**: OMERO server backend
-
-## Performance
-
-- **Zero-copy** conversions between frameworks via DLPack (when possible)
-- **Lazy loading** for optional dependencies
-- **Batch operations** for efficient I/O
-- **Atomic writes** with minimal overhead
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
-## Credits
-
-Developed by Tristan Simas.
+Full documentation: [polystore.readthedocs.io](https://polystore.readthedocs.io)

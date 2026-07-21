@@ -14,7 +14,9 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../../src'))  # Point to src/ directory
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 # Mock imports for Read the Docs
 import sphinx.ext.autodoc
@@ -56,7 +58,7 @@ copyright = '2025, Tristan Simas'
 author = 'Tristan Simas'
 
 # The full version, including alpha/beta/rc tags
-release = '0.1.2'
+release = '0.1.9'
 
 # The short X.Y version
 version = '0.1'

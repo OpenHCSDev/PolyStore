@@ -132,6 +132,8 @@ torbi/
 # Development/analysis folders (local only)
 .nra-cache/
 archive/
+!docs/archive/
+!docs/archive/**
 audit/
 plans/
 semantic_matrix_analyzer/

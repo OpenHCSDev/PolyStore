@@ -1,66 +1,33 @@
-Polystore Documentation
+PolyStore documentation
 =======================
 
-**Framework-agnostic multi-backend storage abstraction for ML and scientific computing**
-
-Polystore provides a pluggable storage backend system with multi-framework I/O support for NumPy, PyTorch, JAX, TensorFlow, CuPy, and Zarr.
+PolyStore provides nominal storage backends, execution-local ``FileManager``
+routing, formats, ROI values, virtual-workspace references, and streaming
+payload mechanics for scientific applications.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
 
    installation
    quickstart
    architecture/index
    api/index
    guides/custom_backends
+   guides/omero_backend
 
-Features
---------
+Ownership rules
+---------------
 
-* **Pluggable Backends**: Disk, memory, Zarr, and streaming backends with auto-registration
-* **Multi-Framework I/O**: Seamless support for NumPy, PyTorch, JAX, TensorFlow, CuPy
-* **Atomic Operations**: Cross-platform atomic file writes with automatic locking
-* **Batch Operations**: Efficient batch loading and saving
-* **Format Detection**: Automatic format detection and routing
-* **Type-Safe**: Full type hints and mypy support
-* **Zero Dependencies**: Core requires only NumPy (framework support is optional)
+- ``BackendBase.__registry__`` / ``STORAGE_BACKENDS`` is the backend class
+  catalog.
+- A ``FileManager`` receives an explicit mapping of names to backend instances.
+- FileManager operations always receive a backend; path names do not select one.
+- Context-specific backends are constructed and registered by the application.
+- Applications own domain artifacts and materialization policy.
 
-Quick Start
------------
-
-.. code-block:: python
-
-   from polystore import FileManager, BackendRegistry
-
-   # Create registry and file manager
-   registry = BackendRegistry()
-   fm = FileManager(registry)
-
-   # Save data to disk
-   import numpy as np
-   data = np.array([[1, 2], [3, 4]])
-   fm.save(data, "output.npy", backend="disk")
-
-   # Load data back
-   loaded = fm.load("output.npy", backend="disk")
-
-Installation
+Requirements
 ------------
 
-.. code-block:: bash
-
-   # Base installation (NumPy only)
-   pip install polystore
-
-   # With specific frameworks
-   pip install polystore[zarr]
-   pip install polystore[torch]
-   pip install polystore[all]
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+PolyStore requires Python 3.11 or newer. Its declared core dependencies include
+NumPy, ArrayBridge, metaclass-registry, portalocker, imageio, Zarr, and
+OME-Zarr. Optional extras add array frameworks and viewer transport runtimes.
