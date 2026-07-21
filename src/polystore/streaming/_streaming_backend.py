@@ -22,7 +22,7 @@ from arraybridge import convert_memory, detect_memory_type
 from arraybridge.types import MemoryType as ArrayBridgeMemoryType
 
 from ..base import DataSink
-from ..formats import DEFAULT_IMAGE_EXTENSIONS
+from ..formats import PIXEL_PAYLOAD_EXTENSIONS
 from ..streaming_constants import StreamingDataType
 from ..roi import ROI, ROI_ZIP_EXTENSION
 from ..roi_converters import ROIShapeNapariPayloadConverter
@@ -549,9 +549,9 @@ class StreamingBackend(DataSink):
 
     # Extensions that streaming backends can handle
     # Subclasses can override to add support for specific formats
-    SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
-        (*DEFAULT_IMAGE_EXTENSIONS, ROI_ZIP_EXTENSION)
-    )
+    SUPPORTED_EXTENSIONS: frozenset[str] = PIXEL_PAYLOAD_EXTENSIONS | {
+        ROI_ZIP_EXTENSION
+    }
 
     def supports_file_path(self, path: FilePath) -> bool:
         """Return whether the stream backend can render this output path."""

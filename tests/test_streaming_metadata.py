@@ -56,6 +56,7 @@ PRODUCER_IDENTITY = StreamProducerIdentity(
     origin="pipeline",
     output_kind="main",
     output_key="main",
+    projection_key="main",
     step_name="IdentifyPrimaryObjects",
 )
 
@@ -71,6 +72,7 @@ def stream_request(
     *,
     plate_path=None,
     message_extra=None,
+    producer=None,
 ):
     return ViewerStreamRequest(
         viewer_transport=ViewerTransportEndpoint(
@@ -86,7 +88,11 @@ def stream_request(
             ),
             metadata=source_metadata,
         ),
-        producer=ViewerStreamProducer.from_identity(PRODUCER_IDENTITY),
+        producer=(
+            ViewerStreamProducer.from_identity(PRODUCER_IDENTITY)
+            if producer is None
+            else producer
+        ),
         message_extra=message_extra,
     )
 
@@ -100,6 +106,17 @@ def batch_message_request(data_list, file_paths, viewer_request):
             StreamingComponentNamesRequest.from_stream_request(viewer_request)
         ),
     )
+
+
+def test_streaming_backend_accepts_all_declared_pixel_payload_formats() -> None:
+    backend = MetadataProbeStreamingBackend()
+
+    assert backend.supports_file_path("result.npy")
+    assert backend.supports_file_path("result.tif")
+    assert backend.supports_file_path("result.mat")
+    assert backend.supports_file_path("result.roi.zip")
+    assert not backend.supports_file_path("result.csv")
+    assert not backend.supports_file_path("result.txt")
 
 
 def microscope_handler_with_parser(parser):
@@ -177,6 +194,46 @@ def test_streaming_batch_items_accept_per_path_component_metadata() -> None:
         prepared_items.batch_images[0]["producer_identity"]
         == PRODUCER_IDENTITY.to_payload()
     )
+
+
+def test_streaming_batch_items_preserve_item_aligned_producer_identities() -> None:
+    backend = MetadataProbeStreamingBackend()
+    microscope_handler = microscope_handler_with_parser(
+        SimpleNamespace(parse_filename=lambda _filename: None)
+    )
+    producers = tuple(
+        StreamProducerIdentity.pipeline_output(
+            output_kind="main",
+            output_key=output_key,
+            projection_key="main",
+            step_name="Align",
+            pipeline_position=3,
+        )
+        for output_key in ("Stain1", "Stain2")
+    )
+
+    prepared_items = StreamingBatchItemPreparationAuthority.prepare(
+        backend,
+        batch_message_request(
+            [object(), object()],
+            ["A01_s001_w1.tif", "A01_s001_w2.tif"],
+            stream_request(
+                microscope_handler,
+                IndexedViewerStreamSourceMetadata(
+                    metadata_by_index=(
+                        {"well": "A01", "site": 1, "channel": 1},
+                        {"well": "A01", "site": 1, "channel": 2},
+                    ),
+                ),
+                producer=ViewerStreamProducer.from_identities(producers),
+            ),
+        ),
+    )
+
+    assert tuple(
+        item["producer_identity"]["output_key"]
+        for item in prepared_items.batch_images
+    ) == ("Stain1", "Stain2")
 
 
 def test_streaming_item_component_metadata_preserves_explicit_fields() -> None:

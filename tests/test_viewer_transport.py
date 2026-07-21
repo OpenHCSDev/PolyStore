@@ -77,6 +77,7 @@ def required_stream_request(**kwargs):
             StreamProducerIdentity.pipeline_output(
                 output_kind="main",
                 output_key="main",
+                projection_key="main",
                 step_name="IdentifyPrimaryObjects",
                 pipeline_position=2,
             )
@@ -108,11 +109,14 @@ def test_viewer_stream_kwargs_declares_explicit_backend_request() -> None:
     assert stream_kwargs.host == "127.0.0.1"
     assert stream_kwargs.port == 5555
     assert stream_kwargs.transport_mode is TransportMode.TCP
-    assert stream_kwargs.producer.identity == StreamProducerIdentity.pipeline_output(
-        output_kind="main",
-        output_key="main",
-        step_name="IdentifyPrimaryObjects",
-        pipeline_position=2,
+    assert stream_kwargs.producer.identities == (
+        StreamProducerIdentity.pipeline_output(
+            output_kind="main",
+            output_key="main",
+            projection_key="main",
+            step_name="IdentifyPrimaryObjects",
+            pipeline_position=2,
+        ),
     )
     assert stream_kwargs.source.metadata.metadata_by_index == (
                 {"well": "A01", "site": 1},

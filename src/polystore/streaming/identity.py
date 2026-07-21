@@ -39,6 +39,7 @@ class StreamProducerIdentityPayload(dict[str, StreamProducerPayloadValue]):
             origin=identity.origin,
             output_kind=identity.output_kind,
             output_key=identity.output_key,
+            projection_key=identity.projection_key,
             step_name=identity.step_name,
             pipeline_position=identity.pipeline_position,
             step_scope_id=identity.step_scope_id,
@@ -54,6 +55,7 @@ class StreamProducerIdentity:
     origin: str
     output_kind: str
     output_key: str
+    projection_key: str
     step_name: str | None = None
     pipeline_position: int | None = None
     step_scope_id: str | None = None
@@ -66,6 +68,7 @@ class StreamProducerIdentity:
         *,
         output_kind: str,
         output_key: str,
+        projection_key: str,
         step_name: str,
         pipeline_position: int | None,
         step_scope_id: str | None = None,
@@ -76,6 +79,7 @@ class StreamProducerIdentity:
             origin=StreamProducerOrigin.PIPELINE.value,
             output_kind=output_kind,
             output_key=output_key,
+            projection_key=projection_key,
             step_name=step_name,
             pipeline_position=pipeline_position,
             step_scope_id=step_scope_id,
@@ -93,6 +97,7 @@ class StreamProducerIdentity:
             origin=kind.value,
             output_kind=kind.value,
             output_key=output_key,
+            projection_key=output_key,
         )
 
     @classmethod
@@ -111,6 +116,7 @@ class StreamProducerIdentity:
             origin=_required_payload_str(payload, "origin"),
             output_kind=_required_payload_str(payload, "output_kind"),
             output_key=_required_payload_str(payload, "output_key"),
+            projection_key=_required_payload_str(payload, "projection_key"),
             step_name=_optional_payload_str(payload, "step_name"),
             pipeline_position=_optional_payload_int(payload, "pipeline_position"),
             step_scope_id=_optional_payload_str(payload, "step_scope_id"),
@@ -125,7 +131,7 @@ class StreamProducerIdentity:
         parts = [
             f"origin_{self.origin}",
             f"kind_{self.output_kind}",
-            f"out_{self.output_key}",
+            f"projection_{self.projection_key}",
         ]
         if self.pipeline_position is not None:
             parts.append(f"step_{self.pipeline_position}")
@@ -133,12 +139,7 @@ class StreamProducerIdentity:
             parts.append(f"scope_{self.step_scope_id}")
         if self.step_name:
             parts.append(f"name_{self.step_name}")
-        if self.invocation_key:
-            parts.append(f"invocation_{self.invocation_key}")
-        if self.artifact_kind:
-            parts.append(f"artifact_{self.artifact_kind}")
         return tuple(parts)
-
 
 def _required_payload_str(
     payload: StreamProducerPayloadMapping,

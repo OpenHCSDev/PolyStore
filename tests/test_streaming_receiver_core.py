@@ -33,10 +33,12 @@ class PipelineProducerFixture:
         *,
         step_name: str,
         pipeline_position: int,
+        output_key: str = MAIN_KEY,
     ) -> StreamProducerIdentity:
         return StreamProducerIdentity.pipeline_output(
             output_kind=cls.MAIN_KIND,
-            output_key=cls.MAIN_KEY,
+            output_key=output_key,
+            projection_key=cls.MAIN_KIND,
             step_name=step_name,
             pipeline_position=pipeline_position,
         )
@@ -53,6 +55,7 @@ class PipelineProducerFixture:
         return StreamProducerIdentity.pipeline_output(
             output_kind=cls.ARTIFACT_KIND,
             output_key=output_key,
+            projection_key=output_key,
             step_name=step_name,
             pipeline_position=pipeline_position,
             artifact_kind=artifact_kind,
@@ -98,12 +101,129 @@ def test_group_items_by_component_modes_keys_windows_by_producer_identity() -> N
     assert grouped.frame_components == ["well"]
     assert grouped.slice_components == []
     assert grouped.fixed_window_labels[
-        "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_artifact_object_labels"
+        "origin_pipeline_kind_artifact_projection_Nuclei_step_2_name_Segment"
     ] == (("producer", "3. Segment Nuclei"),)
     assert set(grouped.windows) == {
-        "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_artifact_object_labels",
-        "origin_pipeline_kind_main_out_main_step_1_name_RawLoad",
+        "origin_pipeline_kind_artifact_projection_Nuclei_step_2_name_Segment",
+        "origin_pipeline_kind_main_projection_main_step_1_name_RawLoad",
     }
+
+
+def test_named_main_outputs_share_projection_and_keep_exact_provenance() -> None:
+    first = PipelineProducerFixture.main_output(
+        output_key="Stain1",
+        step_name="Align",
+        pipeline_position=2,
+    )
+    second = PipelineProducerFixture.main_output(
+        output_key="Stain2",
+        step_name="Align",
+        pipeline_position=2,
+    )
+
+    grouped = group_items_by_component_modes(
+        WindowProjectionSource.from_wire_payloads(
+            [
+                {
+                    "data_type": "image",
+                    "metadata": {"channel": 1},
+                    "producer_identity": first.to_payload(),
+                },
+                {
+                    "data_type": "image",
+                    "metadata": {"channel": 2},
+                    "producer_identity": second.to_payload(),
+                },
+            ]
+        ),
+        display_layout=ViewerBatchDisplayPayload(
+            component_modes={"channel": "channel"},
+            component_order=("channel",),
+        ),
+    )
+
+    assert tuple(grouped.windows) == (
+        "origin_pipeline_kind_main_projection_main_step_2_name_Align",
+    )
+    sources = tuple(
+        WindowProjectionSource.from_wire_payload(payload)
+        for payload in next(iter(grouped.windows.values()))
+    )
+    assert tuple(source.producer.output_key for source in sources) == (
+        "Stain1",
+        "Stain2",
+    )
+    assert build_route_key(
+        producer_identity=first,
+        component_info={"channel": 1},
+        display_layout=ViewerBatchDisplayPayload(
+            component_modes={"channel": "stack"},
+            component_order=("channel",),
+        ),
+        data_type=StreamingDataType.IMAGE,
+    ) == build_route_key(
+        producer_identity=second,
+        component_info={"channel": 2},
+        display_layout=ViewerBatchDisplayPayload(
+            component_modes={"channel": "stack"},
+            component_order=("channel",),
+        ),
+        data_type=StreamingDataType.IMAGE,
+    )
+    slice_layout = ViewerBatchDisplayPayload(
+        component_modes={"channel": "slice"},
+        component_order=("channel",),
+    )
+    assert build_route_key(
+        producer_identity=first,
+        component_info={"channel": 1},
+        display_layout=slice_layout,
+        data_type=StreamingDataType.IMAGE,
+    ) != build_route_key(
+        producer_identity=second,
+        component_info={"channel": 2},
+        display_layout=slice_layout,
+        data_type=StreamingDataType.IMAGE,
+    )
+
+
+def test_named_main_outputs_cannot_claim_the_same_projection_slot() -> None:
+    first = PipelineProducerFixture.main_output(
+        output_key="Stain1",
+        step_name="Align",
+        pipeline_position=2,
+    )
+    second = PipelineProducerFixture.main_output(
+        output_key="Stain2",
+        step_name="Align",
+        pipeline_position=2,
+    )
+
+    try:
+        group_items_by_component_modes(
+            WindowProjectionSource.from_wire_payloads(
+                [
+                    {
+                        "data_type": "image",
+                        "metadata": {"channel": 1},
+                        "producer_identity": first.to_payload(),
+                    },
+                    {
+                        "data_type": "image",
+                        "metadata": {"channel": 1},
+                        "producer_identity": second.to_payload(),
+                    },
+                ]
+            ),
+            display_layout=ViewerBatchDisplayPayload(
+                component_modes={"channel": "channel"},
+                component_order=("channel",),
+            ),
+        )
+    except ValueError as error:
+        assert "same component coordinate" in str(error)
+    else:
+        raise AssertionError("distinct producer slot collision must fail loudly")
 
 
 def test_group_items_by_component_modes_rejects_missing_metadata() -> None:
@@ -192,8 +312,8 @@ def test_napari_route_key_builder_uses_producer_slice_components_and_payload_typ
         data_type=StreamingDataType.SHAPES,
     )
 
-    assert key_image == "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_well_A01_site_3"
-    assert key_shapes == "origin_pipeline_kind_artifact_out_Nuclei_step_2_name_Segment_well_A01_site_3_shapes"
+    assert key_image == "origin_pipeline_kind_artifact_projection_Nuclei_step_2_name_Segment_well_A01_site_3"
+    assert key_shapes == "origin_pipeline_kind_artifact_projection_Nuclei_step_2_name_Segment_well_A01_site_3_shapes"
 
 
 def test_napari_route_key_builder_rejects_missing_slice_component() -> None:

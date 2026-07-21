@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import (
@@ -13,8 +13,8 @@ from typing import (
 )
 
 from polystore.registry import AutoRegisterMeta
-from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming_constants import StreamingDataType
 from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import (
     ViewerAckPolicy,
@@ -23,8 +23,8 @@ from zmqruntime.viewer_protocol import (
     ViewerBatchItemPayload,
     ViewerTransportEndpoint,
     ViewerTransportMode,
-    ViewerWirePayload,
     ViewerWireMapping,
+    ViewerWirePayload,
     ViewerWireValue,
 )
 
@@ -263,26 +263,47 @@ class IndexedViewerStreamSourceMetadata(ViewerStreamSourceMetadata):
 
 @dataclass(frozen=True)
 class ViewerStreamProducer:
-    """Producer identity carrier that owns viewer item identity projection."""
+    """Exact producer identities aligned to one viewer stream batch."""
 
-    identity: StreamProducerIdentity
+    identities: tuple[StreamProducerIdentity, ...]
+
+    def __post_init__(self) -> None:
+        if not self.identities:
+            raise ValueError("ViewerStreamProducer requires at least one identity.")
 
     @classmethod
     def from_identity(
         cls,
         identity: StreamProducerIdentity,
     ) -> "ViewerStreamProducer":
-        return cls(identity=identity)
+        return cls(identities=(identity,))
+
+    @classmethod
+    def from_identities(
+        cls,
+        identities: Sequence[StreamProducerIdentity],
+    ) -> "ViewerStreamProducer":
+        return cls(identities=tuple(identities))
+
+    def identity_for_item(self, index: int) -> StreamProducerIdentity:
+        if len(self.identities) == 1:
+            return self.identities[0]
+        if index >= len(self.identities):
+            raise IndexError(
+                "Viewer stream producer identity count does not cover item "
+                f"index {index}: {len(self.identities)} identities."
+            )
+        return self.identities[index]
 
     def batch_item_payload(
         self,
         item_source: "ViewerStreamBatchItemSource",
     ) -> ViewerBatchItemPayload:
         return ViewerBatchItemPayload.from_parts(
-            item_payload=item_source.item_payload,
+            item_payload=item_source.complete_item_payload,
             data_type=item_source.wire_data_type,
             metadata=item_source.metadata,
-            producer_identity=self.identity.to_payload(),
+            producer_identity=self.identity_for_item(item_source.index).to_payload(),
             image_id=item_source.image_id,
         )
 
@@ -313,8 +334,20 @@ class ViewerStreamBatchItemInput(ViewerStreamItemPayload):
 class ViewerStreamBatchItemSource(ViewerStreamItemPayload):
     """Declared source payload for one viewer batch item."""
 
+    index: int
     metadata: ViewerSourceComponentMetadataPayload
     image_id: str
+    item_fields: ViewerWireMapping
+
+    @property
+    def complete_item_payload(self) -> dict[str, ViewerWireValue]:
+        collisions = frozenset(self.item_payload).intersection(self.item_fields)
+        if collisions:
+            raise ValueError(
+                "Viewer stream source item fields collide with backend payload "
+                f"fields: {sorted(collisions)!r}."
+            )
+        return {**self.item_payload, **self.item_fields}
 
     @classmethod
     def from_input(
@@ -324,11 +357,13 @@ class ViewerStreamBatchItemSource(ViewerStreamItemPayload):
         return cls(
             item_payload=source_input.item_payload,
             streaming_data_type=source_input.streaming_data_type,
+            index=source_input.index,
             metadata=source_input.stream_source.metadata.component_metadata_for_item(
                 source_input.file_path,
                 source_input.index,
             ),
             image_id=source_input.image_id,
+            item_fields=source_input.stream_source.item_fields,
         )
 
 
@@ -352,6 +387,7 @@ class ViewerStreamSource:
 
     identity: ViewerStreamSourceIdentity
     metadata: ViewerStreamSourceMetadata
+    item_fields: ViewerWireMapping = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -481,12 +517,29 @@ class ViewerStreamBackendKwargs:
     def to_kwargs(self) -> dict[str, ViewerStreamRequest]:
         return {ViewerStreamKwarg.STREAM_REQUEST.value: self.stream_request}
 
-    def with_single_item_component_metadata(
+    def with_item_fields(
+        self,
+        item_fields: ViewerWireMapping,
+    ) -> "ViewerStreamBackendKwargs":
+        """Return this stream request with fields shared by every batch item."""
+
+        stream_request = self.stream_request
+        source = replace(
+            stream_request.source,
+            item_fields=ViewerWirePayload.mapping(
+                item_fields,
+                context="viewer stream item fields",
+            ),
+        )
+        return type(self)(replace(stream_request, source=source))
+
+    def with_single_item_source(
         self,
         component_metadata: ViewerWireMapping,
+        item_fields: ViewerWireMapping,
     ) -> "ViewerStreamBackendKwargs":
-        """Return kwargs with component metadata for a single streamed item."""
-        stream_request = self.stream_request
+        """Return metadata and declared fields for one streamed item."""
+        stream_request = self.with_item_fields(item_fields).stream_request
         source = replace(
             stream_request.source,
             metadata=BatchViewerStreamSourceMetadata(
