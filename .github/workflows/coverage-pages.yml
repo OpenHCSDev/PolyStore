@@ -34,18 +34,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Patch metaclass-registry (temporary fix for import issues)
-        run: |
-          # Fix metaclass-registry __init__.py to avoid import errors
-          REGISTRY_INIT=$(python -c "import metaclass_registry, os; print(os.path.dirname(metaclass_registry.__file__))")/__init__.py
-          cat > "$REGISTRY_INIT" << 'EOF'
-          """metaclass-registry: Zero-boilerplate metaclass-driven plugin registry system."""
-          __version__ = "0.1.0"
-          from .core import AutoRegisterMeta, RegistryConfig, PRIMARY_KEY
-          from .exceptions import RegistryError
-          __all__ = ["AutoRegisterMeta", "RegistryConfig", "PRIMARY_KEY", "RegistryError"]
-          EOF
-
       - name: Verify installation
         run: |
           python -c "import polystore; print(f'polystore {polystore.__version__} installed successfully')"

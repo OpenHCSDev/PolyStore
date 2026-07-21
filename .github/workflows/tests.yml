@@ -33,7 +33,7 @@ jobs:
       - name: Verify installation
         run: |
           python -c "import polystore; print(f'polystore {polystore.__version__} installed successfully')"
-          python -c "from polystore import FileManager, BackendRegistry, MemoryBackend, DiskBackend; print('All imports successful')"
+          python -c "from polystore import FileManager, MemoryBackend, DiskBackend; print('All imports successful')"
 
       - name: Lint with ruff
         run: |

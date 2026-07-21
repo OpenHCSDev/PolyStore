@@ -23,21 +23,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: Patch metaclass-registry
-        run: |
-          REGISTRY_INIT=$(python -c "import metaclass_registry, os; print(os.path.dirname(metaclass_registry.__file__))")/__init__.py
-          cat > "$REGISTRY_INIT" << 'EOF'
-          """metaclass-registry: Zero-boilerplate metaclass-driven plugin registry system."""
-          __version__ = "0.1.0"
-          from .core import AutoRegisterMeta, RegistryConfig, PRIMARY_KEY
-          from .exceptions import RegistryError
-          __all__ = ["AutoRegisterMeta", "RegistryConfig", "PRIMARY_KEY", "RegistryError"]
-          EOF
-
       - name: Test basic imports
         run: |
           python -c "import polystore; print(f'✓ polystore {polystore.__version__}')"
-          python -c "from polystore import FileManager, BackendRegistry, MemoryBackend, DiskBackend; print('✓ All imports work')"
+          python -c "from polystore import FileManager, MemoryBackend, DiskBackend; print('✓ All imports work')"
 
       - name: Test basic functionality
         run: |
