@@ -1822,11 +1822,11 @@ wheels = [
 
 [[package]]
 name = "metaclass-registry"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4e/1b/13efa820cbf7b61a52ac0266023f5173156baa0648612fe132bdf1b32371/metaclass_registry-0.1.4.tar.gz", hash = "sha256:5ed7e42ded30a5fcd47b70ef81689aa8c64e3091fe43fca22dfb8d338312432a", size = 22710, upload-time = "2026-01-25T23:35:48.276Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/de/b07d0d5814e57ca6d75ead48d8e303eb19724a9ef6c64456e392a170bc04/metaclass_registry-0.1.5.tar.gz", hash = "sha256:2430056e669d41085b19868ca34ce126144d894b00d45defca0f02df962c4c88", size = 25840, upload-time = "2026-07-21T21:45:46.657Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/fb/072fdcea75b9f361c238b327097e60e4b23ea61f009ba673ca5146681b9e/metaclass_registry-0.1.4-py3-none-any.whl", hash = "sha256:6f229e2eabe41eb0db64d0504dc882780345cfbf66f7a593088ebf1f2bbc23a4", size = 18371, upload-time = "2026-01-25T23:35:46.575Z" },
+    { url = "https://files.pythonhosted.org/packages/26/97/33243321b6533b0a913154625c80c10a5c23bbebf72e32ec859e14d66451/metaclass_registry-0.1.5-py3-none-any.whl", hash = "sha256:daba60b962c468627309384e1d706c93866a9a316f1a99211d8bbc5f97263041", size = 20629, upload-time = "2026-07-21T21:45:45.305Z" },
 ]
 
 [[package]]
@@ -2572,6 +2572,7 @@ dependencies = [
     { name = "ome-zarr" },
     { name = "portalocker" },
     { name = "zarr" },
+    { name = "zmqruntime" },
 ]
 
 [package.optional-dependencies]
@@ -2651,7 +2652,7 @@ requires-dist = [
     { name = "jax-cuda12-pjrt", marker = "extra == 'gpu'", specifier = ">=0.5.3,<0.6.0" },
     { name = "jax-cuda12-plugin", marker = "extra == 'gpu'", specifier = ">=0.5.3,<0.6.0" },
     { name = "jaxlib", marker = "extra == 'gpu'", specifier = ">=0.5.3,<0.6.0" },
-    { name = "metaclass-registry" },
+    { name = "metaclass-registry", specifier = ">=0.1.5" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "ome-zarr", specifier = ">=0.11.0" },
     { name = "ome-zarr", marker = "extra == 'all'", specifier = ">=0.11.0" },
@@ -2680,6 +2681,7 @@ requires-dist = [
     { name = "zarr", marker = "extra == 'all'", specifier = ">=2.18.0,<3.0" },
     { name = "zarr", marker = "extra == 'gpu'", specifier = ">=2.18.0,<3.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=2.18.0,<3.0" },
+    { name = "zmqruntime", specifier = ">=0.1.9" },
 ]
 provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "all", "dev", "docs", "gpu"]
 
@@ -4245,4 +4247,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b9/d8/eab98a517c14134c0b2eb4e2387bc5f457334293ec5d2dd3857ec2966802/zipp-4.1.0.tar.gz", hash = "sha256:4cb57381f544315db7688e976e922a2b18cdb513d21cc194eb42232ba2a3e602", size = 26214, upload-time = "2026-05-18T20:08:57.967Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/13/547360d81e6d88d58492968ffda9f9542854f11310ee556fef14260cc886/zipp-4.1.0-py3-none-any.whl", hash = "sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f", size = 10238, upload-time = "2026-05-18T20:08:57.045Z" },
+]
+
+[[package]]
+name = "zmqruntime"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyzmq" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/41/7a91b0083d221dcf4b99297aedd2300251ad046a774c9555e6c081e36148/zmqruntime-0.1.9.tar.gz", hash = "sha256:0f3b3ece3d7c4bae56a5c40e5fa0695703c30d84a860c19da6d50b64efe3311a", size = 70346, upload-time = "2026-07-21T21:49:01.45Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/77/2411be0abe996c15fbfd22f0ac5b16fc99973556e90031402b0ee8c9cade/zmqruntime-0.1.9-py3-none-any.whl", hash = "sha256:3423756f35fdcb6eb4ea7173384a15b715544286c985411880d262701fb5545d", size = 58855, upload-time = "2026-07-21T21:48:59.877Z" },
 ]
