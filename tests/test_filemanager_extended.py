@@ -15,6 +15,7 @@ import shutil
 from pathlib import Path
 import numpy as np
 import pytest
+import polystore
 
 from polystore import FileManager
 from polystore.constants import Backend
@@ -58,35 +59,187 @@ class TestFileManagerInit:
             FileManager(None)
 
     def test_init_with_valid_registry(self, registry):
-        """Test successful initialization with valid registry."""
+        """FileManager owns an execution-local copy of the submitted registry."""
         fm = FileManager(registry)
-        assert fm.registry is registry
+        assert fm.registry == registry
+        assert fm.registry is not registry
+
+    def test_register_backend_updates_local_registry_and_binds_it(self, registry):
+        """Backend registration is the sole mutation and binding boundary."""
+        fm = FileManager(registry)
+        virtual_backend = object()
+
+        fm.register_backend("virtual_probe", virtual_backend)
+
+        assert fm.registry["virtual_probe"] is virtual_backend
+
+    def test_source_pixel_ref_has_exact_format_neutral_fields(self):
+        """Workspace references carry a backend address and ordered axis indices."""
+        source_pixel_ref = getattr(polystore, "SourcePixelRef", None)
+        assert source_pixel_ref is not None
+
+        ref = source_pixel_ref(
+            backend=Backend.DISK.value,
+            backend_address="real.npy",
+            source_axis_indices=(1, 3),
+        )
+
+        assert tuple(ref.__dataclass_fields__) == (
+            "backend",
+            "backend_address",
+            "source_axis_indices",
+        )
+        assert source_pixel_ref.from_workspace_mapping(
+            ref.to_workspace_mapping()
+        ) == ref
+
+    def test_virtual_workspace_rejects_string_mapping(self, tmp_path):
+        """Legacy string workspace mappings are not a second transport shape."""
+        (tmp_path / "real.npy").write_bytes(b"placeholder")
+        get_metadata_path(tmp_path).write_text(
+            json.dumps(
+                {
+                    "subdirectories": {
+                        ".": {
+                            "workspace_mapping": {"virtual.npy": "real.npy"},
+                            "available_backends": {
+                                Backend.VIRTUAL_WORKSPACE.value: True
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises((TypeError, ValueError), match="SourcePixelRef|structured"):
+            VirtualWorkspaceBackend(tmp_path)
 
     def test_pickle_preserves_picklable_registry_backends(self, tmp_path):
-        """FileManager owns worker-safe recreation of context-specific backends."""
-        (tmp_path / "real.tif").write_bytes(b"placeholder")
-        get_metadata_path(tmp_path).write_text(json.dumps({
-            "subdirectories": {
-                ".": {
-                    "workspace_mapping": {"virtual.tif": "real.tif"},
-                    "available_backends": {Backend.VIRTUAL_WORKSPACE.value: True},
+        """Pickle preserves and rebinds the exact execution-local registry."""
+        source_pixel_ref = getattr(polystore, "SourcePixelRef", None)
+        assert source_pixel_ref is not None
+        source = np.arange(9).reshape(3, 3)
+        np.save(tmp_path / "real.npy", source)
+        ref = source_pixel_ref(
+            backend=Backend.DISK.value,
+            backend_address="real.npy",
+            source_axis_indices=(),
+        )
+        get_metadata_path(tmp_path).write_text(
+            json.dumps(
+                {
+                    "subdirectories": {
+                        ".": {
+                            "workspace_mapping": {
+                                "virtual.npy": ref.to_workspace_mapping()
+                            },
+                            "available_backends": {
+                                Backend.VIRTUAL_WORKSPACE.value: True
+                            },
+                        }
+                    }
                 }
-            }
-        }))
+            ),
+            encoding="utf-8",
+        )
 
-        filemanager = FileManager({
-            Backend.ZARR.value: ZarrStorageBackend(),
-            Backend.VIRTUAL_WORKSPACE.value: VirtualWorkspaceBackend(tmp_path),
-        })
+        filemanager = FileManager(
+            {
+                Backend.DISK.value: DiskBackend(),
+                Backend.ZARR.value: ZarrStorageBackend(),
+            }
+        )
+        filemanager.register_backend(
+            Backend.VIRTUAL_WORKSPACE.value,
+            VirtualWorkspaceBackend(tmp_path),
+        )
+        expected_registry_keys = set(filemanager.registry)
 
         restored = pickle.loads(pickle.dumps(filemanager))
 
-        assert Backend.ZARR.value in restored.registry
-        assert Backend.VIRTUAL_WORKSPACE.value in restored.registry
+        assert set(restored.registry) == expected_registry_keys
+        assert restored.registry is not filemanager.registry
         assert restored.registry[Backend.VIRTUAL_WORKSPACE.value].plate_root == tmp_path
         assert (
             restored.registry[Backend.ZARR.value].config
             == filemanager.registry[Backend.ZARR.value].config
+        )
+        np.testing.assert_array_equal(
+            restored.load(
+                tmp_path / "virtual.npy",
+                backend=Backend.VIRTUAL_WORKSPACE.value,
+            ),
+            source,
+        )
+
+    def test_virtual_workspace_dispatches_each_ref_to_its_declared_local_backend(
+        self,
+        tmp_path,
+    ):
+        """One virtual workspace may contain source refs from mixed backends."""
+        source_pixel_ref = getattr(polystore, "SourcePixelRef", None)
+        assert source_pixel_ref is not None
+
+        disk_payload = np.arange(6).reshape(2, 3)
+        memory_payload = np.arange(6, 12).reshape(2, 3)
+        np.save(tmp_path / "disk.npy", disk_payload)
+
+        filemanager = FileManager(
+            {
+                Backend.DISK.value: DiskBackend(),
+                Backend.MEMORY.value: MemoryBackend(),
+            }
+        )
+        filemanager.ensure_directory("/", backend=Backend.MEMORY.value)
+        filemanager.save(
+            memory_payload,
+            "/memory.npy",
+            backend=Backend.MEMORY.value,
+        )
+        refs = {
+            "from_disk.npy": source_pixel_ref(
+                backend=Backend.DISK.value,
+                backend_address="disk.npy",
+            ).to_workspace_mapping(),
+            "from_memory.npy": source_pixel_ref(
+                backend=Backend.MEMORY.value,
+                backend_address="/memory.npy",
+            ).to_workspace_mapping(),
+        }
+        get_metadata_path(tmp_path).write_text(
+            json.dumps(
+                {
+                    "subdirectories": {
+                        ".": {
+                            "workspace_mapping": refs,
+                            "available_backends": {
+                                Backend.VIRTUAL_WORKSPACE.value: True
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        filemanager.register_backend(
+            Backend.VIRTUAL_WORKSPACE.value,
+            VirtualWorkspaceBackend(tmp_path),
+        )
+
+        np.testing.assert_array_equal(
+            filemanager.load(
+                tmp_path / "from_disk.npy",
+                backend=Backend.VIRTUAL_WORKSPACE.value,
+            ),
+            disk_payload,
+        )
+        np.testing.assert_array_equal(
+            filemanager.load(
+                tmp_path / "from_memory.npy",
+                backend=Backend.VIRTUAL_WORKSPACE.value,
+            ),
+            memory_payload,
         )
 
 

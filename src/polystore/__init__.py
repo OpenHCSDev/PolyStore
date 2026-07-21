@@ -53,6 +53,7 @@ from .roi import (
 )
 from .streaming import StreamingBackend
 from .streaming_constants import StreamingDataType, NapariShapeType
+from .virtual_workspace import SourcePixelRef
 
 __all__ = [
     "Backend",
@@ -106,6 +107,7 @@ __all__ = [
     "materialize_rois",
     "StreamingDataType",
     "NapariShapeType",
+    "SourcePixelRef",
     "NapariStreamingBackend",
     "FijiStreamingBackend",
     "ZarrStorageBackend",

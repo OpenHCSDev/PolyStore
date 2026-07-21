@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import List, Set, Union, Tuple, Any
 
 from .formats import DEFAULT_IMAGE_EXTENSIONS
-from .base import DataSink, PicklableBackend
+from .base import (
+    BackendBase,
+    DataSource,
+    PicklableBackend,
+)
 from .exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
@@ -24,7 +28,6 @@ class FileManager:
 
         Args:
             registry: Registry for storage backends. Must be provided.
-                     Now accepts Dict[str, DataSink] (includes StorageBackend and StreamingBackend)
 
         Raises:
             ValueError: If registry is not provided.
@@ -43,11 +46,8 @@ class FileManager:
         if registry is None:
             raise ValueError("Registry must be provided to FileManager. Default fallback has been removed.")
 
-        # Store registry
-        self.registry = registry
-
-
-
+        self.registry = dict(registry)
+        self._bind_registry()
         logger.debug("FileManager initialized with registry")
 
     def __getstate__(self) -> dict[str, Any]:
@@ -57,36 +57,64 @@ class FileManager:
                 picklable_backends[backend_key] = (
                     backend_instance.get_connection_params()
                 )
-        return {"picklable_backends": picklable_backends}
+        return {
+            "registered_backend_keys": tuple(self.registry),
+            "picklable_backends": picklable_backends,
+        }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         from .backend_registry import STORAGE_BACKENDS
-        from .base import ensure_storage_registry, storage_registry
 
-        ensure_storage_registry()
         STORAGE_BACKENDS._discover()
-        for backend_key, connection_params in state["picklable_backends"].items():
+        registered_keys = tuple(state["registered_backend_keys"])
+        picklable_backends = state["picklable_backends"]
+        registry = {}
+        for backend_key in registered_keys:
             backend_class = STORAGE_BACKENDS[backend_key]
-            storage_registry[backend_key] = backend_class.from_connection_params(
-                connection_params
-            )
-        self.registry = storage_registry
+            if backend_key in picklable_backends:
+                if not issubclass(backend_class, PicklableBackend):
+                    raise TypeError(
+                        f"Backend {backend_key!r} serialized connection parameters "
+                        "without declaring PicklableBackend."
+                    )
+                registry[backend_key] = backend_class.from_connection_params(
+                    picklable_backends[backend_key]
+                )
+            else:
+                registry[backend_key] = backend_class()
+        self.registry = registry
+        self._bind_registry()
 
-    def _get_backend(self, backend_name: str) -> DataSink:
+    def register_backend(self, name: str, backend: BackendBase) -> None:
+        """Register one backend in this execution-local registry and rebind it."""
+        if isinstance(name, Enum):
+            name = name.value
+        normalized_name = str(name).strip().lower()
+        if not normalized_name:
+            raise ValueError("Backend name cannot be empty.")
+        self.registry[normalized_name] = backend
+        self._bind_registry()
+
+    def _bind_registry(self) -> None:
+        for backend in self.registry.values():
+            if isinstance(backend, BackendBase):
+                backend.bind_registry(self.registry)
+
+    def _get_backend(self, backend_name: str) -> BackendBase:
         """
         Get a backend by name.
 
         This method uses the instance registry to get the backend instance directly.
         All FileManagers that use the same registry share the same backend instances.
 
-        Returns DataSink (base interface) - could be StorageBackend or StreamingBackend.
-        Load operations will fail-loud on StreamingBackend (no load method).
+        Returns the nominal backend instance. Unsupported operations fail at the
+        corresponding DataSource or DataSink boundary.
 
         Args:
             backend_name: Name of the backend to get (e.g., "disk", "memory", "zarr")
 
         Returns:
-            The backend instance (DataSink - polymorphic)
+            The backend instance.
 
         Raises:
             StorageResolutionError: If the backend is not found in the registry
@@ -111,6 +139,43 @@ class FileManager:
             return self.registry[backend_name]
         except Exception as e:
             raise StorageResolutionError(f"Failed to get backend '{backend_name}': {e}") from e
+
+    def resolve_address(
+        self,
+        backend_address: Union[str, Path],
+        backend: str,
+        *,
+        base_path: Union[str, Path],
+    ) -> Union[str, Path]:
+        """Delegate backend-owned address resolution to one registered data source."""
+        backend_instance = self._get_backend(backend)
+        if not isinstance(backend_instance, DataSource):
+            raise StorageResolutionError(
+                f"Backend {backend!r} is not a DataSource."
+            )
+        return backend_instance.resolve_address(
+            backend_address,
+            base_path=Path(base_path),
+        )
+
+    def source_path(
+        self,
+        backend_address: Union[str, Path],
+        backend: str,
+        *,
+        base_path: Union[str, Path],
+    ) -> Union[str, Path]:
+        """Delegate physical source-path projection to the address owner."""
+
+        backend_instance = self._get_backend(backend)
+        if not isinstance(backend_instance, DataSource):
+            raise StorageResolutionError(
+                f"Backend {backend!r} is not a DataSource."
+            )
+        return backend_instance.source_path(
+            backend_address,
+            base_path=Path(base_path),
+        )
 
     def load(self, file_path: Union[str, Path], backend: str, **kwargs) -> Any:
         """

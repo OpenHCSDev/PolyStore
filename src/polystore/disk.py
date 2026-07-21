@@ -100,6 +100,16 @@ class DiskStorageBackend(StorageBackend):
         self.format_registry = FileFormatRegistry()
         self._register_formats()
 
+    def resolve_address(
+        self,
+        backend_address: Union[str, Path],
+        *,
+        base_path: Path,
+    ) -> Path:
+        """Resolve a plate-relative disk address against its workspace root."""
+        path = Path(backend_address)
+        return path if path.is_absolute() else Path(base_path) / path
+
     def _register_formats(self):
         """
         Register all file format handlers.

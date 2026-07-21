@@ -12,7 +12,8 @@ import threading
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Mapping, Optional, Set, Union
+
 from .constants import Backend
 from .exceptions import StorageResolutionError
 from .registry import AutoRegisterMeta
@@ -132,6 +133,10 @@ class BackendBase(metaclass=AutoRegisterMeta):
         del path
         return self.supports_arbitrary_files
 
+    def bind_registry(self, registry: Mapping[str, "BackendBase"]) -> None:
+        """Bind an execution-local backend registry when this backend needs it."""
+        del registry
+
 
 class DataSink(BackendBase):
     """
@@ -191,6 +196,26 @@ class DataSource(BackendBase):
 
     This is the read-only counterpart to DataSink.
     """
+
+    def resolve_address(
+        self,
+        backend_address: Union[str, Path],
+        *,
+        base_path: Path,
+    ) -> Union[str, Path]:
+        """Resolve one backend-owned address for loading."""
+        del base_path
+        return backend_address
+
+    def source_path(
+        self,
+        backend_address: Union[str, Path],
+        *,
+        base_path: Path,
+    ) -> Union[str, Path]:
+        """Return the physical source path represented by an opaque address."""
+
+        return self.resolve_address(backend_address, base_path=base_path)
 
     @abstractmethod
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
