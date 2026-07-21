@@ -81,8 +81,6 @@ class TestDiskBatchOperations:
         assert np.array_equal(self.backend.load(paths[0]), arr)
         assert self.backend.load(paths[1]) == text_data
         assert self.backend.load(paths[2]) == json_data
-
-
 class TestDiskListingOperations:
     """Test file listing with various filters and recursive options."""
 
@@ -533,12 +531,20 @@ class TestDiskErrorHandling:
         with pytest.raises(ValueError, match="No writer registered"):
             self.backend.load(file_path)
 
-    def test_save_unregistered_extension(self, tmp_path):
-        """Test saving with unregistered extension."""
+    def test_save_text_with_unregistered_extension(self, tmp_path):
+        """Text payload identity is sufficient for arbitrary text extensions."""
+        file_path = tmp_path / "file.unknown_ext"
+
+        self.backend.save("data", file_path)
+
+        assert file_path.read_text() == "data"
+
+    def test_save_non_text_with_unregistered_extension(self, tmp_path):
+        """Unknown non-text payloads still require a registered format."""
         file_path = tmp_path / "file.unknown_ext"
 
         with pytest.raises(ValueError, match="No writer registered"):
-            self.backend.save("data", file_path)
+            self.backend.save(object(), file_path)
 
     def test_ensure_directory_already_exists(self, tmp_path):
         """Test ensure_directory on existing directory."""

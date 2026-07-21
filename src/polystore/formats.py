@@ -10,57 +10,61 @@ from enum import Enum
 class FileFormat(Enum):
     """Enumeration of supported file formats."""
 
+    def __new__(
+        cls,
+        value: str,
+        extensions: tuple[str, ...],
+        is_pixel_payload: bool,
+        is_raster_source: bool = False,
+    ):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.extensions = extensions
+        member.is_pixel_payload = is_pixel_payload
+        member.is_raster_source = is_raster_source
+        return member
+
     # Array formats
-    NUMPY = "numpy"
-    TORCH = "torch"
-    JAX = "jax"
-    CUPY = "cupy"
-    TENSORFLOW = "tensorflow"
-    ZARR = "zarr"
+    NUMPY = ("numpy", (".npy", ".npz"), True)
+    TORCH = ("torch", (".pt", ".pth"), True)
+    JAX = ("jax", (".jax",), True)
+    CUPY = ("cupy", (".cupy",), True)
+    TENSORFLOW = ("tensorflow", (".tf",), True)
+    ZARR = ("zarr", (".zarr",), True)
+    MATLAB = ("matlab", (".mat",), True)
 
     # Image formats
-    TIFF = "tiff"
-    RASTER_IMAGE = "raster_image"
+    TIFF = ("tiff", (".tif", ".tiff"), True, True)
+    PNG = ("png", (".png",), True, True)
+    RASTER_IMAGE = (
+        "raster_image",
+        (".bmp", ".gif", ".jpeg", ".jpg"),
+        True,
+        True,
+    )
 
     # Data formats
-    CSV = "csv"
-    JSON = "json"
-    TEXT = "text"
+    CSV = ("csv", (".csv",), False)
+    JSON = ("json", (".json",), False)
+    TEXT = ("text", (".txt",), False)
 
     # ROI format
-    ROI = "roi"
-
-    @property
-    def extensions(self):
-        """Get file extensions for this format."""
-        return FILE_FORMAT_EXTENSIONS.get(self, [])
-
-
-# Mapping of file formats to their extensions
-FILE_FORMAT_EXTENSIONS = {
-    FileFormat.NUMPY: [".npy", ".npz"],
-    FileFormat.TORCH: [".pt", ".pth"],
-    FileFormat.JAX: [".jax"],
-    FileFormat.CUPY: [".cupy"],
-    FileFormat.TENSORFLOW: [".tf"],
-    FileFormat.ZARR: [".zarr"],
-    FileFormat.TIFF: [".tif", ".tiff"],
-    FileFormat.RASTER_IMAGE: [".bmp", ".gif", ".jpeg", ".jpg", ".png"],
-    FileFormat.CSV: [".csv"],
-    FileFormat.JSON: [".json"],
-    FileFormat.TEXT: [".txt"],
-    FileFormat.ROI: [".roi.zip"],
-}
+    ROI = ("roi", (".roi.zip",), False)
 
 # Default image extensions
 DEFAULT_IMAGE_EXTENSIONS = {
     extension
-    for extensions in (
-        FILE_FORMAT_EXTENSIONS[FileFormat.TIFF],
-        FILE_FORMAT_EXTENSIONS[FileFormat.RASTER_IMAGE],
-    )
-    for extension in extensions
+    for file_format in FileFormat
+    if file_format.is_raster_source
+    for extension in file_format.extensions
 }
+
+PIXEL_PAYLOAD_EXTENSIONS = frozenset(
+    extension
+    for file_format in FileFormat
+    if file_format.is_pixel_payload
+    for extension in file_format.extensions
+)
 
 
 def get_format_from_extension(ext: str) -> FileFormat:
@@ -81,8 +85,8 @@ def get_format_from_extension(ext: str) -> FileFormat:
 
     ext = ext.lower()
 
-    for fmt, extensions in FILE_FORMAT_EXTENSIONS.items():
-        if ext in extensions:
-            return fmt
+    for file_format in FileFormat:
+        if ext in file_format.extensions:
+            return file_format
 
     raise ValueError(f"Unknown file extension: {ext}")

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.io import savemat
 
 from polystore.disk import DiskBackend, FileFormatRegistry
 
@@ -22,6 +23,28 @@ def test_numpy_save_load(tmp_path: Path):
     disk.save(arr, out)
     loaded = disk.load(out)
     assert np.array_equal(arr, loaded)
+
+
+def test_matlab_numeric_array_save_load(tmp_path: Path):
+    disk = DiskBackend()
+    array = np.arange(12, dtype=np.float32).reshape(3, 4)
+    path = tmp_path / "pixels.mat"
+
+    disk.save(array, path)
+
+    np.testing.assert_array_equal(disk.load(path), array)
+
+
+def test_matlab_reader_requires_one_public_numeric_array(tmp_path: Path):
+    disk = DiskBackend()
+    path = tmp_path / "ambiguous.mat"
+    savemat(path, {"first": np.ones((2, 2)), "second": np.zeros((2, 2))})
+
+    with pytest.raises(
+        ValueError,
+        match="exactly one public numeric array, found 2",
+    ):
+        disk.load(path)
 
 
 def test_file_format_registry_api(tmp_path: Path):

@@ -162,6 +162,46 @@ class TestFileManagerSaveErrors:
         with pytest.raises(StorageResolutionError):
             file_manager.save_batch(data_list, paths, backend="invalid_backend")
 
+    def test_disk_writes_opaque_bytes_without_extension_registration(
+        self,
+        file_manager,
+        temp_dir,
+    ):
+        payload = b"SQLite format 3\x00\x01\x02"
+        output_path = Path(temp_dir) / "analysis.sqlite"
+
+        file_manager.save(payload, output_path, backend="disk")
+
+        assert output_path.read_bytes() == payload
+
+    def test_disk_batch_preserves_opaque_bytes_save_semantics(
+        self,
+        file_manager,
+        temp_dir,
+    ):
+        payloads = [b"first opaque payload", b"second opaque payload"]
+        output_paths = [
+            Path(temp_dir) / "first.bin",
+            Path(temp_dir) / "second.bin",
+        ]
+
+        file_manager.save_batch(payloads, output_paths, backend="disk")
+
+        assert [path.read_bytes() for path in output_paths] == payloads
+
+    def test_disk_unknown_suffix_still_rejects_non_bytes_payload(
+        self,
+        file_manager,
+        temp_dir,
+    ):
+        output_path = Path(temp_dir) / "analysis.sqlite"
+
+        with pytest.raises(StorageResolutionError) as exc_info:
+            file_manager.save({"not": "opaque bytes"}, output_path, backend="disk")
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert "extension" in str(exc_info.value.__cause__)
+
 
 class TestFileManagerDirectoryOps:
     """Test directory operations."""

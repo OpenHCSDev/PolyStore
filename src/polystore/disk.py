@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 import numpy as np
 
-from .constants import Backend, MemoryType
+from .constants import Backend
 from .formats import FileFormat
 from .base import StorageBackend
 
@@ -47,13 +47,7 @@ else:
     tf = get_tf()
 tifffile = optional_import("tifffile")
 imageio = optional_import("imageio.v3")
-
-# Optional arraybridge integration for memory conversion
-try:
-    from arraybridge import convert_memory as _convert_memory, detect_memory_type as _detect_memory_type
-except Exception:
-    _convert_memory = None
-    _detect_memory_type = None
+scipy_io = optional_import("scipy.io")
 
 class FileFormatRegistry:
     def __init__(self):
@@ -166,6 +160,21 @@ class DiskStorageBackend(StorageBackend):
                     self._image_reader,
                 )
             )
+            registrations.append(
+                DiskFileFormatRegistration(
+                    FileFormat.PNG,
+                    self._png_writer,
+                    self._image_reader,
+                )
+            )
+        if scipy_io is not None:
+            registrations.append(
+                DiskFileFormatRegistration(
+                    FileFormat.MATLAB,
+                    self._matlab_writer,
+                    self._matlab_reader,
+                )
+            )
         return registrations
 
     # Format-specific writer/reader functions (pickleable)
@@ -225,6 +234,36 @@ class DiskStorageBackend(StorageBackend):
     def _image_reader(self, path):
         """Read standard raster images using imageio."""
         return imageio.imread(path)
+
+    def _png_writer(self, path, data, **kwargs):
+        """Write lossless PNG images with reduced compression work."""
+        imageio.imwrite(path, np.asarray(data), compress_level=1)
+
+    def _matlab_writer(self, path, data, **kwargs):
+        """Write one numeric array to a MATLAB matrix file."""
+        del kwargs
+        array = np.asarray(data)
+        if not np.issubdtype(array.dtype, np.number):
+            raise TypeError("MATLAB pixel payloads must be numeric arrays.")
+        scipy_io.savemat(path, {"Image": array})
+
+    def _matlab_reader(self, path, **kwargs):
+        """Read the sole public numeric array from a MATLAB matrix file."""
+        del kwargs
+        payload = scipy_io.loadmat(path)
+        numeric_arrays = tuple(
+            np.asarray(value)
+            for name, value in payload.items()
+            if not name.startswith("__")
+            and isinstance(value, np.ndarray)
+            and np.issubdtype(value.dtype, np.number)
+        )
+        if len(numeric_arrays) != 1:
+            raise ValueError(
+                "MATLAB pixel source requires exactly one public numeric array, "
+                f"found {len(numeric_arrays)} in {str(path)!r}."
+            )
+        return numeric_arrays[0]
 
     def _text_writer(self, path, data, **kwargs):
         """Write text data to file. Accepts and ignores extra kwargs for compatibility."""
@@ -349,6 +388,14 @@ class DiskStorageBackend(StorageBackend):
 
         disk_output_path = Path(output_path)
 
+        if isinstance(data, bytes):
+            disk_output_path.write_bytes(data)
+            return
+
+        if isinstance(data, str):
+            self._text_writer(disk_output_path, data, **kwargs)
+            return
+
         # Explicit type dispatch for ROI data
         if isinstance(data, list) and len(data) > 0 and isinstance(data[0], ROI):
             # ROI data - save as JSON
@@ -387,8 +434,6 @@ class DiskStorageBackend(StorageBackend):
         """
         Save multiple files sequentially using existing save method.
 
-        Converts GPU arrays to CPU numpy arrays before saving using the optional conversion hooks.
-
         Args:
             data_list: List of data objects to save
             output_paths: List of destination paths (must match length of data_list)
@@ -400,29 +445,8 @@ class DiskStorageBackend(StorageBackend):
         if len(data_list) != len(output_paths):
             raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
 
-        # Convert GPU arrays to CPU numpy arrays using conversion hooks
-        cpu_data_list = []
-        for data in data_list:
-            if _detect_memory_type:
-                source_type = _detect_memory_type(data)
-                if source_type == MemoryType.NUMPY.value:
-                    cpu_data_list.append(data)
-                elif _convert_memory:
-                    numpy_data = _convert_memory(
-                        data=data,
-                        source_type=source_type,
-                        target_type=MemoryType.NUMPY.value,
-                        gpu_id=0,
-                    )
-                    cpu_data_list.append(numpy_data)
-                else:
-                    cpu_data_list.append(np.asarray(data))
-            else:
-                cpu_data_list.append(np.asarray(data))
-
-        # Save converted data using existing save method
-        for cpu_data, output_path in zip(cpu_data_list, output_paths):
-            self.save(cpu_data, output_path, **kwargs)
+        for data, output_path in zip(data_list, output_paths):
+            self.save(data, output_path, **dict(kwargs))
 
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Union[str,Path]]:
