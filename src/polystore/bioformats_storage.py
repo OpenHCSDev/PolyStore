@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 from .base import (
+    ImageSamplingRequest,
+    ImageSamplingResult,
     PicklableBackend,
     ReadOnlyBackend,
 )
@@ -109,6 +111,21 @@ class BioFormatsStorageBackend(ReadOnlyBackend, PicklableBackend):
             source_path=ref.source_path,
             series_index=ref.series_index,
             plane_index=ref.plane_index,
+        )
+
+    def sample(
+        self,
+        file_path: Union[str, Path],
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        ref = BioFormatsPlaneRef.from_backend_address(str(file_path))
+        from .bioformats_java import sample_bioformats_plane
+
+        return sample_bioformats_plane(
+            source_path=ref.source_path,
+            series_index=ref.series_index,
+            plane_index=ref.plane_index,
+            request=request,
         )
 
     def load_batch(

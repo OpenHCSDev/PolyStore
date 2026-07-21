@@ -14,6 +14,8 @@ from .formats import DEFAULT_IMAGE_EXTENSIONS
 from .base import (
     BackendBase,
     DataSource,
+    ImageSamplingRequest,
+    ImageSamplingResult,
     PicklableBackend,
 )
 from .exceptions import StorageResolutionError
@@ -206,6 +208,36 @@ class FileManager:
             raise StorageResolutionError(
                 f"Failed to load file at {file_path} using backend '{backend}'"
             ) from e
+
+    def sample(
+        self,
+        file_path: Union[str, Path],
+        backend: str,
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        """Sample one image through the selected data source's public contract."""
+
+        try:
+            backend_instance = self._get_backend(backend)
+            if not isinstance(backend_instance, DataSource):
+                raise StorageResolutionError(
+                    f"Backend {backend!r} is not a DataSource."
+                )
+            return backend_instance.sample(file_path, request)
+        except StorageResolutionError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Unexpected error during sampling from %s with backend %s: %s",
+                file_path,
+                backend,
+                exc,
+                exc_info=True,
+            )
+            raise StorageResolutionError(
+                f"Failed to sample file at {file_path} using backend "
+                f"'{backend}': {exc}"
+            ) from exc
 
     def save(self, data: Any, output_path: Union[str, Path], backend: str, **kwargs) -> None:
         """

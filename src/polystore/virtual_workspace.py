@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
@@ -15,6 +15,8 @@ import numpy as np
 from .base import (
     BackendBase,
     DataSource,
+    ImageSamplingRequest,
+    ImageSamplingResult,
     PicklableBackend,
     ReadOnlyBackend,
 )
@@ -203,6 +205,28 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
         payload = backend.load(address, **kwargs)
         return self._project_source_axes(payload, ref)
 
+    def _sample_ref(
+        self,
+        ref: SourcePixelRef,
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        backend = self._backend_for_ref(ref)
+        address = backend.resolve_address(
+            ref.backend_address,
+            base_path=self.plate_root,
+        )
+        sampled = backend.sample(address, request)
+        return replace(
+            sampled,
+            data=self._project_source_axes(sampled.data, ref),
+            statistics_data=self._project_source_axes(sampled.statistics_data, ref),
+            source_shape=self._project_source_shape(sampled.source_shape, ref),
+            resolution_shape=self._project_source_shape(
+                sampled.resolution_shape,
+                ref,
+            ),
+        )
+
     @staticmethod
     def _project_source_axes(payload: Any, ref: SourcePixelRef) -> Any:
         projected = payload
@@ -214,6 +238,21 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
                     f"from payload shape {shape!r}."
                 )
             projected = projected[index]
+        return projected
+
+    @staticmethod
+    def _project_source_shape(
+        shape: tuple[int, ...],
+        ref: SourcePixelRef,
+    ) -> tuple[int, ...]:
+        projected = tuple(shape)
+        for index in ref.source_axis_indices:
+            if not projected or index >= projected[0]:
+                raise StorageResolutionError(
+                    f"Source ref {ref!r} cannot select leading index {index} "
+                    f"from payload shape {shape!r}."
+                )
+            projected = projected[1:]
         return projected
 
     def _resolve_path(self, path: Union[str, Path]) -> str:
@@ -238,6 +277,13 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
 
     def load(self, file_path: Union[str, Path], **kwargs: Any) -> Any:
         return self._load_ref(self._resolve_ref(file_path), **kwargs)
+
+    def sample(
+        self,
+        file_path: Union[str, Path],
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        return self._sample_ref(self._resolve_ref(file_path), request)
 
     def load_batch(
         self,

@@ -10,15 +10,89 @@ that all storage backends must fulfill.
 import logging
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Set, Union
 
+import numpy as np
 from .constants import Backend
 from .exceptions import StorageResolutionError
 from .registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
+
+
+class ImageSamplingStatisticsScope(str, Enum):
+    """Pixels over which one image-sampling result computed statistics."""
+
+    SOURCE_RESOLUTION = "source_resolution"
+    BOUNDED_SAMPLE = "bounded_sample"
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSamplingRequest:
+    """Decoder-neutral request for one bounded native-resolution image region."""
+
+    origin_yx: tuple[int, int] = (0, 0)
+    shape_yx: tuple[int, int] = (32, 32)
+    resolution_index: int | None = None
+    max_auto_resolution_size: int = 1024
+
+    def __post_init__(self) -> None:
+        origin_yx = tuple(self.origin_yx)
+        shape_yx = tuple(self.shape_yx)
+        if len(origin_yx) != 2 or any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in origin_yx
+        ):
+            raise ValueError(
+                "ImageSamplingRequest.origin_yx must contain two nonnegative integers."
+            )
+        if len(shape_yx) != 2 or any(
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+            for value in shape_yx
+        ):
+            raise ValueError(
+                "ImageSamplingRequest.shape_yx must contain two positive integers."
+            )
+        resolution_index = self.resolution_index
+        if resolution_index is not None and (
+            not isinstance(resolution_index, int)
+            or isinstance(resolution_index, bool)
+            or resolution_index < 0
+        ):
+            raise ValueError(
+                "ImageSamplingRequest.resolution_index must be a nonnegative integer "
+                "or None."
+            )
+        if (
+            not isinstance(self.max_auto_resolution_size, int)
+            or isinstance(self.max_auto_resolution_size, bool)
+            or self.max_auto_resolution_size <= 0
+        ):
+            raise ValueError(
+                "ImageSamplingRequest.max_auto_resolution_size must be positive."
+            )
+        object.__setattr__(self, "origin_yx", origin_yx)
+        object.__setattr__(self, "shape_yx", shape_yx)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSamplingResult:
+    """Bounded pixels plus native-resolution provenance from one data source."""
+
+    data: Any
+    statistics_data: Any
+    source_shape: tuple[int, ...]
+    resolution_shape: tuple[int, ...]
+    sample_origin_yx: tuple[int, int]
+    selected_resolution_index: int = 0
+    resolution_count: int = 1
+    downsample_yx: tuple[float, float] = (1.0, 1.0)
+    statistics_scope: ImageSamplingStatisticsScope = (
+        ImageSamplingStatisticsScope.SOURCE_RESOLUTION
+    )
 
 
 class PicklableBackend(ABC):
@@ -216,6 +290,42 @@ class DataSource(BackendBase):
         """Return the physical source path represented by an opaque address."""
 
         return self.resolve_address(backend_address, base_path=base_path)
+
+    def sample(
+        self,
+        file_path: Union[str, Path],
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        """Load and bound one ordinary image through the generic source contract.
+
+        Decoder leaves with native region or pyramid support override this template
+        method. The default preserves ordinary backend loading behavior and applies
+        the requested spatial bound after loading.
+        """
+
+        if request.resolution_index not in (None, 0):
+            raise ValueError(
+                "This data source exposes one resolution; resolution_index must "
+                "be 0 or None."
+            )
+        array = np.asarray(self.load(file_path))
+        if array.ndim < 2:
+            raise ValueError(
+                f"Sampled image must have at least two dimensions, got {array.shape!r}."
+            )
+        y, x = request.origin_yx
+        height, width = request.shape_yx
+        y_stop = min(int(array.shape[-2]), y + height)
+        x_stop = min(int(array.shape[-1]), x + width)
+        sample = array[..., y:y_stop, x:x_stop]
+        source_shape = tuple(int(value) for value in array.shape)
+        return ImageSamplingResult(
+            data=sample,
+            statistics_data=array,
+            source_shape=source_shape,
+            resolution_shape=source_shape,
+            sample_origin_yx=request.origin_yx,
+        )
 
     @abstractmethod
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
+
+from .base import (
+    ImageSamplingRequest,
+    ImageSamplingResult,
+    ImageSamplingStatisticsScope,
+)
 
 
 class BioFormatsJavaUnavailableError(RuntimeError):
@@ -29,7 +36,7 @@ class BioFormatsJavaContext:
     """Lazy JVM/ImageJ context for Bio-Formats Java access."""
 
     _lock = Lock()
-    _instance: "BioFormatsJavaContext | None" = None
+    _instance: BioFormatsJavaContext | None = None
 
     def __init__(self, imagej_module: Any, scyjava_module: Any):
         self.imagej = imagej_module
@@ -40,14 +47,14 @@ class BioFormatsJavaContext:
         self.FormatTools = None
 
     @classmethod
-    def instance(cls) -> "BioFormatsJavaContext":
+    def instance(cls) -> BioFormatsJavaContext:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls._create()
             return cls._instance
 
     @classmethod
-    def _create(cls) -> "BioFormatsJavaContext":
+    def _create(cls) -> BioFormatsJavaContext:
         try:
             import imagej
             import scyjava
@@ -75,6 +82,7 @@ class BioFormatsJavaContext:
         metadata = self.MetadataTools.createOMEXMLMetadata()
         reader = self.ImageReader()
         try:
+            reader.setFlattenedResolutions(False)
             reader.setMetadataStore(metadata)
             reader.setId(str(source_path))
             return BioFormatsOpenedReader(reader=reader, metadata=metadata)
@@ -82,15 +90,24 @@ class BioFormatsJavaContext:
             reader.close()
             raise
 
+    def declares_path(self, source_path: str | Path) -> bool:
+        """Return whether Bio-Formats positively identifies this source path."""
+        self.ensure_initialized()
+        reader = self.ImageReader()
+        try:
+            return bool(reader.isThisType(str(source_path)))
+        finally:
+            reader.close()
+
 
 def java_int(value: Any) -> int | None:
     """Convert nullable Java primitive wrappers to Python int."""
-    return OptionalJavaScalar.from_java(value, JAVA_SCALAR_PROJECTOR.readers).convert(int)
+    return JAVA_SCALAR_PROJECTOR.convert(value, int)
 
 
 def java_float(value: Any) -> float | None:
     """Convert nullable Java numeric wrappers to Python float."""
-    return OptionalJavaScalar.from_java(value, JAVA_SCALAR_PROJECTOR.readers).convert(float)
+    return JAVA_SCALAR_PROJECTOR.convert(value, float)
 
 
 def java_str(value: Any) -> str | None:
@@ -122,27 +139,15 @@ class JavaScalarProjector:
                 continue
         return value
 
-
-@dataclass(frozen=True, slots=True)
-class OptionalJavaScalar:
-    """Nullable Java scalar after wrapper unwrapping."""
-
-    value: Any | None
-
-    @classmethod
-    def from_java(
-        cls,
+    def convert(
+        self,
         value: Any,
-        readers: tuple[Callable[[Any], Any], ...],
-    ) -> "OptionalJavaScalar":
+        converter: Callable[[Any], Any],
+    ) -> Any | None:
+        """Convert one nullable Java scalar after wrapper unwrapping."""
         if value is None:
-            return cls(None)
-        return cls(JavaScalarProjector(readers).unwrap(value))
-
-    def convert(self, converter: Callable[[Any], Any]) -> Any | None:
-        if self.value is None:
             return None
-        return converter(self.value)
+        return converter(self.unwrap(value))
 
 
 JAVA_SCALAR_PROJECTOR = JavaScalarProjector(
@@ -181,6 +186,95 @@ def load_bioformats_plane(
         opened.close()
 
 
+def sample_bioformats_plane(
+    *,
+    source_path: Path,
+    series_index: int,
+    plane_index: int,
+    request: ImageSamplingRequest,
+) -> ImageSamplingResult:
+    """Read one bounded plane region at an exact native Bio-Formats resolution."""
+
+    context = BioFormatsJavaContext.instance()
+    opened = context.open_reader(source_path)
+    reader = opened.reader
+    try:
+        reader.setSeries(series_index)
+        if reader.getRGBChannelCount() != 1:
+            raise ValueError(
+                "Bio-Formats RGB/interleaved planes are not yet representable as "
+                "OpenHCS scalar channel planes."
+            )
+
+        resolution_count = int(reader.getResolutionCount())
+        if resolution_count <= 0:
+            raise ValueError("Bio-Formats reader exposed no native resolutions.")
+        selected_resolution_index = _select_bioformats_resolution(reader, request)
+
+        reader.setResolution(0)
+        source_shape = (int(reader.getSizeY()), int(reader.getSizeX()))
+        reader.setResolution(selected_resolution_index)
+        resolution_shape = (int(reader.getSizeY()), int(reader.getSizeX()))
+
+        y, x = request.origin_yx
+        requested_height, requested_width = request.shape_yx
+        height = max(0, min(resolution_shape[0], y + requested_height) - y)
+        width = max(0, min(resolution_shape[1], x + requested_width) - x)
+        dtype = PixelDtypeCatalog.from_format_tools(context.FormatTools).dtype(
+            pixel_type=int(reader.getPixelType()),
+            little_endian=bool(reader.isLittleEndian()),
+        )
+        if height == 0 or width == 0:
+            array = np.empty((height, width), dtype=dtype)
+        else:
+            raw = bytes(reader.openBytes(plane_index, x, y, width, height))
+            array = np.frombuffer(raw, dtype=dtype).reshape((height, width))
+
+        return ImageSamplingResult(
+            data=array,
+            statistics_data=array,
+            source_shape=source_shape,
+            resolution_shape=resolution_shape,
+            sample_origin_yx=request.origin_yx,
+            selected_resolution_index=selected_resolution_index,
+            resolution_count=resolution_count,
+            downsample_yx=(
+                source_shape[0] / resolution_shape[0],
+                source_shape[1] / resolution_shape[1],
+            ),
+            statistics_scope=ImageSamplingStatisticsScope.BOUNDED_SAMPLE,
+        )
+    finally:
+        opened.close()
+
+
+def _select_bioformats_resolution(
+    reader: Any,
+    request: ImageSamplingRequest,
+) -> int:
+    """Select one native level from the reader-owned resolution pyramid."""
+
+    resolution_count = int(reader.getResolutionCount())
+    requested = request.resolution_index
+    if requested is not None:
+        if requested >= resolution_count:
+            raise ValueError(
+                f"resolution_index={requested} is outside the Bio-Formats native "
+                f"resolution range 0..{resolution_count - 1}."
+            )
+        return requested
+
+    selected = resolution_count - 1
+    for resolution_index in range(resolution_count):
+        reader.setResolution(resolution_index)
+        if max(int(reader.getSizeY()), int(reader.getSizeX())) <= (
+            request.max_auto_resolution_size
+        ):
+            selected = resolution_index
+            break
+    return selected
+
+
 @dataclass(frozen=True, slots=True)
 class PixelDtypeSpec:
     """NumPy dtype projection for one Bio-Formats pixel type."""
@@ -203,7 +297,7 @@ class PixelDtypeCatalog:
     specs_by_key: dict[int, PixelDtypeSpec]
 
     @classmethod
-    def from_format_tools(cls, format_tools: Any) -> "PixelDtypeCatalog":
+    def from_format_tools(cls, format_tools: Any) -> PixelDtypeCatalog:
         specs = (
             PixelDtypeSpec(int(format_tools.INT8), "i1", endian_sensitive=False),
             PixelDtypeSpec(int(format_tools.UINT8), "u1", endian_sensitive=False),
