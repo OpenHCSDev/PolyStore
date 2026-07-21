@@ -530,13 +530,13 @@ class TestMemoryEdgeCases:
 
         assert str(path1) == str(path2)
 
-    def test_path_normalization_consistent(self):
-        """Test path normalization is consistent."""
+    def test_absolute_and_relative_paths_remain_distinct(self):
+        """Absolute and relative virtual addresses preserve their identities."""
         self.backend.save("data1", "/base/file.txt")
 
-        # Access with different path formats
         assert self.backend.load("/base/file.txt") == "data1"
-        assert self.backend.load("base/file.txt") == "data1"
+        with pytest.raises(FileNotFoundError):
+            self.backend.load("base/file.txt")
 
     def test_is_file_is_dir_boundaries(self):
         """Test is_file and is_dir proper boundaries."""

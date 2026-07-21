@@ -528,7 +528,7 @@ class TestDiskErrorHandling:
         file_path = tmp_path / "file.unknown_ext"
         file_path.write_text("test")
 
-        with pytest.raises(ValueError, match="No writer registered"):
+        with pytest.raises(ValueError, match="No reader registered"):
             self.backend.load(file_path)
 
     def test_save_text_with_unregistered_extension(self, tmp_path):

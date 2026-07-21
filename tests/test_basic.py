@@ -34,9 +34,9 @@ def test_memory_backend():
 
 def test_file_manager():
     """Test FileManager basic functionality."""
-    from polystore import FileManager, BackendRegistry
+    from polystore import FileManager, MemoryBackend
     
-    registry = BackendRegistry()
+    registry = {"memory": MemoryBackend()}
     fm = FileManager(registry)
     
     # Ensure directory exists in memory backend
@@ -51,4 +51,3 @@ def test_file_manager():
     loaded = fm.load("/test.npy", backend="memory")
     
     assert np.array_equal(data, loaded)
-

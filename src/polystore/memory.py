@@ -10,12 +10,14 @@ Clause 251 (Declarative Memory Conversion Interface) by requiring explicit
 memory type declarations and providing declarative conversion methods.
 """
 
+import copy as py_copy
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 from .base import StorageBackend
 from .constants import Backend
+from .exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +113,20 @@ class MemoryStorageBackend(StorageBackend):
             return "."
         parent = normalized.rsplit("/", 1)[0]
         return parent or "/"
+
+    def _require_directory_parent(self, key: str, original_path: Union[str, Path]) -> None:
+        """Validate the parent of one normalized flat key without inventing it."""
+        parent = self._parent_key(key)
+        if parent == ".":
+            return
+        if parent not in self._memory_store:
+            raise FileNotFoundError(
+                f"Destination parent path does not exist: {original_path}"
+            )
+        if self._memory_store[parent] is not None:
+            raise StorageResolutionError(
+                f"Destination parent path is not a directory: {original_path}"
+            )
 
     def load_batch(self, file_paths: List[Union[str, Path]]) -> List[Any]:
         """
@@ -320,46 +336,23 @@ class MemoryStorageBackend(StorageBackend):
 
 
     def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path], overwrite: bool = False):
-        src_parts = str(source).strip("/").split("/")
-        dst_parts = str(link_name).strip("/").split("/")
+        src_key = self._normalize(source)
+        link_key = self._normalize(link_name)
 
-        # Traverse to source
-        src_dict = self._memory_store
-        for part in src_parts[:-1]:
-            src_dict = src_dict.get(part)
-            if not isinstance(src_dict, dict):
-                raise FileNotFoundError(f"Invalid symlink source path: {source}")
-        src_key = src_parts[-1]
-        if src_key not in src_dict:
+        if src_key not in self._memory_store:
             raise FileNotFoundError(f"Symlink source not found: {source}")
 
-        # Traverse to destination parent
-        dst_dict = self._memory_store
-        for part in dst_parts[:-1]:
-            dst_dict = dst_dict.get(part)
-            if dst_dict is None or not isinstance(dst_dict, dict):
-                raise FileNotFoundError(f"Destination parent path does not exist: {link_name}")
+        self._require_directory_parent(link_key, link_name)
 
-        dst_key = dst_parts[-1]
-        if dst_key in dst_dict:
+        if link_key in self._memory_store:
             if not overwrite:
                 raise FileExistsError(f"Symlink destination already exists: {link_name}")
-            # Remove existing entry if overwrite=True
-            del dst_dict[dst_key]
+            del self._memory_store[link_key]
 
-        dst_dict[dst_key] = MemorySymlink(target=str(source))
+        self._memory_store[link_key] = MemorySymlink(target=src_key)
 
     def is_symlink(self, path: Union[str, Path]) -> bool:
-        parts = str(path).strip("/").split("/")
-        current = self._memory_store
-
-        for part in parts[:-1]:
-            current = current.get(part)
-            if not isinstance(current, dict):
-                return False
-
-        key = parts[-1]
-        return isinstance(current.get(key), MemorySymlink)
+        return isinstance(self._memory_store.get(self._normalize(path)), MemorySymlink)
 
     def is_file(self, path: Union[str, Path]) -> bool:
         """
@@ -410,29 +403,8 @@ class MemoryStorageBackend(StorageBackend):
         return True
     
     def _resolve_path(self, path: Union[str, Path]) -> Optional[Any]:
-        """
-        Resolves a memory-style virtual path into an in-memory object (file or directory).
-
-        This performs a pure dictionary traversal. It never coerces types or guesses structure.
-        If any intermediate path component is missing or not a dict, resolution fails.
-
-        Args:
-            path: Memory-style path, e.g., 'root/dir1/file.txt'
-
-        Returns:
-            The object at that path (could be dict or content object), or None if not found
-        """
-        components = str(path).strip("/").split("/")
-        current = self._memory_store  # root dict, e.g., {"root": {"file.txt": "data"}}
-
-        for comp in components:
-            if not isinstance(current, dict):
-                return None  # hit a file too early
-            if comp not in current:
-                return None
-            current = current[comp]
-
-        return current
+        """Resolve one path through the backend's flat normalized-key namespace."""
+        return self._memory_store.get(self._normalize(path))
 
     def move(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
         """
@@ -443,38 +415,23 @@ class MemoryStorageBackend(StorageBackend):
             FileExistsError: If destination already exists
             StorageResolutionError: On structure violations
         """
-        def _resolve_parent(path: Union[str, Path]):
-            parts = str(path).strip("/").split("/")
-            return parts[:-1], parts[-1]
+        src_key = self._normalize(src)
+        dst_key = self._normalize(dst)
 
-        src_parts, src_name = _resolve_parent(src)
-        dst_parts, dst_name = _resolve_parent(dst)
-
-        # Traverse to src
-        src_dict = self._memory_store
-        for part in src_parts:
-            src_dict = src_dict.get(part)
-            if not isinstance(src_dict, dict):
-                raise FileNotFoundError(f"Source path invalid: {src}")
-        if src_name not in src_dict:
+        if src_key not in self._memory_store:
             raise FileNotFoundError(f"Source not found: {src}")
 
-        # Traverse to dst parent — do not create
-        dst_dict = self._memory_store
-        for part in dst_parts:
-            dst_dict = dst_dict.get(part)
-            if dst_dict is None:
-                raise FileNotFoundError(f"Destination parent path does not exist: {dst}")
-            if not isinstance(dst_dict, dict):
-                raise StorageResolutionError(f"Destination path is not a directory: {part}")
+        self._require_directory_parent(dst_key, dst)
 
-        if dst_name in dst_dict:
+        if dst_key in self._memory_store:
             raise FileExistsError(f"Destination already exists: {dst}")
 
-        try:
-            dst_dict[dst_name] = src_dict.pop(src_name)
-        except Exception as e:
-            raise StorageResolutionError(f"Failed to move {src} to {dst}") from e
+        self._memory_store[dst_key] = self._memory_store.pop(src_key)
+        if self._memory_store[dst_key] is None:
+            src_prefix = src_key if src_key.endswith("/") else src_key + "/"
+            dst_prefix = dst_key if dst_key.endswith("/") else dst_key + "/"
+            for key in [key for key in self._memory_store if key.startswith(src_prefix)]:
+                self._memory_store[dst_prefix + key[len(src_prefix):]] = self._memory_store.pop(key)
 
     def copy(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
         """
@@ -490,40 +447,25 @@ class MemoryStorageBackend(StorageBackend):
             FileExistsError: If dst already exists
             StorageResolutionError: On invalid structure
         """
-        def _resolve_parent(path: Union[str, Path]):
-            parts = str(path).strip("/").split("/")
-            return parts[:-1], parts[-1]
-    
-        src_parts, src_name = _resolve_parent(src)
-        dst_parts, dst_name = _resolve_parent(dst)
-    
-        # Traverse to src object
-        src_dict = self._memory_store
-        for part in src_parts:
-            src_dict = src_dict.get(part)
-            if not isinstance(src_dict, dict):
-                raise FileNotFoundError(f"Source path invalid: {src}")
-        if src_name not in src_dict:
+        src_key = self._normalize(src)
+        dst_key = self._normalize(dst)
+
+        if src_key not in self._memory_store:
             raise FileNotFoundError(f"Source not found: {src}")
-        obj = src_dict[src_name]
-    
-        # Traverse to dst parent (do not create)
-        dst_dict = self._memory_store
-        for part in dst_parts:
-            dst_dict = dst_dict.get(part)
-            if dst_dict is None:
-                raise FileNotFoundError(f"Destination parent path does not exist: {dst}")
-            if not isinstance(dst_dict, dict):
-                raise StorageResolutionError(f"Destination path is not a directory: {part}")
-    
-        if dst_name in dst_dict:
+
+        self._require_directory_parent(dst_key, dst)
+
+        if dst_key in self._memory_store:
             raise FileExistsError(f"Destination already exists: {dst}")
-    
-        # Perform copy (deep to avoid aliasing)
-        try:
-            dst_dict[dst_name] = py_copy.deepcopy(obj)
-        except Exception as e:
-            raise StorageResolutionError(f"Failed to copy {src} to {dst}") from e
+
+        self._memory_store[dst_key] = py_copy.deepcopy(self._memory_store[src_key])
+        if self._memory_store[dst_key] is None:
+            src_prefix = src_key if src_key.endswith("/") else src_key + "/"
+            dst_prefix = dst_key if dst_key.endswith("/") else dst_key + "/"
+            for key in [key for key in self._memory_store if key.startswith(src_prefix)]:
+                self._memory_store[dst_prefix + key[len(src_prefix):]] = py_copy.deepcopy(
+                    self._memory_store[key]
+                )
     
     def stat(self, path: Union[str, Path]) -> Dict[str, Any]:
         """
@@ -539,30 +481,17 @@ class MemoryStorageBackend(StorageBackend):
         Raises:
             StorageResolutionError: On resolution failure
         """
-        parts = str(path).strip("/").split("/")
-        current = self._memory_store
+        key = self._normalize(path)
 
         try:
-            for part in parts[:-1]:
-                current = current.get(part)
-                if current is None:
-                    return {
-                        "type": "missing",
-                        "path": str(path),
-                        "exists": False
-                    }
-                if not isinstance(current, dict):
-                    raise StorageResolutionError(f"Invalid intermediate path segment: {part}")
-
-            final_key = parts[-1]
-            if final_key not in current:
+            if key not in self._memory_store:
                 return {
                     "type": "missing",
                     "path": str(path),
                     "exists": False
                 }
 
-            obj = current[final_key]
+            obj = self._memory_store[key]
 
             if isinstance(obj, MemorySymlink):
                 return {
@@ -572,7 +501,7 @@ class MemoryStorageBackend(StorageBackend):
                     "exists": self._resolve_path(obj.target) is not None
                 }
 
-            if isinstance(obj, dict):
+            if obj is None:
                 return {
                     "type": "directory",
                     "path": str(path),

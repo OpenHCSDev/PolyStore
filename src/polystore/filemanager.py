@@ -350,7 +350,7 @@ class FileManager:
         # List image files and apply natural sorting
         from .utils import natural_sort
         files = backend_instance.list_files(str(directory), pattern, extensions, recursive)
-        return natural_sort(files)
+        return natural_sort([str(path) for path in files])
 
 
     def list_files(self, directory: Union[str, Path], backend: str,
