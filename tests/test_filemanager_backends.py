@@ -104,6 +104,14 @@ def test_omero_backend_loads_base_plate_metadata_for_save_context(monkeypatch) -
     assert loaded_plate_ids == [11]
 
 
+def test_omero_backend_parses_virtual_paths_independently_of_host_separators() -> None:
+    backend = object.__new__(OMEROLocalBackend)
+
+    assert backend._parse_omero_path(
+        Path(r"\omero\plate_13_outputs\images")
+    ) == ("plate_13_outputs_images", 13, True)
+
+
 def test_physical_source_path_is_declared_by_backend_capability(file_manager) -> None:
     assert file_manager.physical_source_path(
         "/test/source.tif",

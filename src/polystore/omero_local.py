@@ -992,6 +992,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             /omero/plate_289_outputs/images_results -> ("plate_289_outputs_images_results", 289, True)
             /omero/plate_289_outputs/checkpoints_step0/A01.tif -> ("plate_294_outputs_checkpoints_step0", 294, True)
         """
+        path = PurePosixPath(str(path).replace("\\", "/"))
         parts = path.parts
         if len(parts) < 2 or parts[0] != "/" or parts[1] != "omero":
             raise ValueError(f"Not an OMERO path: {path}")
