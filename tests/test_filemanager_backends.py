@@ -10,7 +10,7 @@ from pathlib import Path
 
 from polystore import FileManager
 from polystore.exceptions import StorageResolutionError
-from polystore.omero_local import OMEROLocalBackend
+from polystore.omero_local import OMEROLocalBackend, PlateStructure
 
 
 def _backend_path(tmp_path: Path, backend_name: str, filename: str) -> str:
@@ -46,6 +46,62 @@ def test_omero_backend_qualifies_relative_listed_addresses() -> None:
         "/omero/plate_8/A01_s001_w1_z001_t001.tif",
         directory="/omero/plate_7",
     ) == "/omero/plate_8/A01_s001_w1_z001_t001.tif"
+
+
+def test_omero_backend_projects_save_context_from_base_plate_metadata() -> None:
+    backend = object.__new__(OMEROLocalBackend)
+    backend._plate_metadata = {
+        7: PlateStructure(
+            plate_id=7,
+            parser_name="ImageXpressFilenameParser",
+            microscope_type="ImageXpress",
+            wells={},
+            all_well_ids=set(),
+            max_sites=0,
+            max_z=0,
+            max_c=0,
+            max_t=0,
+        )
+    }
+
+    assert backend.contextual_save_kwargs(
+        images_dir="/omero/plate_7_outputs/images"
+    ) == {
+        "images_dir": "/omero/plate_7_outputs/images",
+        "parser_name": "ImageXpressFilenameParser",
+        "microscope_type": "ImageXpress",
+    }
+
+
+def test_omero_backend_loads_base_plate_metadata_for_save_context(monkeypatch) -> None:
+    backend = object.__new__(OMEROLocalBackend)
+    backend._plate_metadata = {}
+    loaded_plate_ids = []
+
+    def load_plate_structure(plate_id: int) -> None:
+        loaded_plate_ids.append(plate_id)
+        backend._plate_metadata[plate_id] = PlateStructure(
+            plate_id=plate_id,
+            parser_name="OperaPhenixFilenameParser",
+            microscope_type="OperaPhenix",
+            wells={},
+            all_well_ids=set(),
+            max_sites=0,
+            max_z=0,
+            max_c=0,
+            max_t=0,
+        )
+
+    monkeypatch.setattr(backend, "_load_plate_structure", load_plate_structure)
+
+    assert backend.contextual_save_kwargs(
+        images_dir="/omero/plate_11_outputs/checkpoints_step0"
+    ) == {
+        "images_dir": "/omero/plate_11_outputs/checkpoints_step0",
+        "parser_name": "OperaPhenixFilenameParser",
+        "microscope_type": "OperaPhenix",
+    }
+    assert loaded_plate_ids == [11]
 
 
 def test_physical_source_path_is_declared_by_backend_capability(file_manager) -> None:

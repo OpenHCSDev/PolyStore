@@ -129,9 +129,21 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         *,
         images_dir: str | None,
     ) -> Mapping[str, Any]:
-        """Bind the image workspace needed to link saved OMERO artifacts."""
+        """Bind save context from the source plate represented by the workspace."""
 
-        return {"images_dir": images_dir}
+        if images_dir is None:
+            raise ValueError("images_dir required for OMERO contextual save")
+
+        _, base_id, _ = self._parse_omero_path(Path(images_dir))
+        if base_id not in self._plate_metadata:
+            self._load_plate_structure(base_id)
+
+        plate = self._plate_metadata[base_id]
+        return {
+            "images_dir": images_dir,
+            "parser_name": plate.parser_name,
+            "microscope_type": plate.microscope_type,
+        }
 
     def __init__(
         self,
