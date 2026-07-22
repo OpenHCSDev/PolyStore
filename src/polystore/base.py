@@ -211,6 +211,17 @@ class BackendBase(metaclass=AutoRegisterMeta):
         """Bind an execution-local backend registry when this backend needs it."""
         del registry
 
+    def resolve_listed_address(
+        self,
+        listed_address: Union[str, Path],
+        *,
+        directory: Union[str, Path],
+    ) -> Union[str, Path]:
+        """Return the same-backend address represented by one listing entry."""
+
+        del directory
+        return listed_address
+
 
 class DataSink(BackendBase):
     """

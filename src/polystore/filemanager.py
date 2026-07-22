@@ -160,6 +160,20 @@ class FileManager:
             base_path=Path(base_path),
         )
 
+    def resolve_listed_address(
+        self,
+        listed_address: Union[str, Path],
+        backend: str,
+        *,
+        directory: Union[str, Path],
+    ) -> Union[str, Path]:
+        """Delegate listing-entry resolution to its registered backend owner."""
+
+        return self._get_backend(backend).resolve_listed_address(
+            listed_address,
+            directory=directory,
+        )
+
     def source_path(
         self,
         backend_address: Union[str, Path],

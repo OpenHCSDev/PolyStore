@@ -9,6 +9,7 @@ import numpy as np
 from pathlib import Path
 
 from polystore.exceptions import StorageResolutionError
+from polystore.omero_local import OMEROLocalBackend
 
 
 def _backend_path(tmp_path: Path, backend_name: str, filename: str) -> str:
@@ -20,6 +21,30 @@ def _backend_path(tmp_path: Path, backend_name: str, filename: str) -> str:
     if backend_name == "disk":
         return str(tmp_path / filename)
     return "/test/" + filename
+
+
+def test_filemanager_delegates_listed_address_resolution(file_manager):
+    assert (
+        file_manager.resolve_listed_address(
+            "opaque-address",
+            "memory",
+            directory="/ignored",
+        )
+        == "opaque-address"
+    )
+
+
+def test_omero_backend_qualifies_relative_listed_addresses() -> None:
+    backend = object.__new__(OMEROLocalBackend)
+
+    assert backend.resolve_listed_address(
+        "nested/A01_s001_w1_z001_t001.tif",
+        directory="/omero/plate_7",
+    ) == "/omero/plate_7/nested/A01_s001_w1_z001_t001.tif"
+    assert backend.resolve_listed_address(
+        "/omero/plate_8/A01_s001_w1_z001_t001.tif",
+        directory="/omero/plate_7",
+    ) == "/omero/plate_8/A01_s001_w1_z001_t001.tif"
 
 
 @pytest.mark.parametrize("backend_name", ["memory", "disk"])

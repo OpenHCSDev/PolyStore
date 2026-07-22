@@ -9,7 +9,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Set, Union, Tuple
 from collections import defaultdict
 from datetime import datetime
@@ -105,6 +105,20 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
     """
 
     _backend_type = 'omero_local'
+
+    def resolve_listed_address(
+        self,
+        listed_address: Union[str, Path],
+        *,
+        directory: Union[str, Path],
+    ) -> str:
+        """Qualify a generated filename within its OMERO virtual directory."""
+
+        address = PurePosixPath(str(listed_address).replace("\\", "/"))
+        if address.is_absolute():
+            return address.as_posix()
+        base = PurePosixPath(str(directory).replace("\\", "/"))
+        return (base / address).as_posix()
 
     # Class-level lock dictionary for thread-safe well creation
     _well_locks: Dict[str, threading.Lock] = {}
