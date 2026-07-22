@@ -58,7 +58,7 @@ copyright = '2025, Tristan Simas'
 author = 'Tristan Simas'
 
 # The full version, including alpha/beta/rc tags
-release = '0.1.11'
+release = '0.1.12'
 
 # The short X.Y version
 version = '0.1'
