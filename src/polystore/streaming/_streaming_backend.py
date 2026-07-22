@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from multiprocessing import resource_tracker, shared_memory
+from multiprocessing import shared_memory
 from pathlib import Path
 from types import MappingProxyType
 from typing import TypeAlias
@@ -324,7 +324,6 @@ class StreamingSharedMemoryAuthority:
             size=np_data.nbytes,
             name=shm_name,
         )
-        resource_tracker.unregister(shm._name, "shared_memory")
 
         shm_array = np.ndarray(np_data.shape, dtype=np_data.dtype, buffer=shm.buf)
         shm_array[:] = np_data[:]
@@ -767,7 +766,10 @@ class StreamingBackend(DataSink):
         finally:
             socket.close()
 
-        self._cleanup_shared_memory_blocks(built_batch.batch_images, unlink=False)
+        # A successful REP certifies that the viewer copied every shared-memory
+        # payload into receiver-owned memory. The sender remains the allocation
+        # owner and releases each block only after that transfer boundary.
+        self._cleanup_shared_memory_blocks(built_batch.batch_images, unlink=True)
 
     def save(self, data: StreamablePayload | str, file_path: FilePath, **kwargs) -> None:
         """
