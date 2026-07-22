@@ -8,6 +8,7 @@ import pytest
 import numpy as np
 from pathlib import Path
 
+from polystore import FileManager
 from polystore.exceptions import StorageResolutionError
 from polystore.omero_local import OMEROLocalBackend
 
@@ -45,6 +46,32 @@ def test_omero_backend_qualifies_relative_listed_addresses() -> None:
         "/omero/plate_8/A01_s001_w1_z001_t001.tif",
         directory="/omero/plate_7",
     ) == "/omero/plate_8/A01_s001_w1_z001_t001.tif"
+
+
+def test_physical_source_path_is_declared_by_backend_capability(file_manager) -> None:
+    assert file_manager.physical_source_path(
+        "/test/source.tif",
+        "memory",
+        base_path="/test",
+    ) == "/test/source.tif"
+
+    virtual_file_manager = FileManager(
+        {"omero_local": object.__new__(OMEROLocalBackend)}
+    )
+    assert (
+        virtual_file_manager.physical_source_path(
+            "/omero/plate_7/A01_s001_w1_z001_t001.tif",
+            "omero_local",
+            base_path="/omero/plate_7",
+        )
+        is None
+    )
+    with pytest.raises(StorageResolutionError, match="not a DataSource"):
+        virtual_file_manager.source_path(
+            "/omero/plate_7/A01_s001_w1_z001_t001.tif",
+            "omero_local",
+            base_path="/omero/plate_7",
+        )
 
 
 @pytest.mark.parametrize("backend_name", ["memory", "disk"])

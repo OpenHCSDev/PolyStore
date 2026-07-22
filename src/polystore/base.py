@@ -222,6 +222,17 @@ class BackendBase(metaclass=AutoRegisterMeta):
         del directory
         return listed_address
 
+    def physical_source_path(
+        self,
+        backend_address: Union[str, Path],
+        *,
+        base_path: Path,
+    ) -> Union[str, Path, None]:
+        """Return a physical source path when this backend declares one."""
+
+        del backend_address, base_path
+        return None
+
 
 class DataSink(BackendBase):
     """
@@ -311,6 +322,16 @@ class DataSource(BackendBase):
         """Return the physical source path represented by an opaque address."""
 
         return self.resolve_address(backend_address, base_path=base_path)
+
+    def physical_source_path(
+        self,
+        backend_address: Union[str, Path],
+        *,
+        base_path: Path,
+    ) -> Union[str, Path]:
+        """Compose the optional root projection from this source contract."""
+
+        return self.source_path(backend_address, base_path=base_path)
 
     def sample(
         self,

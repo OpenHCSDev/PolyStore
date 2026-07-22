@@ -193,6 +193,20 @@ class FileManager:
             base_path=Path(base_path),
         )
 
+    def physical_source_path(
+        self,
+        backend_address: Union[str, Path],
+        backend: str,
+        *,
+        base_path: Union[str, Path],
+    ) -> Union[str, Path, None]:
+        """Return the backend-owned physical source path when one exists."""
+
+        return self._get_backend(backend).physical_source_path(
+            backend_address,
+            base_path=Path(base_path),
+        )
+
     def load(self, file_path: Union[str, Path], backend: str, **kwargs) -> Any:
         """
         Load data from a file using the specified backend.
