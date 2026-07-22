@@ -12,14 +12,20 @@ HCS-specific features (plates/wells) can be tested separately or moved to a plug
 Directory operations are limited - zarr stores data in hierarchical groups, not flat files.
 """
 
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
+
 import numpy as np
 import pytest
 
+from polystore.config import (
+    ZarrChunkStrategy,
+    ZarrCompressor,
+    ZarrCompressorFactory,
+    ZarrConfig,
+)
 from polystore.zarr import ZarrStorageBackend
-from polystore.config import ZarrConfig, ZarrChunkStrategy, CompressorConfig
 
 
 @pytest.fixture
@@ -45,10 +51,7 @@ class TestZarrBackendBasics:
 
     def test_init_with_config(self):
         """Test initialization with custom ZarrConfig."""
-        config = ZarrConfig(
-            compression_level=5,
-            chunk_strategy=ZarrChunkStrategy.FILE
-        )
+        config = ZarrConfig(compression_level=5, chunk_strategy=ZarrChunkStrategy.FILE)
         backend = ZarrStorageBackend(zarr_config=config)
         assert backend.config.compression_level == 5
         assert backend.config.chunk_strategy == ZarrChunkStrategy.FILE
@@ -245,6 +248,9 @@ class TestZarrErrorHandling:
 class TestZarrConfigIntegration:
     """Test ZarrConfig integration with backend."""
 
+    def test_compressor_registry_covers_exactly_the_owning_enum(self):
+        assert set(ZarrCompressorFactory.__registry__) == set(ZarrCompressor)
+
     def test_compression_level_config(self, temp_zarr_dir):
         """Test that compression level config is applied."""
         config = ZarrConfig(compression_level=9)
@@ -263,8 +269,33 @@ class TestZarrConfigIntegration:
     def test_compressor_config(self, temp_zarr_dir):
         """Test compressor config is accessible."""
         config = ZarrConfig(
-            compressor=CompressorConfig(name='none')
+            compressor=ZarrCompressor.NONE,
         )
         backend = ZarrStorageBackend(zarr_config=config)
 
-        assert backend.config.compressor.name == 'none'
+        assert backend.config.compressor is ZarrCompressor.NONE
+        assert backend.compressor is None
+
+    @pytest.mark.parametrize("compressor", tuple(ZarrCompressor))
+    def test_every_compressor_has_one_registered_factory(self, compressor):
+        """The owning enum resolves directly through the owning registry."""
+        factory_type = ZarrCompressorFactory.__registry__[compressor]
+        factory = factory_type()
+
+        assert factory.compressor is compressor
+        if compressor is ZarrCompressor.NONE:
+            assert factory.create(3) is None
+        else:
+            assert factory.create(3) is not None
+
+    @pytest.mark.parametrize(
+        ("strategy", "expected"),
+        (
+            (ZarrChunkStrategy.WELL, (2, 3, 4, 10, 20)),
+            (ZarrChunkStrategy.FILE, (1, 1, 1, 10, 20)),
+        ),
+    )
+    def test_chunk_strategy_controls_backend_chunks(self, strategy, expected):
+        backend = ZarrStorageBackend(ZarrConfig(chunk_strategy=strategy))
+
+        assert backend._calculate_chunks((2, 3, 4, 10, 20)) == expected

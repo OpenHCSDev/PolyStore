@@ -33,6 +33,34 @@ Capability is nominal. Callers should request the operation they require and
 let an incompatible interface fail; they should not branch on copied backend
 name lists.
 
+Zarr configuration ownership
+----------------------------
+
+PolyStore owns the complete generic Zarr configuration boundary:
+``ZarrConfig``, ``ZarrCompressor``, ``ZarrCompressorFactory``, and
+``ZarrChunkStrategy``. The compressor factory registry is keyed directly by
+the owning enum, and ``ZarrStorageBackend`` consumes those same nominal
+identities. Applications may subclass ``ZarrConfig`` to attach presentation or
+registration metadata, but must not redeclare its storage fields or translate
+its enum values through strings or lookup tables.
+
+.. code-block:: python
+
+   from polystore.config import (
+       ZarrChunkStrategy,
+       ZarrCompressor,
+       ZarrConfig,
+   )
+   from polystore.zarr import ZarrStorageBackend
+
+   backend = ZarrStorageBackend(
+       ZarrConfig(
+           compressor=ZarrCompressor.ZLIB,
+           compression_level=3,
+           chunk_strategy=ZarrChunkStrategy.WELL,
+       )
+   )
+
 Bounded native sampling
 -----------------------
 
