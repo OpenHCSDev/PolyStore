@@ -28,12 +28,19 @@ credential environment explicitly.
 Outputs
 -------
 
-The backend's existing ``save()`` surface supports image materialization and
-writes for ROIs, tables, JSON/CSV/text annotations, and provenance when the
-caller supplies the required backend arguments explicitly. PolyStore does not
-yet publish a generic contextual-save hook for deriving an image workspace, so
-applications must not infer that context from a filename or assume it is part
-of the released ``DataSink`` contract.
+The backend's ``save()`` surface supports image materialization and writes for
+ROIs, tables, JSON/CSV/text annotations, and provenance. Generic artifact
+materializers obtain backend-owned arguments through the released
+``DataSink.contextual_save_kwargs()`` hook. For OMERO, the image workspace
+identifies a base plate; ``OMEROLocalBackend`` loads that plate's authoritative
+``PlateStructure`` when needed and projects ``images_dir``, ``parser_name``, and
+``microscope_type`` for ``save_batch()``. Callers do not inspect OMERO metadata
+or reconstruct those arguments themselves.
+
+OMERO addresses remain virtual POSIX paths on every host. The OMERO path parser
+normalizes separators through ``PurePosixPath`` before extracting the base plate
+and derived output name, so a Windows host cannot rewrite virtual identity into
+host-path syntax.
 
 Current limitation
 ------------------
