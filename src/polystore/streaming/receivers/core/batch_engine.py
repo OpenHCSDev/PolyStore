@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from polystore.streaming.receivers.core.contracts import BatchEngineABC
 
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 BatchProcessorFn = Callable[[list[dict[str, Any]], dict[str, Any]], None]
+PendingBatch = tuple[list[dict[str, Any]], dict[str, Any]]
 
 
 class DebouncedBatchEngine(BatchEngineABC):
@@ -31,14 +33,16 @@ class DebouncedBatchEngine(BatchEngineABC):
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
         self._first_enqueue_time: float | None = None
-        self._pending_items: list[dict[str, Any]] = []
-        self._pending_context: dict[str, Any] = {}
+        self._pending_batches: list[PendingBatch] = []
 
     def enqueue(self, items: list[dict[str, Any]], context: dict[str, Any]) -> None:
         should_process_now = False
         with self._lock:
-            self._pending_items.extend(items)
-            self._pending_context = context
+            if items:
+                if self._pending_batches and self._pending_batches[-1][1] == context:
+                    self._pending_batches[-1][0].extend(items)
+                else:
+                    self._pending_batches.append((list(items), context))
 
             if self._first_enqueue_time is None:
                 self._first_enqueue_time = time.time()
@@ -58,28 +62,23 @@ class DebouncedBatchEngine(BatchEngineABC):
             self.flush()
 
     def flush(self) -> None:
-        drained = self._drain_locked()
-        if drained is None:
-            return
-        items, context = drained
-        try:
-            self._process_fn(items, context)
-        except Exception as exc:
-            logger.error("DebouncedBatchEngine: processing failed: %s", exc, exc_info=True)
+        for items, context in self._drain_locked():
+            try:
+                self._process_fn(items, context)
+            except Exception as exc:
+                logger.error("DebouncedBatchEngine: processing failed: %s", exc, exc_info=True)
 
-    def _drain_locked(self) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    def _drain_locked(self) -> list[PendingBatch]:
         with self._lock:
-            if not self._pending_items:
+            if not self._pending_batches:
                 self._timer = None
                 self._first_enqueue_time = None
-                return None
+                return []
 
-            items = self._pending_items
-            context = self._pending_context
+            batches = self._pending_batches
 
-            self._pending_items = []
-            self._pending_context = {}
+            self._pending_batches = []
             self._timer = None
             self._first_enqueue_time = None
 
-            return items, context
+            return batches

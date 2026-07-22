@@ -3,7 +3,8 @@ from __future__ import annotations
 import threading
 import time
 
-from polystore.streaming_constants import StreamingDataType
+from zmqruntime.viewer_protocol import ViewerBatchDisplayPayload
+
 from polystore.streaming.identity import (
     FixedStreamProducerIdentityKind,
     StreamProducerDisplayNameAuthority,
@@ -15,10 +16,11 @@ from polystore.streaming.receivers.core import (
     group_items_by_component_modes,
 )
 from polystore.streaming.receivers.napari import (
-    normalize_component_layout,
     build_route_key,
+    normalize_component_layout,
 )
-from zmqruntime.viewer_protocol import ViewerBatchDisplayPayload
+from polystore.streaming_constants import StreamingDataType
+
 
 class PipelineProducerFixture:
     """Nominal producer fixtures for receiver-core tests."""
@@ -368,6 +370,76 @@ def test_debounced_batch_engine_flush_processes_pending_once() -> None:
     assert len(processed) == 1
     assert processed[0][0] == [{"id": 1}]
     assert processed[0][1]["layer_key"] == "layer_a"
+
+
+def test_debounced_batch_engine_preserves_distinct_context_ownership() -> None:
+    processed: list[tuple[list[dict], dict]] = []
+
+    def _process(items, context):
+        processed.append((items, context))
+
+    engine = DebouncedBatchEngine(
+        process_fn=_process, debounce_delay_ms=10_000, max_debounce_wait_ms=20_000
+    )
+    context_a = {"display_config": {"component_order": ["channel"]}}
+    context_b = {"display_config": {"component_order": ["z_index"]}}
+
+    engine.enqueue(items=[{"id": 1}], context=context_a)
+    engine.enqueue(items=[{"id": 2}], context=context_b)
+    engine.enqueue(items=[{"id": 3}], context=context_a)
+    engine.flush()
+
+    assert processed == [
+        ([{"id": 1}], context_a),
+        ([{"id": 2}], context_b),
+        ([{"id": 3}], context_a),
+    ]
+
+
+def test_debounced_batch_engine_coalesces_equal_contexts() -> None:
+    processed: list[tuple[list[dict], dict]] = []
+
+    def _process(items, context):
+        processed.append((items, context))
+
+    engine = DebouncedBatchEngine(
+        process_fn=_process, debounce_delay_ms=10_000, max_debounce_wait_ms=20_000
+    )
+    first_context = {
+        "display_config": {"component_order": ["channel"]},
+        "window_key": "image",
+    }
+    equal_context = {
+        "window_key": "image",
+        "display_config": {"component_order": ["channel"]},
+    }
+
+    engine.enqueue(items=[{"id": 1}], context=first_context)
+    engine.enqueue(items=[{"id": 2}], context=equal_context)
+    engine.flush()
+
+    assert processed == [([{"id": 1}, {"id": 2}], first_context)]
+
+
+def test_debounced_batch_engine_continues_after_one_context_fails() -> None:
+    processed_contexts: list[dict] = []
+
+    context_a = {"window_key": "image_a"}
+    context_b = {"window_key": "image_b"}
+
+    def _process(_items, context):
+        processed_contexts.append(context)
+        if context == context_a:
+            raise RuntimeError("context A failed")
+
+    engine = DebouncedBatchEngine(
+        process_fn=_process, debounce_delay_ms=10_000, max_debounce_wait_ms=20_000
+    )
+    engine.enqueue(items=[{"id": 1}], context=context_a)
+    engine.enqueue(items=[{"id": 2}], context=context_b)
+    engine.flush()
+
+    assert processed_contexts == [context_a, context_b]
 
 
 def test_debounced_batch_engine_enqueue_not_blocked_by_processing() -> None:
