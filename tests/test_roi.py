@@ -2,12 +2,49 @@ import numpy as np
 import pytest
 
 from polystore.disk import DiskStorageBackend
-from polystore.roi import ROI
-from polystore.roi import MaskShape
-from polystore.roi import PolygonShape
-from polystore.roi import load_rois_from_json
-from polystore.roi import load_rois_from_zip
-from polystore.roi import extract_rois_from_labeled_mask
+from polystore.roi import (
+    ROI,
+    EllipseShape,
+    MaskShape,
+    PolygonShape,
+    extract_rois_from_labeled_mask,
+    load_rois_from_json,
+    load_rois_from_zip,
+)
+from polystore.roi_converters import NapariROIConverter
+
+
+def test_napari_roi_converter_projects_ellipse_as_native_bounding_box():
+    metadata = {"label": 7, "area": 18.0, "centroid": (10.0, 20.0)}
+
+    payloads = NapariROIConverter.rois_to_shapes(
+        [
+            ROI(
+                shapes=[
+                    EllipseShape(
+                        center_y=10.0,
+                        center_x=20.0,
+                        radius_y=3.0,
+                        radius_x=5.0,
+                    )
+                ],
+                metadata=metadata,
+            )
+        ]
+    )
+
+    assert payloads == [
+        {
+            "type": "ellipse",
+            "coordinates": [
+                [7.0, 15.0],
+                [7.0, 25.0],
+                [13.0, 25.0],
+                [13.0, 15.0],
+            ],
+            "metadata": metadata,
+        }
+    ]
 
 
 def test_extract_rois_from_labeled_mask_applies_spatial_origin_to_polygons():

@@ -404,21 +404,27 @@ class PolylineROIShapeNapariPayloadConverter(CoordinateROIShapeNapariPayloadConv
         return shape.coordinates
 
 
-class EllipseROIShapeNapariPayloadConverter(ROIShapeNapariPayloadConverter):
+class EllipseROIShapeNapariPayloadConverter(
+    CoordinateROIShapeNapariPayloadConverter
+):
     shape_type = ShapeType.ELLIPSE
+    napari_payload_type = "ellipse"
 
-    def shape_payloads(
-        self,
-        shape: EllipseShape,
-        metadata: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], ...]:
-        return (
-            {
-                "type": "ellipse",
-                "center": [shape.center_y, shape.center_x],
-                "radii": [shape.radius_y, shape.radius_x],
-                "metadata": metadata,
-            },
+    def coordinates_yx(self, shape: EllipseShape) -> np.ndarray:
+        """Return Napari's four-corner ellipse bounding box in YX order."""
+
+        min_y = shape.center_y - shape.radius_y
+        max_y = shape.center_y + shape.radius_y
+        min_x = shape.center_x - shape.radius_x
+        max_x = shape.center_x + shape.radius_x
+        return np.asarray(
+            (
+                (min_y, min_x),
+                (min_y, max_x),
+                (max_y, max_x),
+                (max_y, min_x),
+            ),
+            dtype=float,
         )
 
 
