@@ -393,7 +393,39 @@ class PolygonROIShapeNapariPayloadConverter(CoordinateROIShapeNapariPayloadConve
     napari_payload_type = "polygon"
 
     def coordinates_yx(self, shape: PolygonShape) -> np.ndarray:
-        return shape.coordinates
+        """Remove only geometry-redundant vertices from the Napari projection."""
+
+        coordinates = np.asarray(shape.coordinates)
+        if len(coordinates) < 2:
+            return coordinates
+
+        distinct_from_previous = np.ones(len(coordinates), dtype=bool)
+        distinct_from_previous[1:] = np.any(
+            coordinates[1:] != coordinates[:-1],
+            axis=1,
+        )
+        projected = coordinates[distinct_from_previous]
+        if len(projected) > 1 and np.array_equal(projected[0], projected[-1]):
+            projected = projected[:-1]
+        if len(projected) <= 3:
+            return projected
+
+        previous = np.roll(projected, 1, axis=0)
+        following = np.roll(projected, -1, axis=0)
+        incoming = projected - previous
+        outgoing = following - projected
+        cross_product = (
+            incoming[:, 0] * outgoing[:, 1]
+            - incoming[:, 1] * outgoing[:, 0]
+        )
+        lies_between_neighbors = np.sum(
+            (projected - previous) * (projected - following),
+            axis=1,
+        ) <= 0
+        retained = projected[
+            ~((cross_product == 0) & lies_between_neighbors)
+        ]
+        return retained if len(retained) >= 3 else projected
 
 
 class PolylineROIShapeNapariPayloadConverter(CoordinateROIShapeNapariPayloadConverter):

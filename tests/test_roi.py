@@ -47,6 +47,60 @@ def test_napari_roi_converter_projects_ellipse_as_native_bounding_box():
     ]
 
 
+def test_napari_roi_converter_removes_only_redundant_polygon_vertices():
+    coordinates = np.array(
+        [
+            [0.0, 0.0],
+            [0.0, 1.0],
+            [0.0, 1.0],
+            [0.0, 2.0],
+            [1.0, 2.0],
+            [2.0, 2.0],
+            [2.0, 1.0],
+            [2.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 0.0],
+        ]
+    )
+    metadata = {"label": 11}
+    shape = PolygonShape(coordinates)
+
+    payloads = NapariROIConverter.rois_to_shapes(
+        [ROI(shapes=[shape], metadata=metadata)]
+    )
+
+    assert payloads == [
+        {
+            "type": "polygon",
+            "coordinates": [
+                [0.0, 0.0],
+                [0.0, 2.0],
+                [2.0, 2.0],
+                [2.0, 0.0],
+            ],
+            "metadata": metadata,
+        }
+    ]
+    assert np.array_equal(shape.coordinates, coordinates)
+
+
+def test_napari_polygon_projection_retains_collinear_backtracking_vertex():
+    coordinates = np.array(
+        [
+            [0.0, 0.0],
+            [0.0, 2.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ]
+    )
+
+    payload = NapariROIConverter.rois_to_shapes(
+        [ROI(shapes=[PolygonShape(coordinates)], metadata={"label": 12})]
+    )[0]
+
+    assert payload["coordinates"] == coordinates.tolist()
+
+
 def test_extract_rois_from_labeled_mask_applies_spatial_origin_to_polygons():
     labels = np.zeros((8, 8), dtype=np.int32)
     labels[2:6, 3:7] = 1
