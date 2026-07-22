@@ -560,16 +560,14 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                 - images_dir: Directory containing images (required for analysis results to link to correct plate)
                 - dataset_id: Dataset ID for image data
         """
-        from .roi import ROI
-
         output_path = Path(output_path)
 
         # Explicit type dispatch - fail-loud
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], ROI):
+        if self._is_roi_payload(data):
             # ROI data - save as OMERO ROI objects
             images_dir = kwargs.pop('images_dir', None)
             self._save_rois(data, output_path, images_dir=images_dir, **kwargs)
-        elif isinstance(data, str) and self.format_registry.is_text_format(output_path.suffix):
+        elif self._is_text_payload(data, output_path):
             # Try to parse as tabular data and save as OMERO.table
             # Extract images_dir from kwargs if present (passed via filemanager context)
             # Remove it from kwargs to avoid duplicate keyword argument error
@@ -578,6 +576,19 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         else:
             # Image data - save as OMERO image
             self._save_image(data, output_path, **kwargs)
+
+    @staticmethod
+    def _is_roi_payload(data: Any) -> bool:
+        """Return whether one payload uses OMERO's ROI save path."""
+        from .roi import ROI
+
+        return isinstance(data, list) and bool(data) and isinstance(data[0], ROI)
+
+    def _is_text_payload(self, data: Any, output_path: Path) -> bool:
+        """Return whether one payload uses OMERO's annotation/table save path."""
+        return isinstance(data, str) and self.format_registry.is_text_format(
+            output_path.suffix
+        )
 
     def _save_as_table_or_annotation(self, text_content: str, output_path: Path, images_dir: str = None, **kwargs) -> None:
         """
@@ -1038,12 +1049,35 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         return None
 
     def save_batch(self, data_list: List[Any], identifiers: List[Union[str, Path]], **kwargs) -> None:
-        """Save multiple images to OMERO with plate creation and write support."""
+        """Save images in one plate batch and route other artifacts individually."""
+        if len(data_list) != len(identifiers):
+            raise ValueError(f"Length mismatch: {len(data_list)} vs {len(identifiers)}")
         if not identifiers:
             return
 
-        if len(data_list) != len(identifiers):
-            raise ValueError(f"Length mismatch: {len(data_list)} vs {len(identifiers)}")
+        image_data = []
+        image_identifiers = []
+        individual_items = []
+        for data, identifier in zip(data_list, identifiers):
+            output_path = Path(identifier)
+            if self._is_roi_payload(data) or self._is_text_payload(data, output_path):
+                individual_items.append((data, identifier))
+            else:
+                image_data.append(data)
+                image_identifiers.append(identifier)
+
+        if image_identifiers:
+            self._save_image_batch(image_data, image_identifiers, **kwargs)
+        for data, identifier in individual_items:
+            self.save(data, identifier, **kwargs)
+
+    def _save_image_batch(
+        self,
+        data_list: List[Any],
+        identifiers: List[Union[str, Path]],
+        **kwargs,
+    ) -> None:
+        """Save one batch of image planes through OMERO plate creation."""
 
         parser_name = kwargs.get('parser_name')
         if not parser_name:

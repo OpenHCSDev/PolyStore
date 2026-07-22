@@ -10,7 +10,12 @@ from pathlib import Path
 
 from polystore import FileManager
 from polystore.exceptions import StorageResolutionError
-from polystore.omero_local import OMEROLocalBackend, PlateStructure
+from polystore.omero_local import (
+    OMEROFileFormatRegistry,
+    OMEROLocalBackend,
+    PlateStructure,
+)
+from polystore.roi import PointShape, ROI
 
 
 def _backend_path(tmp_path: Path, backend_name: str, filename: str) -> str:
@@ -110,6 +115,90 @@ def test_omero_backend_parses_virtual_paths_independently_of_host_separators() -
     assert backend._parse_omero_path(
         Path(r"\omero\plate_13_outputs\images")
     ) == ("plate_13_outputs_images", 13, True)
+
+
+def test_omero_batch_routes_non_image_artifacts_through_single_save(
+    monkeypatch,
+) -> None:
+    backend = object.__new__(OMEROLocalBackend)
+    backend.format_registry = OMEROFileFormatRegistry()
+    backend._register_formats()
+    saved = []
+    monkeypatch.setattr(
+        backend,
+        "save",
+        lambda data, path, **kwargs: saved.append((data, path, kwargs)),
+    )
+    roi = ROI(shapes=[PointShape(y=2.0, x=3.0)])
+
+    backend.save_batch(
+        ["label,count\n1,7\n", [roi]],
+        [
+            "/omero/plate_7_outputs/results/A01_cell_counts.csv",
+            "/omero/plate_7_outputs/results/A01_segmentation_masks.roi.zip",
+        ],
+        images_dir="/omero/plate_7_outputs/images",
+    )
+
+    assert [(data, path) for data, path, _ in saved] == [
+        ("label,count\n1,7\n", "/omero/plate_7_outputs/results/A01_cell_counts.csv"),
+        ([roi], "/omero/plate_7_outputs/results/A01_segmentation_masks.roi.zip"),
+    ]
+    assert all(
+        kwargs == {"images_dir": "/omero/plate_7_outputs/images"}
+        for _, _, kwargs in saved
+    )
+
+
+def test_omero_batch_preserves_image_batching_before_artifact_saves(
+    monkeypatch,
+) -> None:
+    backend = object.__new__(OMEROLocalBackend)
+    backend.format_registry = OMEROFileFormatRegistry()
+    backend._register_formats()
+    events = []
+    monkeypatch.setattr(
+        backend,
+        "_save_image_batch",
+        lambda data, paths, **kwargs: events.append(
+            ("images", data, paths, kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        backend,
+        "save",
+        lambda data, path, **kwargs: events.append(
+            ("artifact", data, path, kwargs)
+        ),
+    )
+    plane = np.zeros((4, 5), dtype=np.uint16)
+    kwargs = {
+        "images_dir": "/omero/plate_7_outputs/images",
+        "parser_name": "ImageXpressFilenameParser",
+        "microscope_type": "ImageXpress",
+    }
+
+    backend.save_batch(
+        ["label,count\n1,7\n", plane],
+        [
+            "/omero/plate_7_outputs/results/A01_cell_counts.csv",
+            "/omero/plate_7_outputs/images/A01_s001_w1_z001_t001.tif",
+        ],
+        **kwargs,
+    )
+
+    assert events[0][0:3] == (
+        "images",
+        [plane],
+        ["/omero/plate_7_outputs/images/A01_s001_w1_z001_t001.tif"],
+    )
+    assert events[0][3] == kwargs
+    assert events[1][0:3] == (
+        "artifact",
+        "label,count\n1,7\n",
+        "/omero/plate_7_outputs/results/A01_cell_counts.csv",
+    )
+    assert events[1][3] == kwargs
 
 
 def test_physical_source_path_is_declared_by_backend_capability(file_manager) -> None:
