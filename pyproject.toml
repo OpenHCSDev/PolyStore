@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.1.17"
+version = "0.1.18"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
