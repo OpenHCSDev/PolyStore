@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import ClassVar, Mapping, Sequence, TypeAlias
 
@@ -126,6 +126,41 @@ class StreamProducerIdentity:
 
     def to_payload(self) -> StreamProducerIdentityPayload:
         return StreamProducerIdentityPayload.from_identity(self)
+
+    def matches_declaration(self, declaration: StreamProducerIdentity) -> bool:
+        """Return whether this observed identity satisfies a declaration.
+
+        Pipeline position and runtime scope fields constrain a match when the
+        declaration supplies them. An unbound declaration leaves those fields
+        as ``None`` while every other identity field remains an exact
+        constraint. The distinction lives on this nominal owner so consumers
+        do not maintain partial identity comparisons.
+        """
+
+        if not isinstance(declaration, StreamProducerIdentity):
+            raise TypeError(
+                "Stream producer declaration must be a StreamProducerIdentity, "
+                f"got {type(declaration).__name__}."
+            )
+        expected = replace(
+            declaration,
+            pipeline_position=(
+                self.pipeline_position
+                if declaration.pipeline_position is None
+                else declaration.pipeline_position
+            ),
+            step_scope_id=(
+                self.step_scope_id
+                if declaration.step_scope_id is None
+                else declaration.step_scope_id
+            ),
+            invocation_key=(
+                self.invocation_key
+                if declaration.invocation_key is None
+                else declaration.invocation_key
+            ),
+        )
+        return self == expected
 
     def route_parts(self) -> tuple[str, ...]:
         parts = [
