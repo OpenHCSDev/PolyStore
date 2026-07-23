@@ -14,14 +14,15 @@ from polystore.streaming._streaming_backend import (
     FilePath,
     RoiStreamPayload,
     StreamablePayload,
+    StreamingBackend,
     StreamingBatchItemPreparationAuthority,
     StreamingBatchMessageBuilder,
     StreamingBatchMessageRequest,
     StreamingBuiltBatch,
-    StreamingPreparedBatchItems,
-    StreamingBackend,
     StreamingComponentNamesRequest,
     StreamingItemPreparationRequest,
+    StreamingPreparedBatchItems,
+    StreamingSharedMemoryAuthority,
     ViewerDisplayPayloadExtra,
 )
 
@@ -37,5 +38,6 @@ __all__ = [
     "StreamingBackend",
     "StreamingComponentNamesRequest",
     "StreamingItemPreparationRequest",
+    "StreamingSharedMemoryAuthority",
     "ViewerDisplayPayloadExtra",
 ]

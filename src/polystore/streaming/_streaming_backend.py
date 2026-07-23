@@ -12,7 +12,8 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from multiprocessing import shared_memory
+from multiprocessing import resource_tracker, shared_memory
+from multiprocessing.shared_memory import _USE_POSIX
 from pathlib import Path
 from types import MappingProxyType
 from typing import TypeAlias
@@ -310,7 +311,29 @@ class StreamingPayloadMemoryAuthority:
 
 
 class StreamingSharedMemoryAuthority:
-    """Allocate image payloads for viewer transfer through shared memory."""
+    """Own sender allocation and receiver attachment for shared-memory streams."""
+
+    @staticmethod
+    def _release_receiver_tracking(memory: shared_memory.SharedMemory) -> None:
+        """Keep a non-owning POSIX receiver from unlinking sender-owned memory."""
+        if _USE_POSIX:
+            resource_tracker.unregister(memory._name, "shared_memory")
+
+    @classmethod
+    def copy_sender_owned_array(
+        cls,
+        *,
+        name: str,
+        shape: Sequence[int],
+        dtype: str | np.dtype,
+    ) -> np.ndarray:
+        """Copy an attached array without transferring allocation ownership."""
+        memory = shared_memory.SharedMemory(name=name)
+        try:
+            cls._release_receiver_tracking(memory)
+            return np.ndarray(shape, dtype=dtype, buffer=memory.buf).copy()
+        finally:
+            memory.close()
 
     @classmethod
     def create(
