@@ -124,7 +124,16 @@ class ZarrChunkStrategy(Enum):
 
 @dataclass(frozen=True)
 class ZarrConfig:
-    """Framework-independent configuration for Zarr storage."""
+    """Framework-independent configuration for Zarr storage.
+
+    Args:
+        compressor: Compression algorithm used for stored arrays; select
+            :attr:`ZarrCompressor.NONE` to disable compression.
+        compression_level: Algorithm-specific compression level passed to the
+            selected compressor factory.
+        chunk_strategy: Store each well as one chunk or split its field,
+            channel, and Z planes into file-sized chunks.
+    """
 
     compressor: ZarrCompressor = ZarrCompressor.ZLIB
     compression_level: int = 3

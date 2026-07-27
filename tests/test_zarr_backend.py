@@ -14,6 +14,8 @@ Directory operations are limited - zarr stores data in hierarchical groups, not 
 
 import shutil
 import tempfile
+from dataclasses import fields
+from inspect import getdoc
 from pathlib import Path
 
 import numpy as np
@@ -247,6 +249,12 @@ class TestZarrErrorHandling:
 
 class TestZarrConfigIntegration:
     """Test ZarrConfig integration with backend."""
+
+    def test_public_fields_have_declaration_help(self):
+        docstring = getdoc(ZarrConfig)
+
+        assert docstring is not None
+        assert all(f"{field.name}:" in docstring for field in fields(ZarrConfig))
 
     def test_compressor_registry_covers_exactly_the_owning_enum(self):
         assert set(ZarrCompressorFactory.__registry__) == set(ZarrCompressor)
