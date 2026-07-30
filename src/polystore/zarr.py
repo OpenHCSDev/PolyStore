@@ -105,6 +105,7 @@ except ImportError:
 
 from .constants import Backend
 from .base import PicklableBackend, StorageBackend
+from .config import ZarrConfig
 from .exceptions import StorageResolutionError
 
 
@@ -137,9 +138,6 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         Args:
             zarr_config: ZarrConfig dataclass with all zarr settings (uses defaults if None)
         """
-        # Import here to avoid circular imports
-        from .config import ZarrConfig
-
         if zarr_config is None:
             zarr_config = ZarrConfig()
 
@@ -157,8 +155,6 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         return {"zarr_config": self.config}
 
     def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
-        from .config import ZarrConfig
-
         if params is None:
             self._configure(ZarrConfig())
             return

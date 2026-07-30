@@ -17,6 +17,7 @@ import tempfile
 from dataclasses import fields
 from inspect import getdoc
 from pathlib import Path
+from typing import get_type_hints
 
 import numpy as np
 import pytest
@@ -249,6 +250,11 @@ class TestZarrErrorHandling:
 
 class TestZarrConfigIntegration:
     """Test ZarrConfig integration with backend."""
+
+    def test_backend_config_annotation_resolves_to_nominal_owner(self):
+        hints = get_type_hints(ZarrStorageBackend._configure)
+
+        assert hints["zarr_config"] is ZarrConfig
 
     def test_public_fields_have_declaration_help(self):
         docstring = getdoc(ZarrConfig)
