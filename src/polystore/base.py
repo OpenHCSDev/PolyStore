@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Set, Union
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
 from .constants import Backend
 from .exceptions import StorageResolutionError
-from .registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ class BackendBase(metaclass=AutoRegisterMeta):
     __registry_key__ = '_backend_type'
 
     # Enable automatic discovery of backends in polystore package
-    from metaclass_registry import RegistryConfig, LazyDiscoveryDict
+    from metaclass_registry import LazyDiscoveryDict, RegistryConfig
     __registry_config__ = RegistryConfig(
         registry_dict=LazyDiscoveryDict(),
         key_attribute='_backend_type',

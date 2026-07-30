@@ -23,12 +23,6 @@ class Backend(Enum):
     BIOFORMATS = "bioformats"
 
 
-class TransportMode(Enum):
-    """ZeroMQ transport mode (IPC vs TCP)."""
-    IPC = "ipc"
-    TCP = "tcp"
-
-
 class MemoryType(Enum):
     """Supported in-memory array types."""
     NUMPY = "numpy"

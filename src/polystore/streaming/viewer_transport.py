@@ -12,22 +12,21 @@ from typing import (
     TypeAlias,
 )
 
-from polystore.registry import AutoRegisterMeta
-from polystore.streaming.identity import StreamProducerIdentity
-from polystore.streaming_constants import StreamingDataType
-from zmqruntime.config import ZMQConfig
+from metaclass_registry import AutoRegisterMeta
+from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.viewer_protocol import (
     ViewerAckPolicy,
-    ViewerBatchDisplayPayload,
     ViewerBatchContextWireField,
+    ViewerBatchDisplayPayload,
     ViewerBatchItemPayload,
     ViewerTransportEndpoint,
-    ViewerTransportMode,
     ViewerWireMapping,
     ViewerWirePayload,
     ViewerWireValue,
 )
 
+from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming_constants import StreamingDataType
 
 DisplayComponentToken: TypeAlias = str | Enum
 DisplayModeToken: TypeAlias = str | Enum | None
@@ -478,7 +477,7 @@ class ViewerStreamRequest(ViewerStreamMessageContext):
         return self.viewer_transport.port
 
     @property
-    def transport_mode(self) -> ViewerTransportMode:
+    def transport_mode(self) -> TransportMode:
         return self.viewer_transport.transport_mode
 
     @property

@@ -2,17 +2,21 @@
 Polystore package exports.
 """
 
-__version__ = "0.1.23"
+__version__ = "0.1.24"
 
-import os
-
-from .atomic import file_lock, atomic_write_json, atomic_update_json, FileLockError, FileLockTimeoutError
+from .atomic import (
+    FileLockError,
+    FileLockTimeoutError,
+    atomic_update_json,
+    atomic_write_json,
+    file_lock,
+)
 from .backend_registry import (
-    get_backend_instance,
-    cleanup_backend_connections,
-    cleanup_all_backends,
-    register_cleanup_callback,
     STORAGE_BACKENDS,
+    cleanup_all_backends,
+    cleanup_backend_connections,
+    get_backend_instance,
+    register_cleanup_callback,
 )
 from .base import (
     BackendBase,
@@ -23,45 +27,48 @@ from .base import (
     ImageSamplingStatisticsScope,
     ReadOnlyBackend,
     StorageBackend,
-    storage_registry,
-    reset_memory_backend,
     ensure_storage_registry,
     get_backend,
+    reset_memory_backend,
+    storage_registry,
 )
-from .constants import Backend, MemoryType, TransportMode
+from .constants import Backend, MemoryType
 from .disk import DiskBackend, DiskStorageBackend
 from .filemanager import FileManager
-from .formats import FileFormat, DEFAULT_IMAGE_EXTENSIONS
+from .formats import DEFAULT_IMAGE_EXTENSIONS, FileFormat
 from .memory import MemoryBackend, MemoryStorageBackend
+from .metadata_migration import (
+    detect_legacy_format,
+    migrate_legacy_metadata,
+    migrate_plate_metadata,
+)
 from .metadata_writer import (
+    METADATA_CONFIG,
     AtomicMetadataWriter,
     MetadataWriteError,
-    METADATA_CONFIG,
     get_metadata_path,
     get_subdirectory_name,
     resolve_subdirectory_path,
 )
-from .metadata_migration import detect_legacy_format, migrate_legacy_metadata, migrate_plate_metadata
 from .roi import (
     ROI,
-    PolygonShape,
-    PolylineShape,
+    EllipseShape,
     MaskShape,
     PointShape,
-    EllipseShape,
+    PolygonShape,
+    PolylineShape,
     extract_rois_from_labeled_mask,
     load_rois_from_json,
     load_rois_from_zip,
     materialize_rois,
 )
 from .streaming import StreamingBackend
-from .streaming_constants import StreamingDataType, NapariShapeType
+from .streaming_constants import NapariShapeType, StreamingDataType
 from .virtual_workspace import SourcePixelRef
 
 __all__ = [
     "Backend",
     "MemoryType",
-    "TransportMode",
     "FileFormat",
     "DEFAULT_IMAGE_EXTENSIONS",
     "BackendBase",
@@ -114,35 +121,4 @@ __all__ = [
     "StreamingDataType",
     "NapariShapeType",
     "SourcePixelRef",
-    "NapariStreamingBackend",
-    "FijiStreamingBackend",
-    "ZarrStorageBackend",
-    "OMEROLocalBackend",
-    "OMEROFileFormatRegistry",
 ]
-
-_LAZY_BACKEND_REGISTRY = {
-    "NapariStreamingBackend": ("polystore.napari_stream", "NapariStreamingBackend"),
-    "FijiStreamingBackend": ("polystore.fiji_stream", "FijiStreamingBackend"),
-    "ZarrStorageBackend": ("polystore.zarr", "ZarrStorageBackend"),
-    "OMEROLocalBackend": ("polystore.omero_local", "OMEROLocalBackend"),
-    "OMEROFileFormatRegistry": ("polystore.omero_local", "OMEROFileFormatRegistry"),
-}
-
-
-def __getattr__(name):
-    """Lazy import of optional/extra backend classes."""
-    if name not in _LAZY_BACKEND_REGISTRY:
-        raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
-
-    if os.getenv("POLYSTORE_SUBPROCESS_NO_GPU") == "1":
-        class PlaceholderBackend:
-            pass
-        PlaceholderBackend.__name__ = name
-        PlaceholderBackend.__qualname__ = name
-        return PlaceholderBackend
-
-    module_path, class_name = _LAZY_BACKEND_REGISTRY[name]
-    import importlib
-    module = importlib.import_module(module_path)
-    return getattr(module, class_name)
