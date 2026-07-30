@@ -1,22 +1,24 @@
 import pytest
-
-from polystore.streaming.identity import StreamProducerIdentity
-from polystore.streaming.viewer_transport import BatchViewerStreamSourceMetadata
-from polystore.streaming.viewer_transport import ExplicitViewerTransportConfig
-from polystore.streaming.viewer_transport import IndexedViewerStreamSourceMetadata
-from polystore.streaming.viewer_transport import ViewerStreamBackendKwargs
-from polystore.streaming.viewer_transport import ViewerStreamKwarg
-from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
-from polystore.streaming.viewer_transport import ViewerFilenameParserABC
-from polystore.streaming.viewer_transport import ViewerMetadataHandlerABC
-from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
-from polystore.streaming.viewer_transport import ViewerStreamRequest
-from polystore.streaming.viewer_transport import ViewerStreamProducer
-from polystore.streaming.viewer_transport import ViewerStreamSource
-from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
-from polystore.streaming.viewer_transport import ViewerStreamSourceMetadata
 from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
+
+from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming.viewer_transport import (
+    BatchViewerStreamSourceMetadata,
+    ExplicitViewerTransportConfig,
+    IndexedViewerStreamSourceMetadata,
+    ViewerDisplayConfigABC,
+    ViewerFilenameParserABC,
+    ViewerMetadataHandlerABC,
+    ViewerMicroscopeHandlerABC,
+    ViewerStreamBackendKwargs,
+    ViewerStreamKwarg,
+    ViewerStreamProducer,
+    ViewerStreamRequest,
+    ViewerStreamSource,
+    ViewerStreamSourceIdentity,
+    ViewerStreamSourceMetadata,
+)
 
 
 class DisplayConfigFixture(ViewerDisplayConfigABC):
@@ -28,6 +30,9 @@ class DisplayConfigFixture(ViewerDisplayConfigABC):
             "site": "slice",
             "channel": "channel",
         }
+
+    def display_payload_extra(self):
+        return {}
 
 
 class FilenameParserFixture(ViewerFilenameParserABC):

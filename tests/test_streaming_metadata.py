@@ -1,30 +1,33 @@
 from types import SimpleNamespace
 
 import pytest
-
-from polystore.streaming._streaming_backend import StreamingBackend
-from polystore.streaming._streaming_backend import StreamingBatchItemPreparationAuthority
-from polystore.streaming._streaming_backend import StreamingBatchMessageBuilder
-from polystore.streaming._streaming_backend import StreamingBatchMessageRequest
-from polystore.streaming._streaming_backend import StreamingComponentNamesRequest
-from polystore.streaming._streaming_backend import StreamingItemPath
-from polystore.streaming._streaming_backend import StreamingItemPreparationRequest
-from polystore.streaming_constants import StreamingDataType
-from polystore.streaming.identity import StreamProducerIdentity
-from polystore.streaming.viewer_transport import BatchViewerStreamSourceMetadata
-from polystore.streaming.viewer_transport import IndexedViewerStreamSourceMetadata
-from polystore.streaming.viewer_transport import PathMappedViewerStreamSourceMetadata
-from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
-from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
-from polystore.streaming.viewer_transport import ViewerStreamProducer
-from polystore.streaming.viewer_transport import ViewerStreamItemPayload
-from polystore.streaming.viewer_transport import ViewerStreamRequest
-from polystore.streaming.viewer_transport import ViewerStreamSource
-from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
-from polystore.streaming.viewer_transport import ViewerStreamSourceMetadata
 from zmqruntime.config import TransportMode
-from zmqruntime.viewer_protocol import ViewerAckPolicy
-from zmqruntime.viewer_protocol import ViewerTransportEndpoint
+from zmqruntime.viewer_protocol import ViewerAckPolicy, ViewerTransportEndpoint
+
+from polystore.streaming._streaming_backend import (
+    StreamingBackend,
+    StreamingBatchItemPreparationAuthority,
+    StreamingBatchMessageBuilder,
+    StreamingBatchMessageRequest,
+    StreamingComponentNamesRequest,
+    StreamingItemPath,
+    StreamingItemPreparationRequest,
+)
+from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming.viewer_transport import (
+    BatchViewerStreamSourceMetadata,
+    IndexedViewerStreamSourceMetadata,
+    PathMappedViewerStreamSourceMetadata,
+    ViewerDisplayConfigABC,
+    ViewerMicroscopeHandlerABC,
+    ViewerStreamItemPayload,
+    ViewerStreamProducer,
+    ViewerStreamRequest,
+    ViewerStreamSource,
+    ViewerStreamSourceIdentity,
+    ViewerStreamSourceMetadata,
+)
+from polystore.streaming_constants import StreamingDataType
 
 
 class MetadataProbeStreamingBackend(StreamingBackend):
@@ -50,6 +53,27 @@ class DisplayConfigStub(ViewerDisplayConfigABC):
             "site": "stack",
             "channel": "stack",
         }
+
+    def display_payload_extra(self):
+        return {}
+
+
+def test_streaming_backend_projects_display_payload_through_config_owner() -> None:
+    stream_request = SimpleNamespace(
+        display_config=SimpleNamespace(
+            display_payload_extra=lambda: {
+                "colormap": "gray",
+                "variable_size_handling": "pad",
+            }
+        )
+    )
+
+    projected = StreamingBackend.display_payload_extra(object(), stream_request)
+
+    assert projected.to_wire_mapping() == {
+        "colormap": "gray",
+        "variable_size_handling": "pad",
+    }
 
 
 PRODUCER_IDENTITY = StreamProducerIdentity(

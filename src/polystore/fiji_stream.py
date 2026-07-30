@@ -14,25 +14,25 @@ SHARED MEMORY OWNERSHIP MODEL:
 import logging
 from enum import Enum
 
-from .constants import Backend
-from .streaming_constants import StreamingDataType
-from .streaming import (
-    FilePath,
-    RoiStreamPayload,
-    StreamingBuiltBatch,
-    StreamingBackend,
-    StreamingComponentNamesRequest,
-    StreamingItemPreparationRequest,
-    ViewerDisplayPayloadExtra,
-)
-from .streaming.viewer_transport import ViewerStreamItemPayload, ViewerStreamRequest
-from .roi_converters import FijiROIConverter
 from zmqruntime.viewer_protocol import (
     ViewerBatchItemWireField,
     ViewerBatchWireField,
     ViewerWireMapping,
     ViewerWireValue,
 )
+
+from .constants import Backend
+from .roi_converters import FijiROIConverter
+from .streaming import (
+    FilePath,
+    RoiStreamPayload,
+    StreamingBackend,
+    StreamingBuiltBatch,
+    StreamingComponentNamesRequest,
+    StreamingItemPreparationRequest,
+)
+from .streaming.viewer_transport import ViewerStreamItemPayload, ViewerStreamRequest
+from .streaming_constants import StreamingDataType
 
 logger = logging.getLogger(__name__)
 
@@ -42,23 +42,6 @@ class FijiDisplayWireField(str, Enum):
 
     LUT = "lut"
     AUTO_CONTRAST = "auto_contrast"
-
-
-class FijiDisplayPayload:
-    """Display payload projection for Fiji stream messages."""
-
-    @staticmethod
-    def auto_contrast_value(display_config) -> bool:
-        return display_config.auto_contrast
-
-    @classmethod
-    def from_display_config(cls, display_config) -> dict[str, ViewerWireValue]:
-        return {
-            FijiDisplayWireField.LUT.value: display_config.get_lut_name(),
-            FijiDisplayWireField.AUTO_CONTRAST.value: cls.auto_contrast_value(
-                display_config
-            ),
-        }
 
 
 class FijiMessageMetadata:
@@ -85,14 +68,6 @@ class FijiStreamingBackend(StreamingBackend):
 
     VIEWER_TYPE = 'fiji'
     SHM_PREFIX = 'fiji_'
-
-    def display_payload_extra(
-        self,
-        stream_request: ViewerStreamRequest,
-    ) -> ViewerDisplayPayloadExtra:
-        return ViewerDisplayPayloadExtra.from_mapping(
-            FijiDisplayPayload.from_display_config(stream_request.display_config)
-        )
 
     def message_extra(
         self,
