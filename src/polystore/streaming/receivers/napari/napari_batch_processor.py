@@ -42,31 +42,15 @@ class NapariBatchProcessor:
     adapts batch payloads into the server display operation.
     """
 
-    def __init__(
-        self,
-        napari_server,
-        batch_size: int | None = None,
-        debounce_delay_ms: int = 1000,
-        max_debounce_wait_ms: int = 5000,
-    ):
+    def __init__(self, napari_server):
         """
         Initialize batch processor.
 
         Args:
             napari_server: Reference to NapariViewerServer for display operations
-            batch_size: Reserved for compatibility with viewer configuration
-            debounce_delay_ms: Qt-thread debounce delay owned by the caller
-            max_debounce_wait_ms: Reserved for compatibility with viewer configuration
         """
         self.napari_server = napari_server
-        self.batch_size = batch_size
-        self.debounce_delay_ms = debounce_delay_ms
-        self.max_debounce_wait_ms = max_debounce_wait_ms
-
-        logger.info(
-            f"NapariBatchProcessor: Created with batch_size={batch_size}, "
-            f"debounce={debounce_delay_ms}ms, max_wait={max_debounce_wait_ms}ms"
-        )
+        logger.info("NapariBatchProcessor: Created")
 
     def add_items(
         self,

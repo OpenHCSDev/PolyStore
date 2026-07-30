@@ -43,6 +43,10 @@ class ViewerDisplayConfigABC(ABC):
     def component_modes(self) -> Mapping[DisplayComponentToken, DisplayModeToken]:
         """Return mode assignments by display component."""
 
+    @abstractmethod
+    def display_payload_extra(self) -> ViewerWireMapping:
+        """Project backend-specific display fields onto the viewer wire payload."""
+
 
 class ViewerFilenameParserABC(ABC):
     """Filename parser surface needed by viewer streaming metadata."""

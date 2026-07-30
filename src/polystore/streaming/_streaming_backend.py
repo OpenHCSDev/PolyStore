@@ -17,26 +17,11 @@ from multiprocessing.shared_memory import _USE_POSIX
 from pathlib import Path
 from types import MappingProxyType
 from typing import TypeAlias
+
 import numpy as np
 import zmq
 from arraybridge import convert_memory, detect_memory_type
 from arraybridge.types import MemoryType as ArrayBridgeMemoryType
-
-from ..base import DataSink
-from ..formats import PIXEL_PAYLOAD_EXTENSIONS
-from ..streaming_constants import StreamingDataType
-from ..roi import ROI, ROI_ZIP_EXTENSION
-from ..roi_converters import ROIShapeNapariPayloadConverter
-from ..zmq_config import POLYSTORE_ZMQ_CONFIG
-from .viewer_transport import (
-    ViewerMicroscopeHandlerABC,
-    ViewerStreamBatchItemInput,
-    ViewerStreamBatchItemSource,
-    ViewerStreamBackendKwargs,
-    ViewerStreamItemPayload,
-    ViewerStreamRequest,
-    ViewerTransportDefaults,
-)
 from zmqruntime.ack_listener import GlobalAckListener
 from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import (
@@ -45,9 +30,25 @@ from zmqruntime.viewer_protocol import (
     ViewerComponentMetadataPayload,
     ViewerDisplayConfigWireField,
     ViewerTransportEndpoint,
-    ViewerWirePayload,
     ViewerWireMapping,
+    ViewerWirePayload,
     ViewerWireValue,
+)
+
+from ..base import DataSink
+from ..formats import PIXEL_PAYLOAD_EXTENSIONS
+from ..roi import ROI, ROI_ZIP_EXTENSION
+from ..roi_converters import ROIShapeNapariPayloadConverter
+from ..streaming_constants import StreamingDataType
+from ..zmq_config import POLYSTORE_ZMQ_CONFIG
+from .viewer_transport import (
+    ViewerMicroscopeHandlerABC,
+    ViewerStreamBackendKwargs,
+    ViewerStreamBatchItemInput,
+    ViewerStreamBatchItemSource,
+    ViewerStreamItemPayload,
+    ViewerStreamRequest,
+    ViewerTransportDefaults,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,9 +85,6 @@ class ViewerDisplayPayloadExtra:
             self.values,
             context="viewer display payload extra",
         )
-
-
-EMPTY_DISPLAY_PAYLOAD_EXTRA = ViewerDisplayPayloadExtra()
 
 
 @dataclass(frozen=True)
@@ -692,7 +690,9 @@ class StreamingBackend(DataSink):
         self,
         stream_request: ViewerStreamRequest,
     ) -> ViewerDisplayPayloadExtra:
-        return EMPTY_DISPLAY_PAYLOAD_EXTRA
+        return ViewerDisplayPayloadExtra.from_mapping(
+            stream_request.display_config.display_payload_extra()
+        )
 
     def message_extra(
         self,

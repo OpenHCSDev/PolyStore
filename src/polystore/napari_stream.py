@@ -15,21 +15,20 @@ SHARED MEMORY OWNERSHIP MODEL:
 import logging
 from enum import Enum
 
+from zmqruntime.viewer_protocol import (
+    ViewerBatchItemWireField,
+    ViewerWireValue,
+)
+
 from .constants import Backend
+from .roi_converters import NapariROIConverter
 from .streaming import (
     FilePath,
     RoiStreamPayload,
     StreamingBackend,
     StreamingItemPreparationRequest,
-    ViewerDisplayPayloadExtra,
 )
-from .streaming.viewer_transport import ViewerStreamItemPayload, ViewerStreamRequest
-from .roi_converters import NapariROIConverter
-from zmqruntime.viewer_protocol import (
-    ViewerBatchItemWireField,
-    ViewerWireMapping,
-    ViewerWireValue,
-)
+from .streaming.viewer_transport import ViewerStreamItemPayload
 
 logger = logging.getLogger(__name__)
 
@@ -41,40 +40,12 @@ class NapariDisplayWireField(str, Enum):
     VARIABLE_SIZE_HANDLING = "variable_size_handling"
 
 
-class NapariDisplayPayload:
-    """Display payload projection for Napari stream messages."""
-
-    @staticmethod
-    def variable_size_handling_value(display_config):
-        variable_size_handling = display_config.variable_size_handling
-        if variable_size_handling is None:
-            return None
-        return variable_size_handling.value
-
-    @classmethod
-    def from_display_config(cls, display_config) -> dict[str, ViewerWireValue]:
-        return {
-            NapariDisplayWireField.COLORMAP.value: display_config.get_colormap_name(),
-            NapariDisplayWireField.VARIABLE_SIZE_HANDLING.value: (
-                cls.variable_size_handling_value(display_config)
-            ),
-        }
-
-
 class NapariStreamingBackend(StreamingBackend):
     """Napari streaming backend with automatic registration."""
     _backend_type = Backend.NAPARI_STREAM.value
 
     VIEWER_TYPE = 'napari'
     SHM_PREFIX = 'napari_'
-
-    def display_payload_extra(
-        self,
-        stream_request: ViewerStreamRequest,
-    ) -> ViewerDisplayPayloadExtra:
-        return ViewerDisplayPayloadExtra.from_mapping(
-            NapariDisplayPayload.from_display_config(stream_request.display_config)
-        )
 
     def _prepare_shapes_data(
         self,
