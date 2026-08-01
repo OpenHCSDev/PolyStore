@@ -45,13 +45,13 @@ def build_route_key(
     display_layout: ViewerBatchDisplayPayload,
     data_type: StreamingDataType,
 ) -> str:
-    """Build hidden route key from producer identity, slice components, and type."""
+    """Build a hidden route key from producer identity, layer components, and type."""
     producer = StreamProducerIdentity.from_payload(producer_identity)
     route_parts: list[str] = list(producer.route_parts())
-    for component in display_layout.components_for_mode(ViewerComponentMode.SLICE):
+    for component in display_layout.components_for_mode(ViewerComponentMode.LAYER):
         if component not in component_info:
             raise ValueError(
-                f"Napari route key missing slice component {component!r}."
+                f"Napari route key missing layer component {component!r}."
             )
         route_parts.append(f"{component}_{component_info[component]}")
 

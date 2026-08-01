@@ -172,19 +172,19 @@ def test_named_main_outputs_share_projection_and_keep_exact_provenance() -> None
         ),
         data_type=StreamingDataType.IMAGE,
     )
-    slice_layout = ViewerBatchDisplayPayload(
-        component_modes={"channel": "slice"},
+    layer_layout = ViewerBatchDisplayPayload(
+        component_modes={"channel": "layer"},
         component_order=("channel",),
     )
     assert build_route_key(
         producer_identity=first,
         component_info={"channel": 1},
-        display_layout=slice_layout,
+        display_layout=layer_layout,
         data_type=StreamingDataType.IMAGE,
     ) != build_route_key(
         producer_identity=second,
         component_info={"channel": 2},
-        display_layout=slice_layout,
+        display_layout=layer_layout,
         data_type=StreamingDataType.IMAGE,
     )
 
@@ -285,13 +285,13 @@ def test_stream_producer_display_name_authority_matches_pipeline_editor_indexing
     )
 
 
-def test_napari_route_key_builder_uses_producer_slice_components_and_payload_type() -> None:
+def test_napari_route_key_builder_uses_producer_layer_components_and_payload_type() -> None:
     producer = PipelineProducerFixture.artifact_output(
         output_key="Nuclei",
         step_name="Segment",
         pipeline_position=2,
     )
-    component_modes = {"well": "slice", "channel": "stack", "site": "slice"}
+    component_modes = {"well": "layer", "channel": "stack", "site": "layer"}
     component_order = ["well", "channel", "site"]
     component_info = {"well": "A01", "channel": 2, "site": 3}
 
@@ -318,7 +318,7 @@ def test_napari_route_key_builder_uses_producer_slice_components_and_payload_typ
     assert key_shapes == "origin_pipeline_kind_artifact_projection_Nuclei_step_2_name_Segment_well_A01_site_3_shapes"
 
 
-def test_napari_route_key_builder_rejects_missing_slice_component() -> None:
+def test_napari_route_key_builder_rejects_missing_layer_component() -> None:
     producer = PipelineProducerFixture.artifact_output(
         output_key="Nuclei",
         step_name="Segment",
@@ -330,7 +330,7 @@ def test_napari_route_key_builder_rejects_missing_slice_component() -> None:
             producer_identity=producer,
             component_info={"well": "A01"},
             display_layout=ViewerBatchDisplayPayload(
-                component_modes={"well": "slice", "site": "slice"},
+                component_modes={"well": "layer", "site": "layer"},
                 component_order=["well", "site"],
             ),
             data_type=StreamingDataType.IMAGE,
@@ -338,18 +338,18 @@ def test_napari_route_key_builder_rejects_missing_slice_component() -> None:
     except ValueError as error:
         assert "site" in str(error)
     else:
-        raise AssertionError("missing slice component must fail loudly")
+        raise AssertionError("missing layer component must fail loudly")
 
 
 def test_normalize_component_layout_dict_config() -> None:
     display_layout = normalize_component_layout(
         {
-            "component_modes": {"well": "slice", "channel": "stack"},
+            "component_modes": {"well": "layer", "channel": "stack"},
             "component_order": ["well", "channel"],
         }
     )
     assert list(display_layout.component_order) == ["well", "channel"]
-    assert display_layout.component_modes["well"] == "slice"
+    assert display_layout.component_modes["well"] == "layer"
 
 
 def test_debounced_batch_engine_flush_processes_pending_once() -> None:
