@@ -68,6 +68,15 @@ class FileFormatRegistry:
     def is_registered(self, ext: str) -> bool:
         return ext.lower() in self._writers and ext.lower() in self._readers
 
+    def resolve_extension(self, path: Union[str, Path]) -> Optional[str]:
+        """Return the longest registered suffix declared for ``path``."""
+        suffixes = Path(path).suffixes
+        for start in range(len(suffixes)):
+            extension = "".join(suffixes[start:]).lower()
+            if self.is_registered(extension):
+                return extension
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class DiskFileFormatRegistration:
@@ -358,21 +367,12 @@ class DiskStorageBackend(StorageBackend):
 
         disk_path = Path(file_path)
 
-        # Handle double extensions (e.g., .roi.zip, .csv.zip)
-        # Check if file has double extension by looking at suffixes
-        ext = None
-        if len(disk_path.suffixes) >= 2:
-            # Try double extension first (e.g., '.roi.zip')
-            double_ext = ''.join(disk_path.suffixes[-2:]).lower()
-            if self.format_registry.is_registered(double_ext):
-                ext = double_ext
+        ext = self.format_registry.resolve_extension(disk_path)
 
-        # Fall back to single extension if double extension not registered
         if ext is None:
-            ext = disk_path.suffix.lower()
-
-        if not self.format_registry.is_registered(ext):
-            raise ValueError(f"No reader registered for extension '{ext}'")
+            raise ValueError(
+                f"No reader registered for extension '{disk_path.suffix.lower()}'"
+            )
 
         try:
             reader = self.format_registry.get_reader(ext)
@@ -413,9 +413,12 @@ class DiskStorageBackend(StorageBackend):
             self._save_rois(data, disk_output_path, images_dir=images_dir, **kwargs)
             return
 
-        ext = disk_output_path.suffix.lower()
-        if not self.format_registry.is_registered(ext):
-            raise ValueError(f"No writer registered for extension '{ext}'")
+        ext = self.format_registry.resolve_extension(disk_output_path)
+        if ext is None:
+            raise ValueError(
+                f"No writer registered for extension "
+                f"'{disk_output_path.suffix.lower()}'"
+            )
 
         try:
             writer = self.format_registry.get_writer(ext)

@@ -546,6 +546,21 @@ class TestDiskErrorHandling:
         with pytest.raises(ValueError, match="No writer registered"):
             self.backend.save(object(), file_path)
 
+    def test_save_dispatches_registered_compound_extension(self, tmp_path):
+        """Saving uses the same registered compound-suffix authority as loading."""
+        written = []
+
+        def writer(path, data, **kwargs):
+            written.append((path, data, kwargs))
+
+        self.backend.format_registry.register(".roi.zip", writer, lambda path: path)
+        output_path = tmp_path / "objects.roi.zip"
+        payload = {"object_id": 1}
+
+        self.backend.save(payload, output_path, source="regression")
+
+        assert written == [(output_path, payload, {"source": "regression"})]
+
     def test_ensure_directory_already_exists(self, tmp_path):
         """Test ensure_directory on existing directory."""
         self.backend.ensure_directory(tmp_path)
