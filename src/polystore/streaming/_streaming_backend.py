@@ -228,6 +228,11 @@ class StreamingItemPath:
     def wire_value(self) -> str:
         return str(self.value)
 
+    @property
+    def is_roi_archive(self) -> bool:
+        """Whether the declared item format is the registered ROI archive format."""
+        return Path(self.value).name.lower().endswith(ROI_ZIP_EXTENSION)
+
 
 @dataclass(frozen=True)
 class StreamingPayloadFileRequest:
@@ -342,7 +347,7 @@ class StreamingSharedMemoryAuthority:
         shm_name = StreamingSharedMemoryName.unique(request.shm_prefix).value
         shm = shared_memory.SharedMemory(
             create=True,
-            size=np_data.nbytes,
+            size=max(1, np_data.nbytes),
             name=shm_name,
         )
 
@@ -364,10 +369,18 @@ class StreamingDataTypeAuthority:
     """Detect the viewer payload kind for one streamed object."""
 
     @staticmethod
-    def detect(data: StreamablePayload) -> StreamingDataType:
-        is_roi = isinstance(data, list) and len(data) > 0 and isinstance(data[0], ROI)
+    def detect(
+        data: StreamablePayload,
+        item_path: StreamingItemPath,
+    ) -> StreamingDataType:
+        is_sequence = isinstance(data, Sequence) and not isinstance(
+            data,
+            (str, bytes, np.ndarray),
+        )
+        is_roi = is_sequence and len(data) > 0 and isinstance(data[0], ROI)
+        is_empty_roi = is_sequence and len(data) == 0 and item_path.is_roi_archive
 
-        if not is_roi:
+        if not is_roi and not is_empty_roi:
             return StreamingDataType.IMAGE
 
         return ROIShapeNapariPayloadConverter.streaming_data_type_for_rois(data)
@@ -438,7 +451,7 @@ class StreamingBatchItemPreparationAuthority:
             image_id = str(uuid.uuid4())
             image_ids.append(image_id)
 
-            streaming_data_type = StreamingDataTypeAuthority.detect(data)
+            streaming_data_type = StreamingDataTypeAuthority.detect(data, item_path)
             item_payload = backend._prepare_batch_item(
                 StreamingItemPreparationRequest(
                     data=data,

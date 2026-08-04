@@ -3,7 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polystore.streaming import StreamingSharedMemoryAuthority, _streaming_backend
+from polystore.streaming import (
+    StreamingSharedMemoryAuthority,
+    _streaming_backend,
+)
+from polystore.streaming._streaming_backend import (
+    StreamingDataTypeAuthority,
+    StreamingItemPath,
+    StreamingSharedMemoryRequest,
+)
+from polystore.streaming_constants import StreamingDataType
 
 
 class _SharedMemoryProbe:
@@ -14,6 +23,13 @@ class _SharedMemoryProbe:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _CreatedSharedMemoryProbe:
+    def __init__(self, *, size: int, name: str) -> None:
+        self.name = name
+        self.size = size
+        self.buf = bytearray(size)
 
 
 def test_non_posix_receiver_copies_without_resource_tracker_unregister(
@@ -93,3 +109,39 @@ def test_receiver_closes_attachment_when_array_projection_fails(monkeypatch) -> 
         )
 
     assert memory.closed
+
+
+def test_sender_allocates_transport_storage_for_empty_array(monkeypatch) -> None:
+    created = []
+
+    def shared_memory_factory(*, create, size, name):
+        assert create is True
+        memory = _CreatedSharedMemoryProbe(size=size, name=name)
+        created.append(memory)
+        return memory
+
+    monkeypatch.setattr(
+        _streaming_backend.shared_memory,
+        "SharedMemory",
+        shared_memory_factory,
+    )
+
+    block = StreamingSharedMemoryAuthority.create(
+        StreamingSharedMemoryRequest(
+            data=np.empty((0, 3), dtype=np.float32),
+            item_path=StreamingItemPath("empty.tif"),
+            shm_prefix="test_",
+        )
+    )
+
+    assert created == [block.shared_memory]
+    assert block.shared_memory.size == 1
+    assert block.payload.shape == (0, 3)
+    assert block.payload.dtype == "float32"
+
+
+def test_empty_roi_archive_retains_vector_payload_semantics() -> None:
+    assert StreamingDataTypeAuthority.detect(
+        [],
+        StreamingItemPath("empty.graph.roi.zip"),
+    ) is StreamingDataType.SHAPES
