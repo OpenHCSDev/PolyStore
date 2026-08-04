@@ -10,14 +10,16 @@ Tests cover:
 
 import json
 import pickle
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
+
 import numpy as np
 import pytest
-import polystore
 
+import polystore
 from polystore import FileManager
+from polystore.base import ImageSamplingRequest
 from polystore.constants import Backend
 from polystore.disk import DiskBackend
 from polystore.exceptions import StorageResolutionError
@@ -92,6 +94,31 @@ class TestFileManagerInit:
         assert source_pixel_ref.from_workspace_mapping(
             ref.to_workspace_mapping()
         ) == ref
+
+    def test_filemanager_samples_source_ref_without_materialized_workspace(
+        self,
+        tmp_path,
+    ):
+        """Exact source refs are independently sampleable before workspace export."""
+
+        source = np.arange(2 * 4 * 5, dtype=np.uint16).reshape(2, 4, 5)
+        np.save(tmp_path / "source.npy", source)
+        ref = polystore.SourcePixelRef(
+            backend=Backend.DISK.value,
+            backend_address="source.npy",
+            source_axis_indices=(1,),
+        )
+        filemanager = FileManager({Backend.DISK.value: DiskBackend()})
+
+        sampled = filemanager.sample_source_ref(
+            ref,
+            base_path=tmp_path,
+            request=ImageSamplingRequest(origin_yx=(1, 1), shape_yx=(2, 3)),
+        )
+
+        assert sampled.source_shape == (4, 5)
+        assert sampled.resolution_shape == (4, 5)
+        np.testing.assert_array_equal(sampled.data, source[1, 1:3, 1:4])
 
     def test_virtual_workspace_rejects_string_mapping(self, tmp_path):
         """Legacy string workspace mappings are not a second transport shape."""

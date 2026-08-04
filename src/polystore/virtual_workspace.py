@@ -64,6 +64,106 @@ class SourcePixelRef:
             for field in fields(self)
         }
 
+    def source_backend(
+        self,
+        registry: Mapping[str, BackendBase],
+    ) -> DataSource:
+        """Return the execution-local data source that owns this pixel reference."""
+
+        if self.backend == Backend.VIRTUAL_WORKSPACE.value:
+            raise StorageResolutionError(
+                "SourcePixelRef cannot target virtual_workspace recursively."
+            )
+        try:
+            backend = registry[self.backend]
+        except KeyError as exc:
+            raise StorageResolutionError(
+                f"Source backend {self.backend!r} is not registered."
+            ) from exc
+        if not isinstance(backend, DataSource):
+            raise StorageResolutionError(
+                f"Source backend {self.backend!r} is not a DataSource."
+            )
+        return backend
+
+    def resolved_address(
+        self,
+        registry: Mapping[str, BackendBase],
+        *,
+        base_path: Path,
+    ) -> str:
+        """Resolve the backend-owned address relative to its source collection."""
+
+        return str(
+            self.source_backend(registry).resolve_address(
+                self.backend_address,
+                base_path=base_path,
+            )
+        )
+
+    def load(
+        self,
+        registry: Mapping[str, BackendBase],
+        *,
+        base_path: Path,
+        **kwargs: Any,
+    ) -> Any:
+        """Load and project the exact source plane represented by this reference."""
+
+        payload = self.source_backend(registry).load(
+            self.resolved_address(registry, base_path=base_path),
+            **kwargs,
+        )
+        return self.project_source_axes(payload)
+
+    def sample(
+        self,
+        registry: Mapping[str, BackendBase],
+        *,
+        base_path: Path,
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        """Sample and project the exact source plane represented by this reference."""
+
+        sampled = self.source_backend(registry).sample(
+            self.resolved_address(registry, base_path=base_path),
+            request,
+        )
+        return replace(
+            sampled,
+            data=self.project_source_axes(sampled.data),
+            statistics_data=self.project_source_axes(sampled.statistics_data),
+            source_shape=self.project_source_shape(sampled.source_shape),
+            resolution_shape=self.project_source_shape(sampled.resolution_shape),
+        )
+
+    def project_source_axes(self, payload: Any) -> Any:
+        """Select the declared leading source axes from a backend payload."""
+
+        projected = payload
+        for index in self.source_axis_indices:
+            shape = np.shape(projected)
+            if not shape or index >= shape[0]:
+                raise StorageResolutionError(
+                    f"Source ref {self!r} cannot select leading index {index} "
+                    f"from payload shape {shape!r}."
+                )
+            projected = projected[index]
+        return projected
+
+    def project_source_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+        """Project a backend shape through the declared leading source axes."""
+
+        projected = tuple(shape)
+        for index in self.source_axis_indices:
+            if not projected or index >= projected[0]:
+                raise StorageResolutionError(
+                    f"Source ref {self!r} cannot select leading index {index} "
+                    f"from payload shape {shape!r}."
+                )
+            projected = projected[1:]
+        return projected
+
     @classmethod
     def from_workspace_mapping(cls, payload: object) -> "SourcePixelRef":
         """Parse one exact structured workspace mapping."""
@@ -175,94 +275,36 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
                 f"Path not in virtual workspace mapping: {relative_str}"
             ) from exc
 
-    def _backend_for_ref(self, ref: SourcePixelRef) -> DataSource:
-        if ref.backend == Backend.VIRTUAL_WORKSPACE.value:
-            raise StorageResolutionError(
-                "Virtual workspace source refs cannot target virtual_workspace."
-            )
+    def _registry_for_ref(self) -> Mapping[str, BackendBase]:
         if self._registry is None:
             raise StorageResolutionError(
                 "VirtualWorkspaceBackend requires an execution-local FileManager registry."
             )
-        try:
-            backend = self._registry[ref.backend]
-        except KeyError as exc:
-            raise StorageResolutionError(
-                f"Source backend {ref.backend!r} is not registered."
-            ) from exc
-        if not isinstance(backend, DataSource):
-            raise StorageResolutionError(
-                f"Source backend {ref.backend!r} is not a DataSource."
-            )
-        return backend
+        return self._registry
 
     def _load_ref(self, ref: SourcePixelRef, **kwargs: Any) -> Any:
-        backend = self._backend_for_ref(ref)
-        address = backend.resolve_address(
-            ref.backend_address,
+        return ref.load(
+            self._registry_for_ref(),
             base_path=self.plate_root,
+            **kwargs,
         )
-        payload = backend.load(address, **kwargs)
-        return self._project_source_axes(payload, ref)
 
     def _sample_ref(
         self,
         ref: SourcePixelRef,
         request: ImageSamplingRequest,
     ) -> ImageSamplingResult:
-        backend = self._backend_for_ref(ref)
-        address = backend.resolve_address(
-            ref.backend_address,
+        return ref.sample(
+            self._registry_for_ref(),
             base_path=self.plate_root,
+            request=request,
         )
-        sampled = backend.sample(address, request)
-        return replace(
-            sampled,
-            data=self._project_source_axes(sampled.data, ref),
-            statistics_data=self._project_source_axes(sampled.statistics_data, ref),
-            source_shape=self._project_source_shape(sampled.source_shape, ref),
-            resolution_shape=self._project_source_shape(
-                sampled.resolution_shape,
-                ref,
-            ),
-        )
-
-    @staticmethod
-    def _project_source_axes(payload: Any, ref: SourcePixelRef) -> Any:
-        projected = payload
-        for index in ref.source_axis_indices:
-            shape = np.shape(projected)
-            if not shape or index >= shape[0]:
-                raise StorageResolutionError(
-                    f"Source ref {ref!r} cannot select leading index {index} "
-                    f"from payload shape {shape!r}."
-                )
-            projected = projected[index]
-        return projected
-
-    @staticmethod
-    def _project_source_shape(
-        shape: tuple[int, ...],
-        ref: SourcePixelRef,
-    ) -> tuple[int, ...]:
-        projected = tuple(shape)
-        for index in ref.source_axis_indices:
-            if not projected or index >= projected[0]:
-                raise StorageResolutionError(
-                    f"Source ref {ref!r} cannot select leading index {index} "
-                    f"from payload shape {shape!r}."
-                )
-            projected = projected[1:]
-        return projected
 
     def _resolve_path(self, path: Union[str, Path]) -> str:
         ref = self._resolve_ref(path)
-        backend = self._backend_for_ref(ref)
-        return str(
-            backend.resolve_address(
-                ref.backend_address,
-                base_path=self.plate_root,
-            )
+        return ref.resolved_address(
+            self._registry_for_ref(),
+            base_path=self.plate_root,
         )
 
     def resolve_address(
@@ -300,16 +342,16 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
         outputs: list[Any] = [None] * len(refs)
         for output_indices in grouped_indices.values():
             first_ref = refs[output_indices[0]]
-            backend = self._backend_for_ref(first_ref)
-            address = backend.resolve_address(
-                first_ref.backend_address,
-                base_path=self.plate_root,
+            payload = first_ref.source_backend(self._registry_for_ref()).load(
+                first_ref.resolved_address(
+                    self._registry_for_ref(),
+                    base_path=self.plate_root,
+                ),
+                **kwargs,
             )
-            payload = backend.load(address, **kwargs)
             for output_index in output_indices:
-                outputs[output_index] = self._project_source_axes(
-                    payload,
-                    refs[output_index],
+                outputs[output_index] = refs[output_index].project_source_axes(
+                    payload
                 )
         return outputs
 

@@ -8,9 +8,8 @@ including directory listing, existence checking, mkdir, symlink, and mirror oper
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import List, Set, Union, Tuple, Any
+from typing import Any, List, Set, Tuple, Union
 
-from .formats import DEFAULT_IMAGE_EXTENSIONS
 from .base import (
     BackendBase,
     DataSource,
@@ -19,6 +18,8 @@ from .base import (
     PicklableBackend,
 )
 from .exceptions import StorageResolutionError
+from .formats import DEFAULT_IMAGE_EXTENSIONS
+from .virtual_workspace import SourcePixelRef
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,23 @@ class FileManager:
                 f"Failed to sample file at {file_path} using backend "
                 f"'{backend}': {exc}"
             ) from exc
+
+    def sample_source_ref(
+        self,
+        source_ref: SourcePixelRef,
+        *,
+        base_path: Union[str, Path],
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        """Sample one exact backend-owned source pixel reference."""
+
+        if not isinstance(source_ref, SourcePixelRef):
+            raise TypeError("source_ref must be SourcePixelRef.")
+        return source_ref.sample(
+            self.registry,
+            base_path=Path(base_path),
+            request=request,
+        )
 
     def save(self, data: Any, output_path: Union[str, Path], backend: str, **kwargs) -> None:
         """
