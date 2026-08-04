@@ -22,6 +22,11 @@ class TestMemoryBackend:
         assert backend._memory_store is not None
         assert isinstance(backend._memory_store, dict)
 
+    def test_accepts_empty_persistent_payload(self):
+        """Persistent sinks retain empty outputs as execution evidence."""
+
+        assert self.backend.accepts_payload([], "/test/empty.csv")
+
     def test_init_with_shared_dict(self):
         """Test backend initialization with shared dictionary."""
         shared = {"existing": "data"}

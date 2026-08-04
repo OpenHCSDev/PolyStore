@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from zmqruntime.config import TransportMode
 from zmqruntime.viewer_protocol import ViewerAckPolicy, ViewerTransportEndpoint
@@ -141,6 +142,15 @@ def test_streaming_backend_accepts_all_declared_pixel_payload_formats() -> None:
     assert backend.supports_file_path("result.roi.zip")
     assert not backend.supports_file_path("result.csv")
     assert not backend.supports_file_path("result.txt")
+
+
+def test_streaming_backend_accepts_only_nonempty_display_payloads() -> None:
+    backend = MetadataProbeStreamingBackend()
+
+    assert backend.accepts_payload(np.ones((2, 2)), "result.tif")
+    assert not backend.accepts_payload(np.empty((0, 2)), "result.tif")
+    assert not backend.accepts_payload([], "result.roi.zip")
+    assert not backend.accepts_payload(np.ones((2, 2)), "result.csv")
 
 
 def microscope_handler_with_parser(parser):

@@ -260,6 +260,16 @@ class DataSink(BackendBase):
         del images_dir
         return {}
 
+    def accepts_payload(
+        self,
+        data: Any,
+        identifier: Union[str, Path],
+    ) -> bool:
+        """Return whether this sink accepts one concrete payload and identity."""
+
+        del data
+        return self.supports_file_path(identifier)
+
     @abstractmethod
     def save(self, data: Any, identifier: Union[str, Path], **kwargs) -> None:
         """

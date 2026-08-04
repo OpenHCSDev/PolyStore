@@ -591,6 +591,18 @@ class StreamingBackend(DataSink):
         name = Path(path).name.lower()
         return any(name.endswith(ext) for ext in self.SUPPORTED_EXTENSIONS)
 
+    def accepts_payload(
+        self,
+        data: StreamablePayload,
+        identifier: FilePath,
+    ) -> bool:
+        """Accept only supported payloads that contain a display element."""
+
+        return (
+            super().accepts_payload(data, identifier)
+            and StreamingPayloadMemoryAuthority.to_numpy(data).size > 0
+        )
+
     @property
     def requires_filesystem_validation(self) -> bool:
         """Streaming backends don't require filesystem validation."""
@@ -616,7 +628,7 @@ class StreamingBackend(DataSink):
         skipped_paths = []
 
         for data, path in zip(data_list, file_paths):
-            if self.supports_file_path(path):
+            if self.accepts_payload(data, path):
                 filtered_data.append(data)
                 filtered_paths.append(path)
             else:
