@@ -14,6 +14,7 @@
 #
 import os
 import sys
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
@@ -57,11 +58,9 @@ project = 'Polystore'
 copyright = '2025, Tristan Simas'
 author = 'Tristan Simas'
 
-# The full version, including alpha/beta/rc tags
-release = '0.1.12'
-
-# The short X.Y version
-version = '0.1'
+# Project metadata is the release-version authority.
+release = distribution_version('polystore')
+version = release.rsplit('.', maxsplit=1)[0]
 
 # -- General configuration ---------------------------------------------------
 

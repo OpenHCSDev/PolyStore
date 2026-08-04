@@ -49,7 +49,7 @@ Reference Implementations
   modes and returns stable ``GroupedWindowItems`` output.
 
 ``build_layer_key``
-  Canonical napari layer-key construction from slice-mode components and data
+  Canonical napari layer-key construction from layer-mode components and data
   type.
 
 Producer and component identity

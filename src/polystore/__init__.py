@@ -2,7 +2,9 @@
 Polystore package exports.
 """
 
-__version__ = "0.1.25"
+from importlib.metadata import version as _distribution_version
+
+__version__ = _distribution_version("polystore")
 
 from .atomic import (
     FileLockError,
