@@ -2,9 +2,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from zmqruntime import queue_tracker
 from zmqruntime.config import TransportMode
 from zmqruntime.viewer_protocol import ViewerAckPolicy, ViewerTransportEndpoint
 
+import polystore.streaming._streaming_backend as streaming_backend_module
 from polystore.streaming._streaming_backend import (
     StreamingBackend,
     StreamingBatchItemPreparationAuthority,
@@ -57,6 +59,45 @@ class DisplayConfigStub(ViewerDisplayConfigABC):
 
     def display_payload_extra(self):
         return {}
+
+
+def test_queue_tracker_uses_endpoint_transport_authority(monkeypatch) -> None:
+    listener_start = {}
+    registered_image_ids = []
+    listener = SimpleNamespace(start=lambda **kwargs: listener_start.update(kwargs))
+    tracker = SimpleNamespace(register_sent=registered_image_ids.append)
+    registry = SimpleNamespace(
+        get_or_create_tracker=lambda _port, _viewer_type: tracker,
+    )
+    monkeypatch.setattr(
+        streaming_backend_module,
+        "GlobalAckListener",
+        lambda: listener,
+    )
+    monkeypatch.setattr(
+        queue_tracker,
+        "GlobalQueueTrackerRegistry",
+        lambda: registry,
+    )
+    endpoint = ViewerTransportEndpoint(
+        host="127.0.0.1",
+        port=5555,
+        transport_mode=TransportMode.TCP,
+    )
+    transport_config = streaming_backend_module.ZMQConfig(shared_ack_port=8111)
+
+    MetadataProbeStreamingBackend()._register_with_queue_tracker(
+        endpoint,
+        ["image-1", "image-2"],
+        transport_config,
+    )
+
+    assert listener_start == {
+        "port": 8111,
+        "transport_mode": endpoint.transport_mode,
+        "config": transport_config,
+    }
+    assert registered_image_ids == ["image-1", "image-2"]
 
 
 def test_streaming_backend_projects_display_payload_through_config_owner() -> None:

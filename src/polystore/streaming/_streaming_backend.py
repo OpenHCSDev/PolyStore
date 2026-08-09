@@ -680,7 +680,7 @@ class StreamingBackend(DataSink):
         listener = GlobalAckListener()
         listener.start(
             port=transport_config.shared_ack_port,
-            transport_mode=transport_endpoint.resolved_transport_mode(),
+            transport_mode=transport_endpoint.transport_mode,
             config=transport_config,
         )
 
