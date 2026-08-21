@@ -61,6 +61,58 @@ its enum values through strings or lookup tables.
        )
    )
 
+Zarr batch layout
+-----------------
+
+``ZarrStorageBackend.save_batch`` requires a ``ZarrBatchLayout`` from
+``polystore.zarr_batch``. The layout declares every non-pixel axis, its opaque
+semantic values, and the exact coordinate of each two-dimensional image plane.
+PolyStore validates that the coordinates form one complete dense product, so
+item order is never inferred from filenames or list position.
+
+``ZarrBatchAxisRole.ARRAY`` places an axis inside each OME-NGFF image array.
+``ZarrBatchAxisRole.HCS_IMAGE`` projects one axis into the well's HCS image
+groups. A layout may declare at most one HCS image axis. This keeps each image
+array within the OME-NGFF ``t, c, z, y, x`` model while preserving fields or
+sites as distinct HCS images.
+
+.. code-block:: python
+
+   from polystore.zarr_batch import (
+       ZarrBatchAxis,
+       ZarrBatchAxisRole,
+       ZarrBatchLayout,
+   )
+
+   layout = ZarrBatchLayout(
+       axes=(
+           ZarrBatchAxis("t", "time", ("1", "2")),
+           ZarrBatchAxis(
+               "field",
+               "field",
+               ("3", "7"),
+               ZarrBatchAxisRole.HCS_IMAGE,
+           ),
+           ZarrBatchAxis("c", "channel", ("DNA", "RNA")),
+           ZarrBatchAxis("z", "space", ("1",)),
+       ),
+       item_coordinates=(
+           (0, 0, 0, 0),
+           (0, 0, 1, 0),
+           (0, 1, 0, 0),
+           (0, 1, 1, 0),
+           (1, 0, 0, 0),
+           (1, 0, 1, 0),
+           (1, 1, 0, 0),
+           (1, 1, 1, 0),
+       ),
+   )
+
+The backend persists both filename-to-coordinate mappings and semantic axis
+values. ``load_batch`` uses the stored coordinates directly, and readers can
+use ``ZarrStoredBatchSemantics`` to recover application-owned labels without
+teaching PolyStore what those labels mean.
+
 Bounded native sampling
 -----------------------
 

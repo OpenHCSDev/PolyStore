@@ -12,26 +12,33 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Optional
 
 import numpy as np
 import zarr
+
+from .base import PicklableBackend, StorageBackend
+from .config import ZarrConfig
+from .constants import Backend
+from .exceptions import StorageResolutionError
+from .zarr_batch import (
+    ATTR_DIMENSIONS,
+    ATTR_FILENAME_MAP,
+    ATTR_IMAGE_COORDINATE,
+    ATTR_OUTPUT_PATHS,
+    ZarrBatchLayout,
+)
 
 # Lazy ome-zarr loading to avoid dask → GPU library chain at import time
 _ome_zarr_state = {'available': None, 'cache': {}, 'event': threading.Event(), 'thread': None}
 
 logger = logging.getLogger(__name__)
 
-# Zarr attribute keys (polystore prefix only)
-_ATTR_PREFIX = "polystore"
-ATTR_FILENAME_MAP = f"{_ATTR_PREFIX}_filename_map"
-ATTR_OUTPUT_PATHS = f"{_ATTR_PREFIX}_output_paths"
-ATTR_DIMENSIONS = f"{_ATTR_PREFIX}_dimensions"
 DEFAULT_PLATE_NAME = os.getenv("POLYSTORE_PLATE_NAME", "Polystore_Plate")
 DISK_PASSTHROUGH_EXTENSIONS = ('.json', '.csv', '.txt', '.roi.zip', '.zip')
 
 
-def _get_attr(attrs: Dict[str, Any], key: str):
+def _get_attr(attrs: dict[str, Any], key: str):
     if key in attrs:
         return attrs[key]
     return None
@@ -41,8 +48,8 @@ def _load_ome_zarr():
     """Load ome-zarr and cache imports."""
     try:
         logger.info("Loading ome-zarr...")
-        from ome_zarr.writer import write_image, write_plate_metadata, write_well_metadata
         from ome_zarr.io import parse_url
+        from ome_zarr.writer import write_image, write_plate_metadata, write_well_metadata
 
         _ome_zarr_state['cache'] = {
             'write_image': write_image,
@@ -103,12 +110,6 @@ except ImportError:
     import portalocker
     FCNTL_AVAILABLE = False
 
-from .constants import Backend
-from .base import PicklableBackend, StorageBackend
-from .config import ZarrConfig
-from .exceptions import StorageResolutionError
-
-
 class ZarrStorageBackend(StorageBackend, PicklableBackend):
     """Zarr storage backend with automatic registration."""
     _backend_type = Backend.ZARR.value
@@ -125,7 +126,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
     - Configurable compression (Blosc, Zlib, LZ4, Zstd, or none)
     - Configurable compression levels
     - Full path mapping for batch operations
-    
+
     Limitations:
     - Only supports array data (numpy arrays)
     - Cannot save arbitrary file formats (CSV, ROI.ZIP, etc.)
@@ -151,16 +152,16 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             shuffle=True,
         )
 
-    def get_connection_params(self) -> Optional[Dict[str, Any]]:
+    def get_connection_params(self) -> dict[str, Any] | None:
         return {"zarr_config": self.config}
 
-    def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
+    def set_connection_params(self, params: dict[str, Any] | None) -> None:
         if params is None:
             self._configure(ZarrConfig())
             return
         self._configure(params["zarr_config"])
 
-    def _get_compressor(self) -> Optional[Any]:
+    def _get_compressor(self) -> Any | None:
         """
         Get the configured compressor with appropriate settings.
 
@@ -198,12 +199,13 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
 
         return data
 
-    def _calculate_chunks(self, data_shape: Tuple[int, ...]) -> Tuple[int, ...]:
+    def _calculate_chunks(self, data_shape: tuple[int, ...]) -> tuple[int, ...]:
         """
         Calculate chunk shape based on configured strategy.
 
         Args:
-            data_shape: Shape of the 5D array (fields, channels, z, y, x)
+            data_shape: Array shape with arbitrary leading semantic axes and
+                trailing ``y, x`` pixel axes.
 
         Returns:
             Chunk shape tuple
@@ -215,11 +217,11 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                 # Single chunk for entire well (current behavior, optimal for batch I/O)
                 return data_shape
             case ZarrChunkStrategy.FILE:
-                # One chunk per individual file: (1, 1, 1, y, x)
-                # Each original tif is compressed separately
-                return (1, 1, 1, data_shape[3], data_shape[4])
+                # Each original plane is compressed separately regardless of
+                # the number of declared leading axes.
+                return (1,) * (len(data_shape) - 2) + data_shape[-2:]
 
-    def _split_store_and_key(self, path: Union[str, Path]) -> Tuple[Any, str]:
+    def _split_store_and_key(self, path: str | Path) -> tuple[Any, str]:
         """
         Split path into zarr store and key.
 
@@ -250,7 +252,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         store = zarr.DirectoryStore(str(store_path), dimension_separator='/')
         return store, relative_key
 
-    def save(self, data: Any, output_path: Union[str, Path], **kwargs):
+    def save(self, data: Any, output_path: str | Path, **kwargs):
         """
         Save data to Zarr at the given output_path.
 
@@ -294,7 +296,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to save to Zarr: {output_path}") from e
 
-    def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
+    def load_batch(self, file_paths: list[str | Path], **kwargs) -> list[Any]:
         """
         Load from zarr array using filename mapping.
 
@@ -322,8 +324,8 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         root = zarr.open_group(store=store, mode='r')
 
         # Group files by well based on OME-ZARR structure
-        well_to_files = {}
-        well_to_indices = {}
+        array_to_files = {}
+        array_to_indices = {}
 
         # Search OME-ZARR structure for requested files
         for row_name in root.group_keys():
@@ -334,9 +336,8 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                         well_group = row_group[col_name]
                         well_name = f"{row_name}{col_name}"
 
-                        # Check if this well has our filename mapping in the field array
-                        if "0" in well_group.group_keys():
-                            field_group = well_group["0"]
+                        for image_name in well_group.group_keys():
+                            field_group = well_group[image_name]
                             if "0" in field_group.array_keys():
                                 field_array = field_group["0"]
                                 filename_map_attr = _get_attr(field_array.attrs, ATTR_FILENAME_MAP)
@@ -347,41 +348,64 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                                     for i, path in enumerate(file_paths):
                                         filename = Path(path).name  # Use filename only for matching
                                         if filename in filename_map:
-                                            if well_name not in well_to_files:
-                                                well_to_files[well_name] = []
-                                                well_to_indices[well_name] = []
-                                            well_to_files[well_name].append(i)  # Original position in file_paths
-                                            well_to_indices[well_name].append(filename_map[filename])  # 5D coordinates (field, channel, z)
+                                            array_key = (well_name, image_name)
+                                            if array_key not in array_to_files:
+                                                array_to_files[array_key] = []
+                                                array_to_indices[array_key] = []
+                                            array_to_files[array_key].append(i)
+                                            array_to_indices[array_key].append(
+                                                filename_map[filename]
+                                            )
 
         # Load data from each well using single well chunk
         results = [None] * len(file_paths)  # Pre-allocate results array
 
-        for well_name, file_positions in well_to_files.items():
+        for (well_name, image_name), file_positions in array_to_files.items():
             row, col = well_name[0], well_name[1:]
             well_group = root[row][col]
-            well_indices = well_to_indices[well_name]
+            well_indices = array_to_indices[(well_name, image_name)]
 
             # Load entire well field array in single operation (well chunking)
-            field_group = well_group["0"]
+            field_group = well_group[image_name]
             field_array = field_group["0"]
             all_well_data = field_array[:]  # Single I/O operation for entire well
 
-            # Extract requested 2D slices using 5D coordinates
-            for file_pos, coords_5d in zip(file_positions, well_indices):
-                field_idx, channel_idx, z_idx = coords_5d
-                # Extract 2D slice: (field, channel, z, y, x) -> (y, x)
-                results[file_pos] = all_well_data[field_idx, channel_idx, z_idx, :, :]  # 2D slice
+            # Extract requested planes using the persisted declaration-owned
+            # coordinate rank rather than a fixed axis tuple.
+            for file_pos, coordinates in zip(file_positions, well_indices, strict=False):
+                results[file_pos] = all_well_data[
+                    *(int(index) for index in coordinates),
+                    slice(None),
+                    slice(None),
+                ]
 
-        logger.debug(f"Loaded {len(file_paths)} images from zarr store at {store_path} from {len(well_to_files)} wells")
+        missing_paths = [
+            str(path)
+            for path, result in zip(file_paths, results, strict=True)
+            if result is None
+        ]
+        if missing_paths:
+            raise KeyError(
+                "Zarr filename mapping does not contain requested paths: "
+                f"{missing_paths!r}"
+            )
+
+        logger.debug(
+            "Loaded %d images from zarr store at %s from %d image arrays",
+            len(file_paths),
+            store_path,
+            len(array_to_files),
+        )
         return results
 
-    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], **kwargs) -> None:
+    def save_batch(self, data_list: list[Any], output_paths: list[str | Path], **kwargs) -> None:
         """Save multiple images using ome-zarr-py for proper OME-ZARR compliance with multi-dimensional support.
 
         Args:
             data_list: List of image data to save
             output_paths: List of output file paths
-            **kwargs: Must include chunk_name, n_channels, n_z, n_fields, row, col
+            **kwargs: Must include ``chunk_name``, ``batch_layout``, ``row``,
+                and ``col``.
         """
 
         # Ensure ome-zarr is loaded (waits for background load if needed)
@@ -389,21 +413,15 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
 
         # Extract required parameters from kwargs
         chunk_name = kwargs.get('chunk_name')
-        n_channels = kwargs.get('n_channels')
-        n_z = kwargs.get('n_z')
-        n_fields = kwargs.get('n_fields')
+        batch_layout = kwargs.get('batch_layout')
         row = kwargs.get('row')
         col = kwargs.get('col')
 
         # Validate required parameters
         if chunk_name is None:
             raise ValueError("chunk_name must be provided")
-        if n_channels is None:
-            raise ValueError("n_channels must be provided")
-        if n_z is None:
-            raise ValueError("n_z must be provided")
-        if n_fields is None:
-            raise ValueError("n_fields must be provided")
+        if not isinstance(batch_layout, ZarrBatchLayout):
+            raise TypeError("batch_layout must be a ZarrBatchLayout")
         if row is None:
             raise ValueError("row must be provided")
         if col is None:
@@ -412,6 +430,18 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         if not data_list:
             logger.warning(f"Empty data list for chunk {chunk_name}")
             return
+
+        if len(data_list) != len(output_paths):
+            raise ValueError(
+                "Zarr batch data and output paths must have equal lengths: "
+                f"got {len(data_list)} and {len(output_paths)}"
+            )
+        if len(data_list) != len(batch_layout.item_coordinates):
+            raise ValueError(
+                "Zarr batch data must match the declared item coordinates: "
+                f"got {len(data_list)} item(s) and "
+                f"{len(batch_layout.item_coordinates)} coordinate(s)"
+            )
 
         if not _ome_zarr_state['available']:
             raise ImportError("ome-zarr package is required. Install with: pip install ome-zarr")
@@ -441,7 +471,13 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
 
         # Write plate metadata with locking to prevent concurrent corruption
         # Always enabled for OME-ZARR HCS compliance
-        self._ensure_plate_metadata_with_lock(root, row, col, store_path)
+        self._ensure_plate_metadata_with_lock(
+            root,
+            row,
+            col,
+            store_path,
+            batch_layout.image_count,
+        )
 
         # Create HCS-compliant structure: plate/row/col/field/resolution
         # Create row group if it doesn't exist
@@ -456,111 +492,83 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         well_group = row_group.create_group(col)
 
         # Add HCS well metadata
+        image_names = tuple(str(index) for index in range(batch_layout.image_count))
         well_metadata = {
             "images": [
-                {
-                    "path": "0",  # Single image containing all fields
-                    "acquisition": 0
-                }
+                {"path": image_name, "acquisition": 0}
+                for image_name in image_names
             ],
             "version": "0.5"
         }
         well_group.attrs["ome"] = {"version": "0.5", "well": well_metadata}
 
-        # Create field group (single field "0" containing all field data)
-        field_group = well_group.require_group("0")
-
-        # Always use full 5D structure: (fields, channels, z, y, x)
-        # Define OME-NGFF compliant axes
-        axes = [
-            {'name': 'field', 'type': 'field'},  # Custom field type - allowed before space
-            {'name': 'c', 'type': 'channel'},
-            {'name': 'z', 'type': 'space'},
-            {'name': 'y', 'type': 'space'},
-            {'name': 'x', 'type': 'space'}
-        ]
+        axes = list(batch_layout.ngff_axes)
 
         # Get image dimensions
         sample_image = cpu_data_list[0]
+        if sample_image.ndim != 2:
+            raise ValueError(
+                "Zarr batch items must be two-dimensional image planes; "
+                f"got shape {sample_image.shape!r}"
+            )
         height, width = sample_image.shape[-2:]
+        mismatched_shapes = [
+            array.shape for array in cpu_data_list if array.shape != sample_image.shape
+        ]
+        if mismatched_shapes:
+            raise ValueError(
+                "Zarr batch items must share one image-plane shape; "
+                f"expected {sample_image.shape!r}, got {mismatched_shapes!r}"
+            )
 
-        # Always reshape to full 5D: (n_fields, n_channels, n_z, y, x)
-        target_shape = [n_fields, n_channels, n_z, height, width]
-
-        # Stack and reshape data
-        stacked_data = np.stack(cpu_data_list, axis=0)
-
-        # Calculate total expected images for validation
-        total_expected = n_fields * n_channels * n_z
-        if len(data_list) != total_expected:
-            logger.warning(f"Data count mismatch: got {len(data_list)}, expected {total_expected} "
-                         f"(fields={n_fields}, channels={n_channels}, z={n_z})")
-
-        # Log detailed shape information before reshape
-        logger.info(f"🔍 ZARR RESHAPE DEBUG:")
-        logger.info(f"  - Input: {len(data_list)} images")
-        logger.info(f"  - Stacked shape: {stacked_data.shape}")
-        logger.info(f"  - Stacked size: {stacked_data.size}")
-        logger.info(f"  - Target shape: {target_shape}")
-        logger.info(f"  - Target size: {np.prod(target_shape)}")
-        logger.info(f"  - Sample image shape: {sample_image.shape}")
-        logger.info(f"  - Dimensions: fields={n_fields}, channels={n_channels}, z={n_z}, h={height}, w={width}")
-
-        # Always reshape to 5D structure
-        reshaped_data = stacked_data.reshape(target_shape)
-
-        logger.info(f"Zarr save_batch: {len(data_list)} images → {stacked_data.shape} → {reshaped_data.shape}")
+        target_shape = (*batch_layout.array_shape, height, width)
         axes_names = [ax['name'] for ax in axes]
-        logger.info(f"Dimensions: fields={n_fields}, channels={n_channels}, z={n_z}, axes={''.join(axes_names)}")
+        logger.info("Dimensions: shape=%s, axes=%s", target_shape, axes_names)
 
-        # Create field group (single field "0" containing all field data)
-        if "0" in well_group:
-            field_group = well_group["0"]
-        else:
-            field_group = well_group.create_group("0")
+        write_well_metadata(well_group, list(image_names))
+        for image_index, image_name in enumerate(image_names):
+            field_group = well_group.require_group(image_name)
+            image_items = tuple(
+                (data, path, coordinate)
+                for data, path, coordinate in zip(
+                    cpu_data_list,
+                    output_paths,
+                    batch_layout.item_coordinates,
+                    strict=True,
+                )
+                if batch_layout.image_index(coordinate) == image_index
+            )
+            reshaped_data = np.empty(target_shape, dtype=sample_image.dtype)
+            for data, _path, coordinate in image_items:
+                reshaped_data[*batch_layout.array_coordinate(coordinate), :, :] = data
 
-        # Write OME-ZARR well metadata with single field (well-chunked approach)
-        write_well_metadata(well_group, ['0'])
+            storage_options = {
+                "chunks": self._calculate_chunks(reshaped_data.shape),
+                "compressor": self._get_compressor(),
+            }
+            write_image(
+                image=reshaped_data,
+                group=field_group,
+                axes=axes,
+                storage_options=storage_options,
+                scaler=None,
+                compute=True,
+            )
 
-        # Calculate chunks based on configured strategy
-        storage_options = {
-            "chunks": self._calculate_chunks(reshaped_data.shape),
-            "compressor": self._get_compressor()
-        }
-
-        # Write as single well-chunked array with proper multi-dimensional axes
-        write_image(
-            image=reshaped_data,
-            group=field_group,
-            axes=axes,
-            storage_options=storage_options,
-            scaler=None,  # Single scale only for performance
-            compute=True
-        )
-
-        # Axes are already correctly set by write_image function
-
-        # Store filename mapping with 5D coordinates (field, channel, z, y, x)
-        # Convert flat index to 5D coordinates for proper zarr slicing
-        filename_map = {}
-        for i, path in enumerate(output_paths):
-            # Calculate 5D coordinates from flat index
-            field_idx = i // (n_channels * n_z)
-            remaining = i % (n_channels * n_z)
-            channel_idx = remaining // n_z
-            z_idx = remaining % n_z
-
-            # Store as tuple (field, channel, z) - y,x are full slices
-            filename_map[Path(path).name] = (field_idx, channel_idx, z_idx)
-
-        field_array = field_group['0']
-        field_array.attrs[ATTR_FILENAME_MAP] = filename_map
-        field_array.attrs[ATTR_OUTPUT_PATHS] = [str(path) for path in output_paths]
-        field_array.attrs[ATTR_DIMENSIONS] = {
-            "n_fields": n_fields,
-            "n_channels": n_channels,
-            "n_z": n_z
-        }
+            field_array = field_group['0']
+            field_array.attrs[ATTR_FILENAME_MAP] = {
+                Path(path).name: batch_layout.array_coordinate(coordinate)
+                for _data, path, coordinate in image_items
+            }
+            field_array.attrs[ATTR_OUTPUT_PATHS] = [
+                str(path) for _data, path, _coordinate in image_items
+            ]
+            field_array.attrs[ATTR_DIMENSIONS] = (
+                batch_layout.dimensions_attribute()
+            )
+            field_array.attrs[ATTR_IMAGE_COORDINATE] = (
+                batch_layout.image_coordinate_attribute(image_items[0][2])
+            )
 
         logger.debug(f"Successfully saved batch for chunk {chunk_name}")
 
@@ -569,7 +577,14 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         import gc
         gc.collect()
 
-    def _ensure_plate_metadata_with_lock(self, root: zarr.Group, row: str, col: str, store_path: Path) -> None:
+    def _ensure_plate_metadata_with_lock(
+        self,
+        root: zarr.Group,
+        row: str,
+        col: str,
+        store_path: Path,
+        field_count: int,
+    ) -> None:
         """Ensure plate-level metadata includes ALL existing wells with file locking."""
         lock_path = store_path.with_suffix('.metadata.lock')
 
@@ -579,7 +594,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
                 else:
                     portalocker.lock(lock_file, portalocker.LOCK_EX)
-                self._ensure_plate_metadata(root, row, col)
+                self._ensure_plate_metadata(root, row, col, field_count)
         except Exception as e:
             logger.error(f"Failed to update plate metadata with lock: {e}")
             raise
@@ -587,7 +602,13 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             if lock_path.exists():
                 lock_path.unlink()
 
-    def _ensure_plate_metadata(self, root: zarr.Group, row: str, col: str) -> None:
+    def _ensure_plate_metadata(
+        self,
+        root: zarr.Group,
+        row: str,
+        col: str,
+        field_count: int,
+    ) -> None:
         """Ensure plate-level metadata includes ALL existing wells in the store."""
 
         # Ensure ome-zarr is loaded
@@ -597,6 +618,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         all_rows = set()
         all_cols = set()
         all_wells = []
+        maximum_field_count = field_count
 
         for row_name in root.group_keys():
             if isinstance(root[row_name], zarr.Group):  # Ensure it's a row group
@@ -608,6 +630,10 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                         all_cols.add(col_name)
                         well_path = f"{row_name}/{col_name}"
                         all_wells.append(well_path)
+                        maximum_field_count = max(
+                            maximum_field_count,
+                            len(tuple(row_group[col_name].group_keys())),
+                        )
 
         # Include the current well being added (might not exist yet)
         all_rows.add(row)
@@ -638,7 +664,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             {
                 "id": 0,
                 "name": "default_acquisition",
-                "maximumfieldcount": 1  # Single field containing all field data
+                "maximumfieldcount": maximum_field_count
             }
         ]
 
@@ -649,7 +675,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             sorted_cols,
             wells_metadata,
             acquisitions=acquisitions,
-            field_count=1,
+            field_count=maximum_field_count,
             name=DEFAULT_PLATE_NAME
         )
 
@@ -658,7 +684,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
 
 
 
-    def load(self, file_path: Union[str, Path], **kwargs) -> Any:
+    def load(self, file_path: str | Path, **kwargs) -> Any:
         """
         Load a single file from zarr store.
 
@@ -699,17 +725,17 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         return group[key][:]
 
     def list_files(self,
-                   directory: Union[str, Path],
-                   pattern: Optional[str] = None,
-                   extensions: Optional[Set[str]] = None,
-                   recursive: bool = False) -> List[Path]:
+                   directory: str | Path,
+                   pattern: str | None = None,
+                   extensions: set[str] | None = None,
+                   recursive: bool = False) -> list[Path]:
         """
         List all file-like entries (i.e. arrays) in a Zarr store, optionally filtered.
         Returns filenames from array attributes (output_paths) if available.
         """
 
         store, relative_key = self._split_store_and_key(directory)
-        result: List[Path] = []
+        result: list[Path] = []
 
         def _matches_filters(name: str) -> bool:
             if pattern and not fnmatch.fnmatch(name, pattern):
@@ -758,7 +784,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                                 if _matches_filters(filename_only):
                                     result.append(Path(filename))
 
-                    except Exception as e:
+                    except Exception:
                         # Skip arrays that can't be accessed
                         continue
 
@@ -767,7 +793,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
 
         return result
 
-    def list_dir(self, path: Union[str, Path]) -> List[str]:
+    def list_dir(self, path: str | Path) -> list[str]:
         store, relative_key = self._split_store_and_key(path)
 
         # Normalize key for Zarr API
@@ -782,13 +808,13 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                     entries.append(entry)
                 return entries
             return asyncio.run(_get_entries())
-        except KeyError:
-            raise NotADirectoryError(f"Zarr path is not a directory: {path}")
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Zarr path does not exist: {path}")
+        except KeyError as exc:
+            raise NotADirectoryError(f"Zarr path is not a directory: {path}") from exc
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Zarr path does not exist: {path}") from exc
 
 
-    def delete(self, path: Union[str, Path]) -> None:
+    def delete(self, path: str | Path) -> None:
         """
         Delete a Zarr array (file) or empty group (directory) at the given path.
 
@@ -800,9 +826,10 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             IsADirectoryError: If path is a non-empty group
             StorageResolutionError: For unexpected failures
         """
-        import zarr
-        import shutil
         import os
+        import shutil
+
+        import zarr
 
         # Passthrough to disk backend for text files (JSON, CSV, TXT)
         path_str = str(path)
@@ -838,7 +865,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         else:
             raise StorageResolutionError(f"Unrecognized Zarr object type at: {path}")
 
-    def delete_all(self, path: Union[str, Path]) -> None:
+    def delete_all(self, path: str | Path) -> None:
         """
         Recursively delete a Zarr array or group (file or directory).
 
@@ -864,7 +891,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to recursively delete Zarr path: {path}") from e
 
-    def exists(self, path: Union[str, Path]) -> bool:
+    def exists(self, path: str | Path) -> bool:
         if str(path).endswith(DISK_PASSTHROUGH_EXTENSIONS):
             from .backend_registry import get_backend_instance
 
@@ -894,7 +921,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             # If we can't open the zarr store, it doesn't exist
             return False
 
-    def ensure_directory(self, directory: Union[str, Path]) -> Path:
+    def ensure_directory(self, directory: str | Path) -> Path:
         """
         No-op for zarr backend - zarr stores handle their own structure.
 
@@ -903,7 +930,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         """
         return Path(directory)
 
-    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path], overwrite: bool = False):
+    def create_symlink(self, source: str | Path, link_name: str | Path, overwrite: bool = False):
         store, src_key = self._split_store_and_key(source)
         store2, dst_key = self._split_store_and_key(link_name)
 
@@ -924,7 +951,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         link_group = group.require_group(dst_key)
         link_group.attrs["_symlink"] = src_key  # Store as declared string
 
-    def is_symlink(self, path: Union[str, Path]) -> bool:
+    def is_symlink(self, path: str | Path) -> bool:
         """
         Check if the given Zarr path represents a logical symlink (based on attribute contract).
 
@@ -944,7 +971,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to inspect Zarr symlink at: {path}") from e
 
-    def _symlink_target(self, obj: Any, path: Union[str, Path]) -> str | None:
+    def _symlink_target(self, obj: Any, path: str | Path) -> str | None:
         if not isinstance(obj, (zarr.core.Array, zarr.hierarchy.Group)):
             raise StorageResolutionError(f"Unknown Zarr object at: {path}")
         if "_symlink" not in obj.attrs:
@@ -968,13 +995,13 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             seen_keys.add(key)
             key = target
 
-    def _auto_chunks(self, data: Any, chunk_divisor: int = 1) -> Tuple[int, ...]:
+    def _auto_chunks(self, data: Any, chunk_divisor: int = 1) -> tuple[int, ...]:
         shape = data.shape
 
         # Simple logic: 1/10th of each dim, with min 1
         return tuple(max(1, s // chunk_divisor) for s in shape)
 
-    def is_file(self, path: Union[str, Path]) -> bool:
+    def is_file(self, path: str | Path) -> bool:
         """
         Check if a Zarr path points to a file (Zarr array), resolving both OS and Zarr-native symlinks.
 
@@ -1009,31 +1036,31 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to resolve Zarr file path: {path}") from e
 
-    def is_dir(self, path: Union[str, Path]) -> bool:
+    def is_dir(self, path: str | Path) -> bool:
         """
         Check if a Zarr path resolves to a directory (i.e., a Zarr group).
-    
+
         Resolves both OS-level symlinks and Zarr-native symlinks via .attrs['_symlink'].
-    
+
         Args:
             path: Zarr path or URI
-    
+
         Returns:
             bool: True if path resolves to a Zarr group
-    
+
         Raises:
             FileNotFoundError: If path or resolved target does not exist
             NotADirectoryError: If resolved target is not a group
             StorageResolutionError: For symlink cycles or other failures
         """
         import os
-    
-    
+
+
         path = str(path)
-    
+
         if not os.path.exists(path):
             raise FileNotFoundError(f"Zarr path does not exist: {path}")
-    
+
         try:
             store, key = self._split_store_and_key(path)
             group = zarr.group(store=store)
@@ -1045,40 +1072,40 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                 raise NotADirectoryError(f"Zarr path is an array (file): {path}")
             else:
                 raise StorageResolutionError(f"Unknown Zarr object at: {path}")
-    
+
         except Exception as e:
             raise StorageResolutionError(f"Failed to resolve Zarr directory path: {path}") from e
 
-    def move(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
+    def move(self, src: str | Path, dst: str | Path) -> None:
         """
         Move a Zarr key or object (array/group) from one location to another, resolving symlinks.
-    
+
         Supports:
         - Disk or memory stores
         - Zarr-native symlinks
         - Key renames within group
         - Full copy+delete across stores if needed
-    
+
         Raises:
             FileNotFoundError: If src does not exist
             FileExistsError: If dst already exists
             StorageResolutionError: On failure
         """
         import zarr
-    
+
         src_store, src_key = self._split_store_and_key(src)
         dst_store, dst_key = self._split_store_and_key(dst)
-    
+
         src_group = zarr.group(store=src_store)
         dst_group = zarr.group(store=dst_store)
-    
+
         if src_key not in src_group:
             raise FileNotFoundError(f"Zarr source key does not exist: {src_key}")
         if dst_key in dst_group:
             raise FileExistsError(f"Zarr destination key already exists: {dst_key}")
-    
+
         src_key, obj = self._resolve_symlink(src_group, src_key)
-    
+
         try:
             if src_store is dst_store:
                 # Native move within the same Zarr group/store
@@ -1090,7 +1117,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to move {src_key} to {dst_key}") from e
 
-    def copy(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
+    def copy(self, src: str | Path, dst: str | Path) -> None:
         """
         Copy a Zarr key or object (array/group) from one location to another.
 
@@ -1123,7 +1150,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to copy {src_key} to {dst_key}") from e
 
-    def stat(self, path: Union[str, Path]) -> Dict[str, Any]:
+    def stat(self, path: str | Path) -> dict[str, Any]:
         """
         Return structural metadata about a Zarr path.
 

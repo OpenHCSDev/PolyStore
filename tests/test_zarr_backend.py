@@ -21,6 +21,7 @@ from typing import get_type_hints
 
 import numpy as np
 import pytest
+import zarr
 
 from polystore.config import (
     ZarrChunkStrategy,
@@ -29,6 +30,11 @@ from polystore.config import (
     ZarrConfig,
 )
 from polystore.zarr import ZarrStorageBackend
+from polystore.zarr_batch import (
+    ZarrBatchAxis,
+    ZarrBatchAxisRole,
+    ZarrBatchLayout,
+)
 
 
 @pytest.fixture
@@ -135,17 +141,128 @@ class TestZarrArrayOperations:
 class TestZarrBatchOperations:
     """Test batch save/load operations."""
 
-    @pytest.mark.skip(reason="Batch operations are HCS-specific - need well/plate context")
     def test_batch_save_and_load(self, zarr_backend, temp_zarr_dir):
-        """Test batch save and load of multiple arrays."""
-        # Note: Batch operations in zarr backend expect HCS structure (wells/plates)
-        # For simple array batching, use FileManager with zarr backend instead
-        pass
+        """Declared axes preserve timepoints and non-flat item ordering."""
+        output_paths = [
+            Path(temp_zarr_dir) / "images" / name
+            for name in (
+                "A01_s001_w2_z001_t002.tif",
+                "A01_s001_w1_z001_t001.tif",
+                "A01_s001_w2_z001_t001.tif",
+                "A01_s001_w1_z001_t002.tif",
+            )
+        ]
+        coordinates = ((1, 0, 1, 0), (0, 0, 0, 0), (0, 0, 1, 0), (1, 0, 0, 0))
+        layout = ZarrBatchLayout(
+            axes=(
+                ZarrBatchAxis("t", "time", ("1", "2")),
+                ZarrBatchAxis(
+                    "field",
+                    "field",
+                    ("1",),
+                    ZarrBatchAxisRole.HCS_IMAGE,
+                ),
+                ZarrBatchAxis("c", "channel", ("1", "2")),
+                ZarrBatchAxis("z", "space", ("1",)),
+            ),
+            item_coordinates=coordinates,
+        )
+        data = [np.full((3, 4), value, dtype=np.uint16) for value in range(4)]
 
-    @pytest.mark.skip(reason="Batch operations are HCS-specific")
+        zarr_backend.save_batch(
+            data,
+            output_paths,
+            chunk_name="A01",
+            batch_layout=layout,
+            row="A",
+            col="01",
+        )
+
+        root = zarr.open_group(str(output_paths[0].parent), mode="r")
+        image_group = root["A/01/0"]
+        array = image_group["0"]
+        assert array.shape == (2, 2, 1, 3, 4)
+        assert [
+            axis["name"] for axis in image_group.attrs["multiscales"][0]["axes"]
+        ] == [
+            "t",
+            "c",
+            "z",
+            "y",
+            "x",
+        ]
+        requested_order = (2, 0, 3, 1)
+        loaded = zarr_backend.load_batch(
+            [output_paths[index] for index in requested_order]
+        )
+        for loaded_item, expected_index in zip(loaded, requested_order, strict=True):
+            np.testing.assert_array_equal(loaded_item, data[expected_index])
+
     def test_batch_operations_length_mismatch(self, zarr_backend, temp_zarr_dir):
         """Test that batch operations raise error on length mismatch."""
-        pass
+        layout = ZarrBatchLayout(
+            axes=(ZarrBatchAxis("c", "channel", ("1",)),),
+            item_coordinates=((0,),),
+        )
+        with pytest.raises(ValueError, match="equal lengths"):
+            zarr_backend.save_batch(
+                [np.ones((2, 2))],
+                [
+                    Path(temp_zarr_dir) / "images" / "first.tif",
+                    Path(temp_zarr_dir) / "images" / "second.tif",
+                ],
+                chunk_name="A01",
+                batch_layout=layout,
+                row="A",
+                col="01",
+            )
+
+    def test_image_axis_creates_one_hcs_image_per_value(
+        self,
+        zarr_backend,
+        temp_zarr_dir,
+    ):
+        """Image-role coordinates become HCS image groups, not array axes."""
+        output_paths = [
+            Path(temp_zarr_dir) / "images" / "A01_s003_w1_z001_t001.tif",
+            Path(temp_zarr_dir) / "images" / "A01_s007_w1_z001_t001.tif",
+        ]
+        layout = ZarrBatchLayout(
+            axes=(
+                ZarrBatchAxis("t", "time", ("1",)),
+                ZarrBatchAxis(
+                    "field",
+                    "field",
+                    ("3", "7"),
+                    ZarrBatchAxisRole.HCS_IMAGE,
+                ),
+                ZarrBatchAxis("c", "channel", ("1",)),
+                ZarrBatchAxis("z", "space", ("1",)),
+            ),
+            item_coordinates=((0, 0, 0, 0), (0, 1, 0, 0)),
+        )
+        data = [np.full((2, 3), value, dtype=np.uint16) for value in (3, 7)]
+
+        zarr_backend.save_batch(
+            data,
+            output_paths,
+            chunk_name="A01",
+            batch_layout=layout,
+            row="A",
+            col="01",
+        )
+
+        root = zarr.open_group(str(output_paths[0].parent), mode="r")
+        assert set(root["A/01"].group_keys()) == {"0", "1"}
+        assert root["A/01/0/0"].attrs["polystore_image_coordinate"] == {
+            "field": "3"
+        }
+        assert root["A/01/1/0"].attrs["polystore_image_coordinate"] == {
+            "field": "7"
+        }
+        loaded = zarr_backend.load_batch(output_paths)
+        for loaded_item, expected in zip(loaded, data, strict=True):
+            np.testing.assert_array_equal(loaded_item, expected)
 
 
 class TestZarrPassthrough:
