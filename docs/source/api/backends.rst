@@ -33,6 +33,16 @@ Capability is nominal. Callers should request the operation they require and
 let an incompatible interface fail; they should not branch on copied backend
 name lists.
 
+Array payload boundary
+----------------------
+
+ArrayBridge owns the memory-type taxonomy and framework conversion semantics.
+``polystore.MemoryType`` is a compatibility re-export of
+``arraybridge.MemoryType`` with the same class identity. Disk, Zarr, and
+streaming sinks normalize supported framework arrays through ArrayBridge when
+a host NumPy payload is required; individual storage backends do not maintain
+framework-specific conversion lists.
+
 Zarr configuration ownership
 ----------------------------
 

@@ -1,15 +1,26 @@
 """
-Polystore constants.
-
-Minimal, self-contained enum and constant definitions used by polystore backends.
-No external dependencies or framework-specific imports.
+PolyStore constants and compatibility exports.
 """
 
 from enum import Enum
 
+from arraybridge.types import (
+    CPU_MEMORY_TYPES as CPU_MEMORY_TYPES,
+)
+from arraybridge.types import (
+    GPU_MEMORY_TYPES as GPU_MEMORY_TYPES,
+)
+from arraybridge.types import (
+    SUPPORTED_MEMORY_TYPES as SUPPORTED_MEMORY_TYPES,
+)
+from arraybridge.types import (
+    MemoryType as MemoryType,
+)
+
 
 class Backend(Enum):
     """Storage backend type identifiers."""
+
     AUTO = "auto"
     DISK = "disk"
     MEMORY = "memory"
@@ -23,26 +34,5 @@ class Backend(Enum):
     BIOFORMATS = "bioformats"
 
 
-class MemoryType(Enum):
-    """Supported in-memory array types."""
-    NUMPY = "numpy"
-    CUPY = "cupy"
-    TORCH = "torch"
-    TENSORFLOW = "tensorflow"
-    JAX = "jax"
-    PYCLESPERANTO = "pyclesperanto"
-
-
 # Default backend for operations
 DEFAULT_BACKEND = Backend.MEMORY
-
-# Memory type convenience sets
-CPU_MEMORY_TYPES = {MemoryType.NUMPY}
-GPU_MEMORY_TYPES = {
-    MemoryType.CUPY,
-    MemoryType.TORCH,
-    MemoryType.TENSORFLOW,
-    MemoryType.JAX,
-    MemoryType.PYCLESPERANTO,
-}
-SUPPORTED_MEMORY_TYPES = CPU_MEMORY_TYPES | GPU_MEMORY_TYPES

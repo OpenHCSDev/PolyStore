@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 import zarr
 
+from polystore import zarr as zarr_module
 from polystore.config import (
     ZarrChunkStrategy,
     ZarrCompressor,
@@ -88,6 +89,28 @@ class TestZarrArrayOperations:
         loaded = zarr_backend.load(path)
         assert isinstance(loaded, np.ndarray)
         np.testing.assert_array_equal(loaded, data)
+
+    def test_save_normalizes_external_array_payload(
+        self,
+        zarr_backend,
+        temp_zarr_dir,
+        monkeypatch,
+    ):
+        class ExternalArray:
+            pass
+
+        source = ExternalArray()
+        expected = np.arange(16, dtype=np.float32).reshape(4, 4)
+        monkeypatch.setattr(
+            zarr_module,
+            "storage_numpy_array",
+            lambda value: expected if value is source else value,
+        )
+        path = Path(temp_zarr_dir) / "external.zarr"
+
+        zarr_backend.save(source, path)
+
+        np.testing.assert_array_equal(zarr_backend.load(path), expected)
 
     def test_save_and_load_different_dtypes(self, zarr_backend, temp_zarr_dir):
         """Test save/load with different numpy dtypes."""

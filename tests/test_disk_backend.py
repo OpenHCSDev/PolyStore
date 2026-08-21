@@ -3,11 +3,12 @@
 Keep tests small and focused — these hit CSV/JSON/TEXT handlers, listing,
 ensure_directory idempotence, and symlink creation.
 """
-import json
 from pathlib import Path
 
-import pytest
+import numpy as np
+import tifffile
 
+from polystore import disk as disk_module
 from polystore.disk import DiskBackend
 
 
@@ -35,6 +36,24 @@ def test_text_json_csv_save_load(tmp_path: Path):
     loaded = disk.load(c)
     assert isinstance(loaded, list)
     assert loaded[0]["a"] == "1"
+
+
+def test_tiff_save_normalizes_external_array_payload(tmp_path, monkeypatch) -> None:
+    class ExternalArray:
+        pass
+
+    source = ExternalArray()
+    expected = np.arange(16, dtype=np.uint16).reshape(4, 4)
+    monkeypatch.setattr(
+        disk_module,
+        "storage_numpy_array",
+        lambda value: expected if value is source else value,
+    )
+    path = tmp_path / "external.tif"
+
+    DiskBackend().save(source, path)
+
+    np.testing.assert_array_equal(tifffile.imread(path), expected)
 
 
 def test_list_files_recursive_and_extension_filter(tmp_path: Path):

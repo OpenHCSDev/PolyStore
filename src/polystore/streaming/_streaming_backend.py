@@ -20,8 +20,6 @@ from typing import TypeAlias
 
 import numpy as np
 import zmq
-from arraybridge import convert_memory, detect_memory_type
-from arraybridge.types import MemoryType as ArrayBridgeMemoryType
 from zmqruntime.ack_listener import GlobalAckListener
 from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import (
@@ -35,6 +33,7 @@ from zmqruntime.viewer_protocol import (
     ViewerWireValue,
 )
 
+from ..array_payload import storage_numpy_array
 from ..base import DataSink
 from ..formats import PIXEL_PAYLOAD_EXTENSIONS
 from ..roi import ROI, ROI_ZIP_EXTENSION
@@ -69,15 +68,13 @@ STREAMING_TRANSPORT_DEFAULTS = ViewerTransportDefaults()
 class ViewerDisplayPayloadExtra:
     """Nominal viewer-specific display payload extension."""
 
-    values: ViewerDisplayPayloadExtraValues = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    values: ViewerDisplayPayloadExtraValues = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def from_mapping(
         cls,
         values: ViewerDisplayPayloadExtraValues,
-    ) -> "ViewerDisplayPayloadExtra":
+    ) -> ViewerDisplayPayloadExtra:
         return cls(values)
 
     def to_wire_mapping(self) -> dict[str, ViewerWireValue]:
@@ -97,7 +94,7 @@ class StreamingComponentDomainValue:
     def from_wire(
         cls,
         value: ViewerWireValue,
-    ) -> "StreamingComponentDomainValue":
+    ) -> StreamingComponentDomainValue:
         if isinstance(value, (str, int, float, bool)) or value is None:
             return cls(value)
         if isinstance(value, tuple):
@@ -120,12 +117,11 @@ class StreamingBatchImageMetadata:
     def from_image_payload(
         cls,
         image_payload: ViewerWireMapping,
-    ) -> "StreamingBatchImageMetadata":
+    ) -> StreamingBatchImageMetadata:
         metadata = image_payload[ViewerBatchItemWireField.METADATA.value]
         if not isinstance(metadata, Mapping):
             raise TypeError(
-                "Streaming batch item metadata must be a mapping, "
-                f"got {type(metadata).__name__}."
+                f"Streaming batch item metadata must be a mapping, got {type(metadata).__name__}."
             )
         return cls(
             ViewerWirePayload.mapping(
@@ -137,9 +133,7 @@ class StreamingBatchImageMetadata:
     def component_value(self, component: str) -> ComponentValue | None:
         if component not in self.values:
             return None
-        return StreamingComponentDomainValue.from_wire(
-            self.values[component]
-        ).value
+        return StreamingComponentDomainValue.from_wire(self.values[component]).value
 
 
 class StreamingComponentValueDomainAuthority:
@@ -162,11 +156,8 @@ class StreamingComponentValueDomainAuthority:
                     continue
                 if value not in values_by_component[component]:
                     values_by_component[component].append(value)
-        return {
-            component: values
-            for component, values in values_by_component.items()
-            if values
-        }
+        return {component: values for component, values in values_by_component.items() if values}
+
 
 @dataclass(frozen=True)
 class StreamingComponentNamesRequest:
@@ -182,7 +173,7 @@ class StreamingComponentNamesRequest:
         stream_request: ViewerStreamRequest,
         log_prefix: str | None = None,
         verbose: bool = False,
-    ) -> "StreamingComponentNamesRequest":
+    ) -> StreamingComponentNamesRequest:
         return cls(
             component_names=stream_request.display_semantics.component_order,
             log_prefix=log_prefix,
@@ -292,7 +283,7 @@ class StreamingSharedMemoryName:
     def unique(
         cls,
         shm_prefix: str,
-    ) -> "StreamingSharedMemoryName":
+    ) -> StreamingSharedMemoryName:
         return cls(f"{shm_prefix}{uuid.uuid4().hex[:12]}")
 
 
@@ -305,12 +296,7 @@ class StreamingPayloadMemoryAuthority:
             return data
         if isinstance(data, (list, tuple)):
             return np.asarray(data)
-        return convert_memory(
-            data,
-            detect_memory_type(data),
-            ArrayBridgeMemoryType.NUMPY.value,
-            gpu_id=0,
-        )
+        return storage_numpy_array(data)
 
 
 class StreamingSharedMemoryAuthority:
@@ -438,14 +424,14 @@ class StreamingBatchItemPreparationAuthority:
 
     @staticmethod
     def prepare(
-        backend: "StreamingBackend",
+        backend: StreamingBackend,
         request: StreamingBatchMessageRequest,
     ) -> StreamingPreparedBatchItems:
         batch_images = []
         image_ids = []
 
         for index, (data, file_path) in enumerate(
-            zip(request.data_list, request.file_paths)
+            zip(request.data_list, request.file_paths, strict=False)
         ):
             item_path = StreamingItemPath(file_path)
             image_id = str(uuid.uuid4())
@@ -517,7 +503,7 @@ class StreamingBatchMessageBuilder:
     @classmethod
     def build(
         cls,
-        backend: "StreamingBackend",
+        backend: StreamingBackend,
         request: StreamingBatchMessageRequest,
     ) -> StreamingBuiltBatch:
         if len(request.data_list) != len(request.file_paths):
@@ -528,11 +514,9 @@ class StreamingBatchMessageBuilder:
             request,
         )
 
-        component_metadata_payload = (
-            StreamingComponentMetadataPayloadAuthority.payload(
-                request,
-                prepared_items,
-            )
+        component_metadata_payload = StreamingComponentMetadataPayloadAuthority.payload(
+            request,
+            prepared_items,
         )
 
         display_payload = StreamingDisplayPayloadBuilder.build(
@@ -582,9 +566,7 @@ class StreamingBackend(DataSink):
 
     # Extensions that streaming backends can handle
     # Subclasses can override to add support for specific formats
-    SUPPORTED_EXTENSIONS: frozenset[str] = PIXEL_PAYLOAD_EXTENSIONS | {
-        ROI_ZIP_EXTENSION
-    }
+    SUPPORTED_EXTENSIONS: frozenset[str] = PIXEL_PAYLOAD_EXTENSIONS | {ROI_ZIP_EXTENSION}
 
     def supports_file_path(self, path: FilePath) -> bool:
         """Return whether the stream backend can render this output path."""
@@ -627,7 +609,7 @@ class StreamingBackend(DataSink):
         filtered_paths = []
         skipped_paths = []
 
-        for data, path in zip(data_list, file_paths):
+        for data, path in zip(data_list, file_paths, strict=False):
             if self.accepts_payload(data, path):
                 filtered_data.append(data)
                 filtered_paths.append(path)
@@ -685,6 +667,7 @@ class StreamingBackend(DataSink):
         )
 
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
+
         registry = GlobalQueueTrackerRegistry()
         tracker = registry.get_or_create_tracker(
             transport_endpoint.port,
@@ -765,9 +748,7 @@ class StreamingBackend(DataSink):
         )
         self.after_batch_message_built(stream_request, built_batch)
 
-        transport_config = stream_request.transport_config.resolve(
-            self._transport_config
-        )
+        transport_config = stream_request.transport_config.resolve(self._transport_config)
         transport_endpoint = stream_request.viewer_transport
         self._register_with_queue_tracker(
             transport_endpoint,
@@ -839,7 +820,9 @@ class StreamingBackend(DataSink):
         logger.info(f"🔥 CLEANUP: Starting cleanup for {self.VIEWER_TYPE}")
 
         # Clean up shared memory blocks
-        logger.info(f"🔥 CLEANUP: About to clean {len(self._shared_memory_blocks)} shared memory blocks")
+        logger.info(
+            f"🔥 CLEANUP: About to clean {len(self._shared_memory_blocks)} shared memory blocks"
+        )
         for shm_name, shm in self._shared_memory_blocks.items():
             try:
                 shm.close()
@@ -847,7 +830,7 @@ class StreamingBackend(DataSink):
             except Exception as e:
                 logger.warning(f"Failed to cleanup shared memory {shm_name}: {e}")
         self._shared_memory_blocks.clear()
-        logger.info(f"🔥 CLEANUP: Shared memory cleanup complete")
+        logger.info("🔥 CLEANUP: Shared memory cleanup complete")
 
         # Close publishers
         logger.info(f"🔥 CLEANUP: About to close {len(self._publishers)} publishers")
@@ -859,14 +842,14 @@ class StreamingBackend(DataSink):
             except Exception as e:
                 logger.warning(f"Failed to close publisher {key}: {e}")
         self._publishers.clear()
-        logger.info(f"🔥 CLEANUP: Publishers cleanup complete")
+        logger.info("🔥 CLEANUP: Publishers cleanup complete")
 
         # Terminate context
         if self._context:
             try:
-                logger.info(f"🔥 CLEANUP: About to terminate ZMQ context")
+                logger.info("🔥 CLEANUP: About to terminate ZMQ context")
                 self._context.term()
-                logger.info(f"🔥 CLEANUP: ZMQ context terminated")
+                logger.info("🔥 CLEANUP: ZMQ context terminated")
             except Exception as e:
                 logger.warning(f"Failed to terminate ZMQ context: {e}")
             self._context = None

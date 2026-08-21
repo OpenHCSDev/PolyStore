@@ -6,19 +6,22 @@ This module provides a concrete implementation of the storage backend interfaces
 for local disk storage. It strictly enforces VFS boundaries and doctrinal clauses.
 """
 
+import importlib
 import logging
 import os
 import shutil
-import importlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any
 
 import numpy as np
 
-from .constants import Backend
-from .formats import FileFormat
+from .array_payload import storage_numpy_array
 from .base import StorageBackend
+from .constants import Backend
+from .exceptions import StorageResolutionError
+from .formats import FileFormat
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ def optional_import(module_name):
         return importlib.import_module(module_name)
     except ImportError:
         return None
+
 
 # Optional dependencies at module level (not instance level to avoid pickle issues)
 # Skip GPU libraries in subprocess runner mode
@@ -39,7 +43,8 @@ if os.getenv("POLYSTORE_SUBPROCESS_NO_GPU") == "1":
     tf = None
     logger.info("Subprocess runner mode - skipping GPU library imports in disk backend")
 else:
-    from .lazy_imports import get_torch, get_jax, get_jnp, get_cupy, get_tf
+    from .lazy_imports import get_cupy, get_jax, get_jnp, get_tf, get_torch
+
     torch = get_torch()
     jax = get_jax()
     jnp = get_jnp()
@@ -49,10 +54,11 @@ tifffile = optional_import("tifffile")
 imageio = optional_import("imageio.v3")
 scipy_io = optional_import("scipy.io")
 
+
 class FileFormatRegistry:
     def __init__(self):
-        self._writers: Dict[str, Callable[[Path, Any], None]] = {}
-        self._readers: Dict[str, Callable[[Path], Any]] = {}
+        self._writers: dict[str, Callable[[Path, Any], None]] = {}
+        self._readers: dict[str, Callable[[Path], Any]] = {}
 
     def register(self, ext: str, writer: Callable, reader: Callable):
         ext = ext.lower()
@@ -68,7 +74,7 @@ class FileFormatRegistry:
     def is_registered(self, ext: str) -> bool:
         return ext.lower() in self._writers and ext.lower() in self._readers
 
-    def resolve_extension(self, path: Union[str, Path]) -> Optional[str]:
+    def resolve_extension(self, path: str | Path) -> str | None:
         """Return the longest registered suffix declared for ``path``."""
         suffixes = Path(path).suffixes
         for start in range(len(suffixes)):
@@ -94,7 +100,7 @@ class DiskGlobPattern:
     value: str
 
     @classmethod
-    def from_optional(cls, pattern: Optional[str]) -> "DiskGlobPattern":
+    def from_optional(cls, pattern: str | None) -> "DiskGlobPattern":
         if pattern is None:
             return cls("*")
         if pattern == "":
@@ -104,14 +110,16 @@ class DiskGlobPattern:
 
 class DiskStorageBackend(StorageBackend):
     """Disk storage backend with automatic registration."""
+
     _backend_type = Backend.DISK.value
+
     def __init__(self):
         self.format_registry = FileFormatRegistry()
         self._register_formats()
 
     def resolve_address(
         self,
-        backend_address: Union[str, Path],
+        backend_address: str | Path,
         *,
         base_path: Path,
     ) -> Path:
@@ -139,7 +147,7 @@ class DiskStorageBackend(StorageBackend):
                     registration.reader,
                 )
 
-    def _available_format_registrations(self) -> List[DiskFileFormatRegistration]:
+    def _available_format_registrations(self) -> list[DiskFileFormatRegistration]:
         registrations = [
             DiskFileFormatRegistration(FileFormat.NUMPY, np.save, np.load),
             DiskFileFormatRegistration(FileFormat.TEXT, self._text_writer, self._text_reader),
@@ -224,7 +232,7 @@ class DiskStorageBackend(StorageBackend):
         return tf.io.parse_tensor(tf.io.read_file(path.as_posix()), out_type=tf.dtypes.float32)
 
     def _tiff_writer(self, path, data, **kwargs):
-        tifffile.imwrite(path, data)
+        tifffile.imwrite(path, storage_numpy_array(data))
 
     def _tiff_reader(self, path):
         # For symlinks, try multiple approaches to handle filesystem issues
@@ -248,7 +256,7 @@ class DiskStorageBackend(StorageBackend):
 
     def _image_writer(self, path, data, **kwargs):
         """Write standard raster images using imageio."""
-        imageio.imwrite(path, np.asarray(data))
+        imageio.imwrite(path, storage_numpy_array(data))
 
     def _image_reader(self, path):
         """Read standard raster images using imageio."""
@@ -256,12 +264,12 @@ class DiskStorageBackend(StorageBackend):
 
     def _png_writer(self, path, data, **kwargs):
         """Write lossless PNG images with reduced compression work."""
-        imageio.imwrite(path, np.asarray(data), compress_level=1)
+        imageio.imwrite(path, storage_numpy_array(data), compress_level=1)
 
     def _matlab_writer(self, path, data, **kwargs):
         """Write one numeric array to a MATLAB matrix file."""
         del kwargs
-        array = np.asarray(data)
+        array = storage_numpy_array(data)
         if not np.issubdtype(array.dtype, np.number):
             raise TypeError("MATLAB pixel payloads must be numeric arrays.")
         scipy_io.savemat(path, {"Image": array})
@@ -293,23 +301,26 @@ class DiskStorageBackend(StorageBackend):
 
     def _json_writer(self, path, data, **kwargs):
         import json
+
         # Ensure parent directory exists
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2))
 
     def _json_reader(self, path):
         import json
+
         return json.loads(path.read_text())
 
     def _csv_writer(self, path, data, **kwargs):
         import csv
+
         # Handle pre-formatted CSV strings (from pandas to_csv)
         if isinstance(data, str):
             path.write_text(data)
             return
 
         # Assume data is a list of rows or a dict
-        with path.open('w', newline='') as f:
+        with path.open("w", newline="") as f:
             if isinstance(data, dict):
                 # Write dict as CSV with headers
                 writer = csv.DictWriter(f, fieldnames=data.keys())
@@ -338,16 +349,17 @@ class DiskStorageBackend(StorageBackend):
     def _roi_zip_reader(self, path, **kwargs):
         """Read ROIs from .roi.zip archive."""
         from .roi import load_rois_from_zip
+
         return load_rois_from_zip(path)
 
     def _csv_reader(self, path):
         import csv
-        with path.open('r', newline='') as f:
+
+        with path.open("r", newline="") as f:
             reader = csv.DictReader(f)
             return list(reader)
 
-
-    def load(self, file_path: Union[str, Path], **kwargs) -> Any:
+    def load(self, file_path: str | Path, **kwargs) -> Any:
         """
         Load data from disk based on explicit content type.
 
@@ -370,9 +382,7 @@ class DiskStorageBackend(StorageBackend):
         ext = self.format_registry.resolve_extension(disk_path)
 
         if ext is None:
-            raise ValueError(
-                f"No reader registered for extension '{disk_path.suffix.lower()}'"
-            )
+            raise ValueError(f"No reader registered for extension '{disk_path.suffix.lower()}'")
 
         try:
             reader = self.format_registry.get_reader(ext)
@@ -380,7 +390,7 @@ class DiskStorageBackend(StorageBackend):
         except Exception as e:
             raise ValueError(f"Error loading data from {disk_path}: {e}") from e
 
-    def save(self, data: Any, output_path: Union[str, Path], **kwargs) -> None:
+    def save(self, data: Any, output_path: str | Path, **kwargs) -> None:
         """
         Save data to disk based on explicit content type.
 
@@ -409,24 +419,23 @@ class DiskStorageBackend(StorageBackend):
         # Explicit type dispatch for ROI data
         if isinstance(data, list) and len(data) > 0 and isinstance(data[0], ROI):
             # ROI data - save as JSON
-            images_dir = kwargs.pop('images_dir', None)
+            images_dir = kwargs.pop("images_dir", None)
             self._save_rois(data, disk_output_path, images_dir=images_dir, **kwargs)
             return
 
         ext = self.format_registry.resolve_extension(disk_output_path)
         if ext is None:
             raise ValueError(
-                f"No writer registered for extension "
-                f"'{disk_output_path.suffix.lower()}'"
+                f"No writer registered for extension '{disk_output_path.suffix.lower()}'"
             )
 
         try:
             writer = self.format_registry.get_writer(ext)
-            return writer(disk_output_path, data, **kwargs )
+            return writer(disk_output_path, data, **kwargs)
         except Exception as e:
             raise ValueError(f"Error saving data to {disk_output_path}: {e}") from e
 
-    def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
+    def load_batch(self, file_paths: list[str | Path], **kwargs) -> list[Any]:
         """
         Load multiple files sequentially using existing load method.
 
@@ -443,7 +452,7 @@ class DiskStorageBackend(StorageBackend):
             results.append(result)
         return results
 
-    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], **kwargs) -> None:
+    def save_batch(self, data_list: list[Any], output_paths: list[str | Path], **kwargs) -> None:
         """
         Save multiple files sequentially using existing save method.
 
@@ -456,13 +465,20 @@ class DiskStorageBackend(StorageBackend):
             ValueError: If data_list and output_paths have different lengths
         """
         if len(data_list) != len(output_paths):
-            raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
+            raise ValueError(
+                f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})"
+            )
 
-        for data, output_path in zip(data_list, output_paths):
+        for data, output_path in zip(data_list, output_paths, strict=False):
             self.save(data, output_path, **dict(kwargs))
 
-    def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
-                  extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Union[str,Path]]:
+    def list_files(
+        self,
+        directory: str | Path,
+        pattern: str | None = None,
+        extensions: set[str] | None = None,
+        recursive: bool = False,
+    ) -> list[str | Path]:
         """
         List files on disk, optionally filtering by pattern and extensions.
 
@@ -495,7 +511,7 @@ class DiskStorageBackend(StorageBackend):
             files = [p for p in disk_directory.glob(glob_pattern) if p.is_file() or p.is_symlink()]
 
         # Filter out macOS metadata files (._* files) that interfere with parsing
-        files = [f for f in files if not f.name.startswith('._')]
+        files = [f for f in files if not f.name.startswith("._")]
 
         # Filter by extensions if provided
         if extensions:
@@ -506,7 +522,7 @@ class DiskStorageBackend(StorageBackend):
         # Return paths as strings
         return [str(f) for f in files]
 
-    def _list_files_breadth_first(self, directory: Path, pattern: Optional[str] = None) -> List[Path]:
+    def _list_files_breadth_first(self, directory: Path, pattern: str | None = None) -> list[Path]:
         """
         List files using breadth-first traversal to prioritize shallower files.
 
@@ -534,7 +550,7 @@ class DiskStorageBackend(StorageBackend):
                 for entry in current_dir.iterdir():
                     if entry.is_file():
                         # Filter out macOS metadata files (._* files) that interfere with parsing
-                        if entry.name.startswith('._'):
+                        if entry.name.startswith("._"):
                             continue
                         # Check if file matches pattern
                         if pattern is None or entry.match(pattern):
@@ -552,7 +568,7 @@ class DiskStorageBackend(StorageBackend):
         # Return just the paths
         return [file_path for file_path, _ in files]
 
-    def list_dir(self, path: Union[str, Path]) -> List[str]:
+    def list_dir(self, path: str | Path) -> list[str]:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
@@ -560,8 +576,7 @@ class DiskStorageBackend(StorageBackend):
             raise NotADirectoryError(f"Not a directory: {path}")
         return [entry.name for entry in path.iterdir()]
 
-        
-    def delete(self, path: Union[str, Path]) -> None:
+    def delete(self, path: str | Path) -> None:
         """
         Delete a file or empty directory at the given disk path.
 
@@ -592,8 +607,8 @@ class DiskStorageBackend(StorageBackend):
             raise IsADirectoryError(f"Cannot delete non-empty directory: {path}") from e
         except Exception as e:
             raise StorageResolutionError(f"Failed to delete {path}") from e
-    
-    def delete_all(self, path: Union[str, Path]) -> None:
+
+    def delete_all(self, path: str | Path) -> None:
         """
         Recursively delete a file or directory and all its contents from disk.
 
@@ -617,12 +632,12 @@ class DiskStorageBackend(StorageBackend):
             else:
                 # Safe, recursive removal of directories
                 import shutil
+
                 shutil.rmtree(path)
         except Exception as e:
             raise StorageResolutionError(f"Failed to recursively delete: {path}") from e
 
-
-    def ensure_directory(self, directory: Union[str, Path]) -> Union[str, Path]:
+    def ensure_directory(self, directory: str | Path) -> str | Path:
         """
         Ensure a directory exists on disk.
 
@@ -644,10 +659,10 @@ class DiskStorageBackend(StorageBackend):
             # Propagate the error with additional context
             raise ValueError(f"Error creating directory {disk_directory}: {e}") from e
 
-    def exists(self, path: Union[str, Path]) -> bool:
+    def exists(self, path: str | Path) -> bool:
         return Path(path).exists()
 
-    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path], overwrite: bool = False):
+    def create_symlink(self, source: str | Path, link_name: str | Path, overwrite: bool = False):
         source = Path(source).resolve()
         link_name = Path(link_name)  # Don't resolve link_name - we want the actual symlink path
 
@@ -665,12 +680,10 @@ class DiskStorageBackend(StorageBackend):
         # On Unix, this parameter is ignored, so it's safe to always specify it
         link_name.symlink_to(source, target_is_directory=source.is_dir())
 
-
-    def is_symlink(self, path: Union[str, Path]) -> bool:
+    def is_symlink(self, path: str | Path) -> bool:
         return Path(path).is_symlink()
 
-
-    def is_file(self, path: Union[str, Path]) -> bool:
+    def is_file(self, path: str | Path) -> bool:
         path = Path(path)
 
         if not path.exists():
@@ -684,7 +697,7 @@ class DiskStorageBackend(StorageBackend):
 
         return resolved.is_file()
 
-    def is_dir(self, path: Union[str, Path]) -> bool:
+    def is_dir(self, path: str | Path) -> bool:
         """
         Check if a given disk path is a directory.
 
@@ -713,7 +726,7 @@ class DiskStorageBackend(StorageBackend):
 
         return True
 
-    def move(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
+    def move(self, src: str | Path, dst: str | Path) -> None:
         """
         Move a file or directory on disk. Follows symlinks and performs overwrite-safe move.
 
@@ -737,8 +750,8 @@ class DiskStorageBackend(StorageBackend):
             shutil.move(str(src), str(dst))
         except Exception as e:
             raise StorageResolutionError(f"Failed to move {src} to {dst}") from e
-    
-    def stat(self, path: Union[str, Path]) -> Dict[str, Any]:
+
+    def stat(self, path: str | Path) -> dict[str, Any]:
         """
         Return structural metadata about a disk-backed path.
 
@@ -755,11 +768,7 @@ class DiskStorageBackend(StorageBackend):
         path_str = str(path)
         try:
             if not os.path.lexists(path_str):  # includes broken symlinks
-                return {
-                    "type": "missing",
-                    "path": path_str,
-                    "exists": False
-                }
+                return {"type": "missing", "path": path_str, "exists": False}
 
             if os.path.islink(path_str):
                 try:
@@ -772,36 +781,28 @@ class DiskStorageBackend(StorageBackend):
                     "type": "symlink",
                     "path": path_str,
                     "target": resolved,
-                    "exists": target_exists
+                    "exists": target_exists,
                 }
 
             if os.path.isdir(path_str):
-                return {
-                    "type": "directory",
-                    "path": path_str,
-                    "exists": True
-                }
+                return {"type": "directory", "path": path_str, "exists": True}
 
             if os.path.isfile(path_str):
-                return {
-                    "type": "file",
-                    "path": path_str,
-                    "exists": True
-                }
+                return {"type": "file", "path": path_str, "exists": True}
 
             raise StorageResolutionError(f"Unknown filesystem object at: {path_str}")
 
         except Exception as e:
             raise StorageResolutionError(f"Failed to stat disk path: {path}") from e
 
-    def copy(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
+    def copy(self, src: str | Path, dst: str | Path) -> None:
         """
         Copy a file or directory to a new location.
-    
+
         - Does not overwrite destination.
         - Will raise if destination exists.
         - Supports file-to-file and dir-to-dir copies.
-    
+
         Raises:
             FileExistsError: If destination already exists
             FileNotFoundError: If source is missing
@@ -809,12 +810,12 @@ class DiskStorageBackend(StorageBackend):
         """
         src = Path(src)
         dst = Path(dst)
-    
+
         if not src.exists():
             raise FileNotFoundError(f"Source does not exist: {src}")
         if dst.exists():
             raise FileExistsError(f"Destination already exists: {dst}")
-    
+
         try:
             if src.is_dir():
                 shutil.copytree(src, dst)
@@ -823,7 +824,7 @@ class DiskStorageBackend(StorageBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to copy {src} → {dst}") from e
 
-    def _save_rois(self, rois: List, output_path: Path, images_dir: str = None, **kwargs) -> str:
+    def _save_rois(self, rois: list, output_path: Path, images_dir: str = None, **kwargs) -> str:
         """Save ROIs as .roi.zip archive (ImageJ standard format).
 
         Args:
@@ -835,6 +836,7 @@ class DiskStorageBackend(StorageBackend):
             Path where ROIs were saved
         """
         import zipfile
+
         from .roi import (
             ROI_ZIP_METADATA_MEMBER,
             ROIArchivePath,
@@ -851,7 +853,7 @@ class DiskStorageBackend(StorageBackend):
         roi_members = FijiROIConverter.rois_to_imagej_members(rois)
         metadata_by_filename = {}
 
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for roi_count, member in enumerate(roi_members, start=1):
                 roi_filename = f"{roi_count:04d}.roi"
                 imagej_roi = member.imagej_roi
