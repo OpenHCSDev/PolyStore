@@ -11,6 +11,7 @@ import fnmatch
 import logging
 import os
 import threading
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional
 
@@ -39,10 +40,56 @@ DEFAULT_PLATE_NAME = os.getenv("POLYSTORE_PLATE_NAME", "Polystore_Plate")
 DISK_PASSTHROUGH_EXTENSIONS = (".json", ".csv", ".txt", ".roi.zip", ".zip")
 
 
-def _get_attr(attrs: dict[str, Any], key: str):
+def _get_attr(attrs: Any, key: str):
     if key in attrs:
         return attrs[key]
     return None
+
+
+def _ngff_metadata(attrs: Any, key: str) -> Any | None:
+    """Return an NGFF declaration from its current or nested legacy location."""
+
+    declared = _get_attr(attrs, key)
+    if declared is not None:
+        return declared
+    ome_metadata = _get_attr(attrs, "ome")
+    if isinstance(ome_metadata, Mapping):
+        return ome_metadata.get(key)
+    return None
+
+
+def _declared_well_image_paths(well_group: zarr.Group) -> tuple[str, ...]:
+    """Return declared HCS images, with the historical group-zero fallback."""
+
+    well_metadata = _ngff_metadata(well_group.attrs, "well")
+    if well_metadata is None:
+        return ("0",) if "0" in well_group.group_keys() else ()
+    if not isinstance(well_metadata, Mapping):
+        raise StorageResolutionError("OME-Zarr well metadata must be a mapping")
+    images = well_metadata.get("images")
+    if not isinstance(images, Sequence) or isinstance(images, (str, bytes)):
+        raise StorageResolutionError("OME-Zarr well images must be a sequence")
+
+    image_paths: list[str] = []
+    for image in images:
+        if not isinstance(image, Mapping) or not isinstance(image.get("path"), str):
+            raise StorageResolutionError(
+                "Each OME-Zarr well image must declare a string path"
+            )
+        image_paths.append(image["path"])
+    if len(set(image_paths)) != len(image_paths):
+        raise StorageResolutionError("OME-Zarr well image paths must be unique")
+
+    missing_paths = tuple(
+        path
+        for path in image_paths
+        if path not in well_group or not isinstance(well_group[path], zarr.Group)
+    )
+    if missing_paths:
+        raise StorageResolutionError(
+            f"OME-Zarr well declares missing image groups: {missing_paths!r}"
+        )
+    return tuple(image_paths)
 
 
 def _load_ome_zarr():
@@ -325,7 +372,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                         well_group = row_group[col_name]
                         well_name = f"{row_name}{col_name}"
 
-                        for image_name in well_group.group_keys():
+                        for image_name in _declared_well_image_paths(well_group):
                             field_group = well_group[image_name]
                             if "0" in field_group.array_keys():
                                 field_array = field_group["0"]
@@ -678,7 +725,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         group = zarr.group(store=store)
 
         # Check if this is OME-ZARR structure with filename mapping
-        if "plate" in group.attrs:
+        if _ngff_metadata(group.attrs, "plate") is not None:
             # OME-ZARR structure: use load_batch which understands filename mapping
             result = self.load_batch([file_path], **kwargs)
             if not result:
@@ -724,7 +771,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             group = zarr.open_group(store=store)
 
             # Check if this is OME-ZARR structure (has plate metadata)
-            if "plate" in group.attrs:
+            if _ngff_metadata(group.attrs, "plate") is not None:
                 # OME-ZARR structure: traverse A/01/ wells
                 for row_name in group.group_keys():
                     if len(row_name) == 1 and row_name.isalpha():  # Row directory (A, B, etc.)
@@ -733,9 +780,11 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                             if col_name.isdigit():  # Column directory (01, 02, etc.)
                                 well_group = row_group[col_name]
 
-                                # Get filenames from field array metadata
-                                if "0" in well_group.group_keys():
-                                    field_group = well_group["0"]
+                                # Get filenames from every declared HCS image.
+                                for image_path in _declared_well_image_paths(
+                                    well_group
+                                ):
+                                    field_group = well_group[image_path]
                                     if "0" in field_group.array_keys():
                                         field_array = field_group["0"]
                                         output_paths_attr = _get_attr(

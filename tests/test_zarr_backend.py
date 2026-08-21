@@ -30,8 +30,10 @@ from polystore.config import (
     ZarrCompressorFactory,
     ZarrConfig,
 )
+from polystore.exceptions import StorageResolutionError
 from polystore.zarr import ZarrStorageBackend
 from polystore.zarr_batch import (
+    ATTR_FILENAME_MAP,
     ZarrBatchAxis,
     ZarrBatchAxisRole,
     ZarrBatchLayout,
@@ -50,6 +52,43 @@ def temp_zarr_dir():
     temp_dir = tempfile.mkdtemp()
     yield temp_dir
     shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def save_hcs_image_axis_batch(
+    backend,
+    store_path,
+    *,
+    axis_name,
+    values,
+    row,
+    col,
+    suffixes=None,
+):
+    suffixes = suffixes or (".tif",) * len(values)
+    output_paths = [
+        store_path / f"{row}{col}_{axis_name}_{value}{suffix}"
+        for value, suffix in zip(values, suffixes, strict=True)
+    ]
+    layout = ZarrBatchLayout(
+        axes=(
+            ZarrBatchAxis(
+                axis_name,
+                "field",
+                values,
+                ZarrBatchAxisRole.HCS_IMAGE,
+            ),
+        ),
+        item_coordinates=tuple((index,) for index in range(len(values))),
+    )
+    backend.save_batch(
+        [np.full((2, 3), index, dtype=np.uint16) for index in range(len(values))],
+        output_paths,
+        chunk_name=f"{row}{col}",
+        batch_layout=layout,
+        row=row,
+        col=col,
+    )
+    return output_paths
 
 
 class TestZarrBackendBasics:
@@ -286,6 +325,102 @@ class TestZarrBatchOperations:
         loaded = zarr_backend.load_batch(output_paths)
         for loaded_item, expected in zip(loaded, data, strict=True):
             np.testing.assert_array_equal(loaded_item, expected)
+
+    @pytest.mark.parametrize("recursive", [False, True])
+    def test_list_files_uses_every_declared_hcs_image_group(
+        self,
+        zarr_backend,
+        temp_zarr_dir,
+        recursive,
+    ):
+        store_path = Path(temp_zarr_dir) / "images"
+        field_paths = save_hcs_image_axis_batch(
+            zarr_backend,
+            store_path,
+            axis_name="field",
+            values=("3", "7"),
+            row="A",
+            col="01",
+        )
+        scene_paths = save_hcs_image_axis_batch(
+            zarr_backend,
+            store_path,
+            axis_name="scene",
+            values=("left", "mid", "right"),
+            row="B",
+            col="02",
+            suffixes=(".tif", ".tif", ".png"),
+        )
+
+        root = zarr.open_group(str(store_path), mode="a")
+        auxiliary = root["B/02"].create_group("auxiliary")
+        auxiliary_array = auxiliary.create_dataset(
+            "0",
+            data=np.zeros((2, 3), dtype=np.uint16),
+        )
+        auxiliary_array.attrs["polystore_output_paths"] = ["undeclared.tif"]
+        auxiliary_array.attrs[ATTR_FILENAME_MAP] = {"undeclared.tif": []}
+
+        assert set(
+            zarr_backend.list_files(store_path, recursive=recursive)
+        ) == set(field_paths + scene_paths)
+        assert zarr_backend.list_files(store_path, pattern="*_7.tif") == [
+            field_paths[1]
+        ]
+        assert zarr_backend.list_files(store_path, extensions={".png"}) == [
+            scene_paths[2]
+        ]
+        with pytest.raises(KeyError, match="undeclared.tif"):
+            zarr_backend.load_batch([store_path / "undeclared.tif"])
+
+    def test_list_files_supports_nested_and_legacy_well_declarations(
+        self,
+        zarr_backend,
+        temp_zarr_dir,
+    ):
+        store_path = Path(temp_zarr_dir) / "images"
+        output_paths = save_hcs_image_axis_batch(
+            zarr_backend,
+            store_path,
+            axis_name="field",
+            values=("3", "7"),
+            row="A",
+            col="01",
+        )
+
+        root = zarr.open_group(str(store_path), mode="a")
+        well_group = root["A/01"]
+        plate_metadata = root.attrs["plate"]
+        del root.attrs["plate"]
+        root.attrs["ome"] = {
+            **root.attrs["ome"],
+            "plate": plate_metadata,
+        }
+        del well_group.attrs["well"]
+        assert set(zarr_backend.list_files(store_path)) == set(output_paths)
+
+        well_group.attrs["ome"] = {"version": "0.5"}
+        assert zarr_backend.list_files(store_path) == [output_paths[0]]
+
+    def test_list_files_rejects_missing_declared_image_group(
+        self,
+        zarr_backend,
+        temp_zarr_dir,
+    ):
+        store_path = Path(temp_zarr_dir) / "images"
+        save_hcs_image_axis_batch(
+            zarr_backend,
+            store_path,
+            axis_name="field",
+            values=("3",),
+            row="A",
+            col="01",
+        )
+        root = zarr.open_group(str(store_path), mode="a")
+        root["A/01"].attrs["well"] = {"images": [{"path": "missing"}]}
+
+        with pytest.raises(StorageResolutionError, match="missing image groups"):
+            zarr_backend.list_files(store_path)
 
 
 class TestZarrPassthrough:
