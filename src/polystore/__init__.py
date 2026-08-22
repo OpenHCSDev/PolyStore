@@ -38,6 +38,11 @@ from .base import (
 from .constants import Backend, MemoryType
 from .filemanager import FileManager
 from .formats import DEFAULT_IMAGE_EXTENSIONS, FileFormat
+from .imagej_runtime import (
+    FIJI_IMAGEJ_RUNTIME,
+    ImageJRuntimePolicy,
+    ImageJRuntimeUnavailableError,
+)
 from .memory import MemoryBackend, MemoryStorageBackend
 from .metadata_migration import (
     detect_legacy_format,
@@ -91,6 +96,9 @@ __all__ = [
     "Backend",
     "MemoryType",
     "FileFormat",
+    "ImageJRuntimePolicy",
+    "ImageJRuntimeUnavailableError",
+    "FIJI_IMAGEJ_RUNTIME",
     "DEFAULT_IMAGE_EXTENSIONS",
     "BackendBase",
     "DataSink",

@@ -15,6 +15,7 @@ from .base import (
     ImageSamplingResult,
     ImageSamplingStatisticsScope,
 )
+from .imagej_runtime import FIJI_IMAGEJ_RUNTIME
 
 
 class BioFormatsJavaUnavailableError(RuntimeError):
@@ -68,13 +69,17 @@ class BioFormatsJavaContext:
         if self.ij is not None:
             return
         try:
-            self.ij = self.imagej.init("sc.fiji:fiji", mode="headless")
+            self.ij = FIJI_IMAGEJ_RUNTIME.initialize(
+                self.imagej,
+                self.scyjava,
+                mode="headless",
+            )
             self.ImageReader = self.scyjava.jimport("loci.formats.ImageReader")
             self.MetadataTools = self.scyjava.jimport("loci.formats.MetadataTools")
             self.FormatTools = self.scyjava.jimport("loci.formats.FormatTools")
         except Exception as exc:
             raise BioFormatsJavaUnavailableError(
-                "Could not initialize Fiji/Bio-Formats through pyimagej."
+                f"Could not initialize Fiji/Bio-Formats through pyimagej: {exc}"
             ) from exc
 
     def open_reader(self, source_path: str | Path) -> BioFormatsOpenedReader:

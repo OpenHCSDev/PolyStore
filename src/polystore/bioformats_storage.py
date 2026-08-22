@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 from .base import (
     ImageSamplingRequest,
@@ -34,9 +34,7 @@ class BioFormatsPlaneRef:
             ("plane_index", self.plane_index),
         ):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise TypeError(
-                    f"BioFormatsPlaneRef.{field_name} must be a nonnegative integer."
-                )
+                raise TypeError(f"BioFormatsPlaneRef.{field_name} must be a nonnegative integer.")
         object.__setattr__(self, "source_path", source_path)
 
     def to_backend_address(self) -> str:
@@ -52,7 +50,7 @@ class BioFormatsPlaneRef:
         )
 
     @classmethod
-    def from_backend_address(cls, backend_address: str) -> "BioFormatsPlaneRef":
+    def from_backend_address(cls, backend_address: str) -> BioFormatsPlaneRef:
         """Parse one exact canonical Bio-Formats backend address."""
         if not isinstance(backend_address, str):
             raise TypeError("Bio-Formats backend address must be str.")
@@ -82,27 +80,39 @@ class BioFormatsStorageBackend(ReadOnlyBackend, PicklableBackend):
 
     _backend_type = Backend.BIOFORMATS.value
 
-    def get_connection_params(self) -> Optional[Dict[str, Any]]:
+    def get_connection_params(self) -> dict[str, Any] | None:
         return None
 
     def source_path(
         self,
-        backend_address: Union[str, Path],
+        backend_address: str | Path,
         *,
         base_path: Path,
     ) -> Path:
         """Return the container path owned by one exact plane address."""
 
-        del base_path
         return BioFormatsPlaneRef.from_backend_address(
-            str(backend_address)
+            str(self.resolve_address(backend_address, base_path=base_path))
         ).source_path
 
-    def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
+    def resolve_address(
+        self,
+        backend_address: str | Path,
+        *,
+        base_path: Path,
+    ) -> str:
+        """Resolve a relative container path against its source collection."""
+
+        ref = BioFormatsPlaneRef.from_backend_address(str(backend_address))
+        if ref.source_path.is_absolute():
+            return ref.to_backend_address()
+        return replace(ref, source_path=Path(base_path) / ref.source_path).to_backend_address()
+
+    def set_connection_params(self, params: dict[str, Any] | None) -> None:
         if params is not None:
             raise ValueError("BioFormatsStorageBackend has no connection parameters.")
 
-    def load(self, file_path: Union[str, Path], **kwargs: Any) -> Any:
+    def load(self, file_path: str | Path, **kwargs: Any) -> Any:
         del kwargs
         ref = BioFormatsPlaneRef.from_backend_address(str(file_path))
         from .bioformats_java import load_bioformats_plane
@@ -115,7 +125,7 @@ class BioFormatsStorageBackend(ReadOnlyBackend, PicklableBackend):
 
     def sample(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         request: ImageSamplingRequest,
     ) -> ImageSamplingResult:
         ref = BioFormatsPlaneRef.from_backend_address(str(file_path))
@@ -130,41 +140,41 @@ class BioFormatsStorageBackend(ReadOnlyBackend, PicklableBackend):
 
     def load_batch(
         self,
-        file_paths: List[Union[str, Path]],
+        file_paths: list[str | Path],
         **kwargs: Any,
-    ) -> List[Any]:
+    ) -> list[Any]:
         return [self.load(file_path, **kwargs) for file_path in file_paths]
 
     def list_files(
         self,
-        directory: Union[str, Path],
-        pattern: Optional[str] = None,
-        extensions: Optional[Set[str]] = None,
+        directory: str | Path,
+        pattern: str | None = None,
+        extensions: set[str] | None = None,
         recursive: bool = False,
         **kwargs: Any,
-    ) -> List[str]:
+    ) -> list[str]:
         del directory, pattern, extensions, recursive, kwargs
         raise StorageResolutionError(
             "BioFormatsStorageBackend is a direct address reader, not a workspace."
         )
 
-    def exists(self, path: Union[str, Path]) -> bool:
+    def exists(self, path: str | Path) -> bool:
         try:
             return BioFormatsPlaneRef.from_backend_address(str(path)).source_path.exists()
         except (TypeError, ValueError):
             return False
 
-    def is_file(self, path: Union[str, Path]) -> bool:
+    def is_file(self, path: str | Path) -> bool:
         try:
             return BioFormatsPlaneRef.from_backend_address(str(path)).source_path.is_file()
         except (TypeError, ValueError):
             return False
 
-    def is_dir(self, path: Union[str, Path]) -> bool:
+    def is_dir(self, path: str | Path) -> bool:
         del path
         return False
 
-    def list_dir(self, path: Union[str, Path]) -> List[str]:
+    def list_dir(self, path: str | Path) -> list[str]:
         del path
         raise StorageResolutionError(
             "BioFormatsStorageBackend is a direct address reader, not a directory."

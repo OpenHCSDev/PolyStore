@@ -48,8 +48,10 @@ Backend-owned addresses
 ``VirtualWorkspaceBackend`` pass it to the selected ``DataSource.resolve_address``
 implementation. For example, ``BioFormatsPlaneRef`` in
 ``polystore.bioformats_storage`` serializes a source path, series index, and
-plane index as one canonical JSON address. Other backends may use paths, object
-identifiers, or another exact string encoding without changing
+plane index as one canonical JSON address. Relative Bio-Formats source paths are
+resolved against the virtual workspace's source collection, so persisted mappings
+do not depend on the machine that created them. Other backends may use paths,
+object identifiers, or another exact string encoding without changing
 ``SourcePixelRef``.
 
 ``VirtualWorkspaceBackend``
