@@ -57,3 +57,10 @@ Test direct backend operations, FileManager routing, missing/unsupported
 operations, serialization if the backend is picklable, and cleanup/lifecycle
 behavior. Assert registration through ``BackendBase.__registry__`` rather than
 a second test registry.
+
+Process-wide resources such as viewer processes or Java gateways register one
+cleanup callback with ``register_cleanup_callback``. Connection-only cleanup
+preserves those resources by default. Application shutdown and tests that own
+the complete process lifetime must request
+``cleanup_backend_connections(include_process_resources=True)`` or call
+``cleanup_all_backends()``.

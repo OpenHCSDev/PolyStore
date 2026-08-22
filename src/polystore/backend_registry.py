@@ -6,14 +6,14 @@ Backends are automatically discovered and registered when their classes are defi
 """
 
 import logging
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 from .base import BackendBase, DataSink
 
 logger = logging.getLogger(__name__)
 
-_backend_instances: Dict[str, DataSink] = {}
-_cleanup_callbacks: List[Callable[[], None]] = []
+_backend_instances: dict[str, DataSink] = {}
+_cleanup_callbacks: list[Callable[[], None]] = []
 
 # Registry auto-created by AutoRegisterMeta on BackendBase
 # Includes both StorageBackend (read-write) and ReadOnlyBackend (read-only) subclasses
@@ -44,8 +44,10 @@ def get_backend_instance(backend_type: str) -> DataSink:
 
     # Get backend class from registry
     if backend_type not in STORAGE_BACKENDS:
-        raise KeyError(f"Backend type '{backend_type}' not registered. "
-                      f"Available backends: {list(STORAGE_BACKENDS.keys())}")
+        raise KeyError(
+            f"Backend type '{backend_type}' not registered. "
+            f"Available backends: {list(STORAGE_BACKENDS.keys())}"
+        )
 
     backend_class = STORAGE_BACKENDS[backend_type]
 
@@ -59,7 +61,7 @@ def get_backend_instance(backend_type: str) -> DataSink:
         raise RuntimeError(f"Failed to instantiate backend '{backend_type}': {e}") from e
 
 
-def create_storage_registry() -> Dict[str, DataSink]:
+def create_storage_registry() -> dict[str, DataSink]:
     """
     Create storage registry with all registered backends.
 
@@ -74,13 +76,15 @@ def create_storage_registry() -> Dict[str, DataSink]:
 
     # Backends that require context-specific initialization (e.g., plate_root)
     # These are registered lazily when needed, not at startup
-    SKIP_BACKENDS = {'virtual_workspace', 'omero_local', 'bioformats'}
+    SKIP_BACKENDS = {"virtual_workspace", "omero_local", "bioformats"}
 
     registry = {}
     for backend_type in STORAGE_BACKENDS.keys():
         # Skip backends that need context-specific initialization
         if backend_type in SKIP_BACKENDS:
-            logger.debug(f"Skipping backend '{backend_type}' - requires context-specific initialization")
+            logger.debug(
+                f"Skipping backend '{backend_type}' - requires context-specific initialization"
+            )
             continue
 
         try:
@@ -94,50 +98,56 @@ def create_storage_registry() -> Dict[str, DataSink]:
 
 
 def register_cleanup_callback(callback: Callable[[], None]) -> None:
-    """Register an integration-specific cleanup callback."""
-    _cleanup_callbacks.append(callback)
+    """Register one process-resource cleanup callback exactly once."""
+
+    if callback not in _cleanup_callbacks:
+        _cleanup_callbacks.append(callback)
 
 
-def cleanup_backend_connections() -> None:
+def _cleanup_registered_process_resources() -> None:
+    """Run every declared process-resource cleanup callback."""
+
+    failures: list[Exception] = []
+    for callback in tuple(_cleanup_callbacks):
+        try:
+            callback()
+        except Exception as exc:
+            logger.warning("Process-resource cleanup callback failed: %s", exc)
+            failures.append(exc)
+    if failures:
+        raise ExceptionGroup("Process-resource cleanup failed", failures)
+
+
+def cleanup_backend_connections(*, include_process_resources: bool = False) -> None:
     """
     Clean up backend connections without affecting persistent resources.
 
     For napari streaming backend, this cleans up ZeroMQ connections but
-    leaves the napari window open for future use.
+    leaves the napari window open for future use unless process-resource
+    cleanup is explicitly requested.
     """
-    import os
-
-    # Check if we're running in test mode
-    is_test_mode = (
-        'pytest' in os.environ.get('_', '') or
-        'PYTEST_CURRENT_TEST' in os.environ or
-        any('pytest' in arg for arg in __import__('sys').argv)
-    )
-
     for backend_type, instance in _backend_instances.items():
         # Use targeted cleanup for napari streaming to preserve window
-        if hasattr(instance, 'cleanup_connections'):
+        if hasattr(instance, "cleanup_connections"):
             try:
                 instance.cleanup_connections()
                 logger.debug(f"Cleaned up connections for backend '{backend_type}'")
             except Exception as e:
                 logger.warning(f"Failed to cleanup connections for backend '{backend_type}': {e}")
-        elif hasattr(instance, 'cleanup') and backend_type != 'napari_stream':
+        elif hasattr(instance, "cleanup") and backend_type != "napari_stream":
             try:
                 instance.cleanup()
                 logger.debug(f"Cleaned up backend '{backend_type}'")
             except Exception as e:
                 logger.warning(f"Failed to cleanup backend '{backend_type}': {e}")
 
-    # In test mode, also stop viewer processes to allow pytest to exit
-    if is_test_mode:
-        for callback in list(_cleanup_callbacks):
-            try:
-                callback()
-            except Exception as e:
-                logger.warning(f"Cleanup callback failed: {e}")
+    if include_process_resources:
+        _cleanup_registered_process_resources()
 
-    logger.info(f"Backend connections cleaned up ({'test mode' if is_test_mode else 'viewer windows preserved'})")
+    cleanup_scope = (
+        "including process resources" if include_process_resources else "viewer windows preserved"
+    )
+    logger.info("Backend connections cleaned up (%s)", cleanup_scope)
 
 
 def cleanup_all_backends() -> None:
@@ -148,12 +158,15 @@ def cleanup_all_backends() -> None:
     Use cleanup_backend_connections() for test cleanup to preserve napari window.
     """
     for backend_type, instance in _backend_instances.items():
-        if hasattr(instance, 'cleanup'):
+        if hasattr(instance, "cleanup"):
             try:
                 instance.cleanup()
                 logger.debug(f"Cleaned up backend '{backend_type}'")
             except Exception as e:
                 logger.warning(f"Failed to cleanup backend '{backend_type}': {e}")
 
-    _backend_instances.clear()
-    logger.info("All backend instances cleaned up")
+    try:
+        _cleanup_registered_process_resources()
+    finally:
+        _backend_instances.clear()
+    logger.info("All backend instances and process resources cleaned up")

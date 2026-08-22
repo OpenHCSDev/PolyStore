@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from .backend_registry import register_cleanup_callback
 from .base import (
     ImageSamplingRequest,
     ImageSamplingResult,
@@ -42,6 +43,7 @@ class BioFormatsJavaContext:
     def __init__(self, imagej_module: Any, scyjava_module: Any):
         self.imagej = imagej_module
         self.scyjava = scyjava_module
+        self._lifecycle_lock = Lock()
         self.ij = None
         self.ImageReader = None
         self.MetadataTools = None
@@ -66,21 +68,50 @@ class BioFormatsJavaContext:
         return cls(imagej, scyjava)
 
     def ensure_initialized(self) -> None:
-        if self.ij is not None:
-            return
-        try:
-            self.ij = FIJI_IMAGEJ_RUNTIME.initialize(
-                self.imagej,
-                self.scyjava,
-                mode="headless",
-            )
-            self.ImageReader = self.scyjava.jimport("loci.formats.ImageReader")
-            self.MetadataTools = self.scyjava.jimport("loci.formats.MetadataTools")
-            self.FormatTools = self.scyjava.jimport("loci.formats.FormatTools")
-        except Exception as exc:
-            raise BioFormatsJavaUnavailableError(
-                f"Could not initialize Fiji/Bio-Formats through pyimagej: {exc}"
-            ) from exc
+        with self._lifecycle_lock:
+            if self.ij is not None:
+                return
+            gateway = None
+            try:
+                gateway = FIJI_IMAGEJ_RUNTIME.initialize(
+                    self.imagej,
+                    self.scyjava,
+                    mode="headless",
+                )
+                image_reader = self.scyjava.jimport("loci.formats.ImageReader")
+                metadata_tools = self.scyjava.jimport("loci.formats.MetadataTools")
+                format_tools = self.scyjava.jimport("loci.formats.FormatTools")
+            except Exception as exc:
+                if gateway is not None:
+                    gateway.dispose()
+                raise BioFormatsJavaUnavailableError(
+                    f"Could not initialize Fiji/Bio-Formats through pyimagej: {exc}"
+                ) from exc
+            self.ij = gateway
+            self.ImageReader = image_reader
+            self.MetadataTools = metadata_tools
+            self.FormatTools = format_tools
+
+    def dispose(self) -> None:
+        """Dispose the owned ImageJ gateway before interpreter shutdown."""
+
+        with self._lifecycle_lock:
+            gateway = self.ij
+            self.ij = None
+            self.ImageReader = None
+            self.MetadataTools = None
+            self.FormatTools = None
+            if gateway is not None:
+                gateway.dispose()
+
+    @classmethod
+    def dispose_instance(cls) -> None:
+        """Dispose the initialized process-wide context without creating it."""
+
+        with cls._lock:
+            context = cls._instance
+        if context is not None:
+            context.dispose()
 
     def open_reader(self, source_path: str | Path) -> BioFormatsOpenedReader:
         self.ensure_initialized()
@@ -103,6 +134,9 @@ class BioFormatsJavaContext:
             return bool(reader.isThisType(str(source_path)))
         finally:
             reader.close()
+
+
+register_cleanup_callback(BioFormatsJavaContext.dispose_instance)
 
 
 def java_int(value: Any) -> int | None:
