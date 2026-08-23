@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ImageJRuntimeUnavailableError(RuntimeError):
@@ -18,6 +22,7 @@ class ImageJRuntimePolicy:
     java_fetch: str
     java_vendor: str
     java_version: str
+    initialization_retry_delays_seconds: tuple[float, ...] = ()
 
     @property
     def java_major_version(self) -> int:
@@ -35,12 +40,26 @@ class ImageJRuntimePolicy:
         """Initialize the declared endpoint with its compatible managed JVM."""
 
         self.configure_java(scyjava_module)
-        try:
-            gateway = imagej_module.init(self.endpoint, mode=mode)
-        except Exception as exc:
-            raise ImageJRuntimeUnavailableError(
-                f"Could not initialize {self.endpoint} with managed Java " f"{self.java_version}."
-            ) from exc
+        retry_delays = iter(self.initialization_retry_delays_seconds)
+        while True:
+            try:
+                gateway = imagej_module.init(self.endpoint, mode=mode)
+                break
+            except Exception as exc:
+                retry_delay = next(retry_delays, None)
+                if retry_delay is None or scyjava_module.jvm_started():
+                    raise ImageJRuntimeUnavailableError(
+                        f"Could not initialize {self.endpoint} with managed Java "
+                        f"{self.java_version}."
+                    ) from exc
+                logger.warning(
+                    "ImageJ initialization failed before JVM startup; retrying %s "
+                    "in %.1f seconds: %s",
+                    self.endpoint,
+                    retry_delay,
+                    exc,
+                )
+                time.sleep(retry_delay)
         self.require_compatible_active_java(scyjava_module)
         return gateway
 
@@ -86,4 +105,5 @@ FIJI_IMAGEJ_RUNTIME = ImageJRuntimePolicy(
     java_fetch="always",
     java_vendor="zulu-jre",
     java_version="21",
+    initialization_retry_delays_seconds=(1.0, 2.0),
 )

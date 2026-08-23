@@ -101,9 +101,12 @@ def test_runtime_reports_an_unparseable_active_java_version() -> None:
 
 
 def test_runtime_wraps_imagej_initialization_failure() -> None:
-    scyjava = _ScyJava(started=False, java_version="21")
+    scyjava = _ScyJava(started=True, java_version="21")
+    calls = 0
 
     def fail_initialization(endpoint: str, *, mode: str) -> None:
+        nonlocal calls
+        calls += 1
         raise RuntimeError(f"failed {endpoint} in {mode}")
 
     imagej = SimpleNamespace(init=fail_initialization)
@@ -115,3 +118,69 @@ def test_runtime_wraps_imagej_initialization_failure() -> None:
         FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="headless")
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert calls == 1
+
+
+def test_runtime_retries_initialization_only_before_jvm_start(monkeypatch) -> None:
+    observed_delays: list[float] = []
+    monkeypatch.setattr(
+        "polystore.imagej_runtime.time.sleep",
+        observed_delays.append,
+    )
+    runtime = ImageJRuntimePolicy(
+        endpoint="example:imagej",
+        java_fetch="always",
+        java_vendor="example-jre",
+        java_version="21",
+        initialization_retry_delays_seconds=(0.1, 0.2),
+    )
+    scyjava = _ScyJava(started=False, java_version="21")
+    calls = 0
+
+    def initialize_after_transient_failures(endpoint: str, *, mode: str) -> object:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise TimeoutError(f"transient failure for {endpoint} in {mode}")
+        scyjava._started = True
+        return object()
+
+    gateway = runtime.initialize(
+        SimpleNamespace(init=initialize_after_transient_failures),
+        scyjava,
+        mode="headless",
+    )
+
+    assert gateway is not None
+    assert calls == 3
+    assert observed_delays == [0.1, 0.2]
+
+
+def test_runtime_preserves_final_failure_after_retry_schedule() -> None:
+    runtime = ImageJRuntimePolicy(
+        endpoint="example:imagej",
+        java_fetch="always",
+        java_vendor="example-jre",
+        java_version="21",
+        initialization_retry_delays_seconds=(0.0, 0.0),
+    )
+    scyjava = _ScyJava(started=False, java_version="21")
+    calls = 0
+
+    def fail_initialization(endpoint: str, *, mode: str) -> None:
+        nonlocal calls
+        calls += 1
+        raise TimeoutError(f"transient failure for {endpoint} in {mode}")
+
+    with pytest.raises(
+        ImageJRuntimeUnavailableError,
+        match="Could not initialize example:imagej with managed Java 21",
+    ) as exc_info:
+        runtime.initialize(
+            SimpleNamespace(init=fail_initialization),
+            scyjava,
+            mode="headless",
+        )
+
+    assert calls == 3
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
