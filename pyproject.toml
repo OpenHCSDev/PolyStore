@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.1.34"
+version = "0.1.35"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -71,6 +71,11 @@ cupy = [
 
 streaming = [
     "pyzmq>=25.0.0",
+]
+
+omero = [
+    "pandas>=2.3.1",
+    "omero-py>=5.19.0",
 ]
 
 all = [

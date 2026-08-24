@@ -4,18 +4,16 @@ These tests are intentionally compact: they reuse fixtures and exercise many
 code paths via the `FileManager` router to achieve high coverage with little
 test code.
 """
-import pytest
-import numpy as np
+
 from pathlib import Path
+
+import numpy as np
+import pytest
 
 from polystore import FileManager
 from polystore.exceptions import StorageResolutionError
-from polystore.omero_local import (
-    OMEROFileFormatRegistry,
-    OMEROLocalBackend,
-    PlateStructure,
-)
-from polystore.roi import PointShape, ROI
+from polystore.omero_local import OMEROLocalBackend, PlateStructure
+from polystore.roi import ROI, PointShape
 
 
 def _backend_path(tmp_path: Path, backend_name: str, filename: str) -> str:
@@ -40,17 +38,40 @@ def test_filemanager_delegates_listed_address_resolution(file_manager):
     )
 
 
+def test_filemanager_delegates_contextual_save_kwargs(
+    file_manager,
+    monkeypatch,
+) -> None:
+    backend = file_manager._get_backend("memory")
+    monkeypatch.setattr(
+        backend,
+        "contextual_save_kwargs",
+        lambda *, images_dir: {"images_dir": images_dir},
+    )
+
+    assert file_manager.contextual_save_kwargs(
+        "memory",
+        images_dir="/plate/images",
+    ) == {"images_dir": "/plate/images"}
+
+
 def test_omero_backend_qualifies_relative_listed_addresses() -> None:
     backend = object.__new__(OMEROLocalBackend)
 
-    assert backend.resolve_listed_address(
-        "nested/A01_s001_w1_z001_t001.tif",
-        directory="/omero/plate_7",
-    ) == "/omero/plate_7/nested/A01_s001_w1_z001_t001.tif"
-    assert backend.resolve_listed_address(
-        "/omero/plate_8/A01_s001_w1_z001_t001.tif",
-        directory="/omero/plate_7",
-    ) == "/omero/plate_8/A01_s001_w1_z001_t001.tif"
+    assert (
+        backend.resolve_listed_address(
+            "nested/A01_s001_w1_z001_t001.tif",
+            directory="/omero/plate_7",
+        )
+        == "/omero/plate_7/nested/A01_s001_w1_z001_t001.tif"
+    )
+    assert (
+        backend.resolve_listed_address(
+            "/omero/plate_8/A01_s001_w1_z001_t001.tif",
+            directory="/omero/plate_7",
+        )
+        == "/omero/plate_8/A01_s001_w1_z001_t001.tif"
+    )
 
 
 def test_omero_backend_projects_save_context_from_base_plate_metadata() -> None:
@@ -69,9 +90,7 @@ def test_omero_backend_projects_save_context_from_base_plate_metadata() -> None:
         )
     }
 
-    assert backend.contextual_save_kwargs(
-        images_dir="/omero/plate_7_outputs/images"
-    ) == {
+    assert backend.contextual_save_kwargs(images_dir="/omero/plate_7_outputs/images") == {
         "images_dir": "/omero/plate_7_outputs/images",
         "parser_name": "ImageXpressFilenameParser",
         "microscope_type": "ImageXpress",
@@ -112,17 +131,17 @@ def test_omero_backend_loads_base_plate_metadata_for_save_context(monkeypatch) -
 def test_omero_backend_parses_virtual_paths_independently_of_host_separators() -> None:
     backend = object.__new__(OMEROLocalBackend)
 
-    assert backend._parse_omero_path(
-        Path(r"\omero\plate_13_outputs\images")
-    ) == ("plate_13_outputs_images", 13, True)
+    assert backend._parse_omero_path(Path(r"\omero\plate_13_outputs\images")) == (
+        "plate_13_outputs_images",
+        13,
+        True,
+    )
 
 
 def test_omero_batch_routes_non_image_artifacts_through_single_save(
     monkeypatch,
 ) -> None:
     backend = object.__new__(OMEROLocalBackend)
-    backend.format_registry = OMEROFileFormatRegistry()
-    backend._register_formats()
     saved = []
     monkeypatch.setattr(
         backend,
@@ -144,32 +163,23 @@ def test_omero_batch_routes_non_image_artifacts_through_single_save(
         ("label,count\n1,7\n", "/omero/plate_7_outputs/results/A01_cell_counts.csv"),
         ([roi], "/omero/plate_7_outputs/results/A01_segmentation_masks.roi.zip"),
     ]
-    assert all(
-        kwargs == {"images_dir": "/omero/plate_7_outputs/images"}
-        for _, _, kwargs in saved
-    )
+    assert all(kwargs == {"images_dir": "/omero/plate_7_outputs/images"} for _, _, kwargs in saved)
 
 
 def test_omero_batch_preserves_image_batching_before_artifact_saves(
     monkeypatch,
 ) -> None:
     backend = object.__new__(OMEROLocalBackend)
-    backend.format_registry = OMEROFileFormatRegistry()
-    backend._register_formats()
     events = []
     monkeypatch.setattr(
         backend,
         "_save_image_batch",
-        lambda data, paths, **kwargs: events.append(
-            ("images", data, paths, kwargs)
-        ),
+        lambda data, paths, **kwargs: events.append(("images", data, paths, kwargs)),
     )
     monkeypatch.setattr(
         backend,
         "save",
-        lambda data, path, **kwargs: events.append(
-            ("artifact", data, path, kwargs)
-        ),
+        lambda data, path, **kwargs: events.append(("artifact", data, path, kwargs)),
     )
     plane = np.zeros((4, 5), dtype=np.uint16)
     kwargs = {
@@ -202,15 +212,16 @@ def test_omero_batch_preserves_image_batching_before_artifact_saves(
 
 
 def test_physical_source_path_is_declared_by_backend_capability(file_manager) -> None:
-    assert file_manager.physical_source_path(
-        "/test/source.tif",
-        "memory",
-        base_path="/test",
-    ) == "/test/source.tif"
-
-    virtual_file_manager = FileManager(
-        {"omero_local": object.__new__(OMEROLocalBackend)}
+    assert (
+        file_manager.physical_source_path(
+            "/test/source.tif",
+            "memory",
+            base_path="/test",
+        )
+        == "/test/source.tif"
     )
+
+    virtual_file_manager = FileManager({"omero_local": object.__new__(OMEROLocalBackend)})
     assert (
         virtual_file_manager.physical_source_path(
             "/omero/plate_7/A01_s001_w1_z001_t001.tif",
@@ -269,18 +280,17 @@ def test_batch_save_and_load(file_manager, registry, tmp_path, backend_name):
         fm.ensure_directory("/test", backend=backend_name)
 
     data_list = [np.array([1]), np.array([2]), np.array([3])]
-    paths = [
-        _backend_path(tmp_path, backend_name, f"b{i}.npy") for i in range(len(data_list))
-    ]
+    paths = [_backend_path(tmp_path, backend_name, f"b{i}.npy") for i in range(len(data_list))]
 
     fm.save_batch(data_list, paths, backend=backend_name)
     loaded = fm.load_batch(paths, backend=backend_name)
     assert len(loaded) == len(data_list)
-    for a, b in zip(data_list, loaded):
+    for a, b in zip(data_list, loaded, strict=True):
         assert np.array_equal(a, b)
 
     # mismatched lengths should surface as StorageResolutionError via FileManager
     from polystore.exceptions import StorageResolutionError
+
     with pytest.raises(StorageResolutionError):
         fm.save_batch([np.array([1])], ["/x/one.npy", "/x/two.npy"], backend=backend_name)
 
@@ -323,14 +333,14 @@ def test_list_image_files_natural_sort(file_manager, registry, tmp_path, backend
         # Use .txt to avoid requiring image writers in DiskBackend
         fm.save("x", str(base / "img2.txt"), backend=backend_name)
         fm.save("x", str(base / "img10.txt"), backend=backend_name)
-        files = fm.list_image_files(str(base), backend=backend_name, extensions={'.txt'})
+        files = fm.list_image_files(str(base), backend=backend_name, extensions={".txt"})
         assert files[0].endswith("img2.txt")
         assert files[1].endswith("img10.txt")
     else:
         fm.ensure_directory("/test", backend=backend_name)
         fm.save("x", "/test/img2.txt", backend=backend_name)
         fm.save("x", "/test/img10.txt", backend=backend_name)
-        files = fm.list_image_files("/test", backend=backend_name, extensions={'.txt'})
+        files = fm.list_image_files("/test", backend=backend_name, extensions={".txt"})
         assert files[0].endswith("img2.txt")
         assert files[1].endswith("img10.txt")
 

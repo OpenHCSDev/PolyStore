@@ -6,12 +6,14 @@ including directory listing, existence checking, mkdir, symlink, and mirror oper
 """
 
 import logging
+from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any, List, Set, Tuple, Union
+from typing import Any
 
 from .base import (
     BackendBase,
+    DataSink,
     DataSource,
     ImageSamplingRequest,
     ImageSamplingResult,
@@ -22,6 +24,7 @@ from .formats import DEFAULT_IMAGE_EXTENSIONS
 from .virtual_workspace import SourcePixelRef
 
 logger = logging.getLogger(__name__)
+
 
 class FileManager:
 
@@ -47,7 +50,9 @@ class FileManager:
         """
         # Validate registry parameter
         if registry is None:
-            raise ValueError("Registry must be provided to FileManager. Default fallback has been removed.")
+            raise ValueError(
+                "Registry must be provided to FileManager. Default fallback has been removed."
+            )
 
         self.registry = dict(registry)
         self._bind_registry()
@@ -57,9 +62,7 @@ class FileManager:
         picklable_backends = {}
         for backend_key, backend_instance in self.registry.items():
             if isinstance(backend_instance, PicklableBackend):
-                picklable_backends[backend_key] = (
-                    backend_instance.get_connection_params()
-                )
+                picklable_backends[backend_key] = backend_instance.get_connection_params()
         return {
             "registered_backend_keys": tuple(self.registry),
             "picklable_backends": picklable_backends,
@@ -145,17 +148,15 @@ class FileManager:
 
     def resolve_address(
         self,
-        backend_address: Union[str, Path],
+        backend_address: str | Path,
         backend: str,
         *,
-        base_path: Union[str, Path],
-    ) -> Union[str, Path]:
+        base_path: str | Path,
+    ) -> str | Path:
         """Delegate backend-owned address resolution to one registered data source."""
         backend_instance = self._get_backend(backend)
         if not isinstance(backend_instance, DataSource):
-            raise StorageResolutionError(
-                f"Backend {backend!r} is not a DataSource."
-            )
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
         return backend_instance.resolve_address(
             backend_address,
             base_path=Path(base_path),
@@ -163,11 +164,11 @@ class FileManager:
 
     def resolve_listed_address(
         self,
-        listed_address: Union[str, Path],
+        listed_address: str | Path,
         backend: str,
         *,
-        directory: Union[str, Path],
-    ) -> Union[str, Path]:
+        directory: str | Path,
+    ) -> str | Path:
         """Delegate listing-entry resolution to its registered backend owner."""
 
         return self._get_backend(backend).resolve_listed_address(
@@ -177,18 +178,16 @@ class FileManager:
 
     def source_path(
         self,
-        backend_address: Union[str, Path],
+        backend_address: str | Path,
         backend: str,
         *,
-        base_path: Union[str, Path],
-    ) -> Union[str, Path]:
+        base_path: str | Path,
+    ) -> str | Path:
         """Delegate physical source-path projection to the address owner."""
 
         backend_instance = self._get_backend(backend)
         if not isinstance(backend_instance, DataSource):
-            raise StorageResolutionError(
-                f"Backend {backend!r} is not a DataSource."
-            )
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
         return backend_instance.source_path(
             backend_address,
             base_path=Path(base_path),
@@ -196,11 +195,11 @@ class FileManager:
 
     def physical_source_path(
         self,
-        backend_address: Union[str, Path],
+        backend_address: str | Path,
         backend: str,
         *,
-        base_path: Union[str, Path],
-    ) -> Union[str, Path, None]:
+        base_path: str | Path,
+    ) -> str | Path | None:
         """Return the backend-owned physical source path when one exists."""
 
         return self._get_backend(backend).physical_source_path(
@@ -208,7 +207,7 @@ class FileManager:
             base_path=Path(base_path),
         )
 
-    def load(self, file_path: Union[str, Path], backend: str, **kwargs) -> Any:
+    def load(self, file_path: str | Path, backend: str, **kwargs) -> Any:
         """
         Load data from a file using the specified backend.
 
@@ -230,17 +229,20 @@ class FileManager:
         try:
             backend_instance = self._get_backend(backend)
             return backend_instance.load(file_path, **kwargs)
-        except StorageResolutionError: # Allow specific backend errors to propagate
+        except StorageResolutionError:  # Allow specific backend errors to propagate
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during load from {file_path} with backend {backend}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during load from {file_path} with backend {backend}: {e}",
+                exc_info=True,
+            )
             raise StorageResolutionError(
                 f"Failed to load file at {file_path} using backend '{backend}'"
             ) from e
 
     def sample(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         backend: str,
         request: ImageSamplingRequest,
     ) -> ImageSamplingResult:
@@ -249,9 +251,7 @@ class FileManager:
         try:
             backend_instance = self._get_backend(backend)
             if not isinstance(backend_instance, DataSource):
-                raise StorageResolutionError(
-                    f"Backend {backend!r} is not a DataSource."
-                )
+                raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
             return backend_instance.sample(file_path, request)
         except StorageResolutionError:
             raise
@@ -264,15 +264,14 @@ class FileManager:
                 exc_info=True,
             )
             raise StorageResolutionError(
-                f"Failed to sample file at {file_path} using backend "
-                f"'{backend}': {exc}"
+                f"Failed to sample file at {file_path} using backend " f"'{backend}': {exc}"
             ) from exc
 
     def sample_source_ref(
         self,
         source_ref: SourcePixelRef,
         *,
-        base_path: Union[str, Path],
+        base_path: str | Path,
         request: ImageSamplingRequest,
     ) -> ImageSamplingResult:
         """Sample one exact backend-owned source pixel reference."""
@@ -285,7 +284,7 @@ class FileManager:
             request=request,
         )
 
-    def save(self, data: Any, output_path: Union[str, Path], backend: str, **kwargs) -> None:
+    def save(self, data: Any, output_path: str | Path, backend: str, **kwargs) -> None:
         """
         Save data to a file using the specified backend.
 
@@ -306,15 +305,35 @@ class FileManager:
             backend_instance = self._get_backend(backend)
 
             backend_instance.save(data, output_path, **kwargs)
-        except StorageResolutionError: # Allow specific backend errors to propagate if they are StorageResolutionError
+        except (
+            StorageResolutionError
+        ):  # Allow specific backend errors to propagate if they are StorageResolutionError
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during save to {output_path} with backend {backend}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during save to {output_path} with backend {backend}: {e}",
+                exc_info=True,
+            )
             raise StorageResolutionError(
                 f"Failed to save data to {output_path} using backend '{backend}'"
             ) from e
 
-    def load_batch(self, file_paths: List[Union[str, Path]], backend: str, **kwargs) -> List[Any]:
+    def contextual_save_kwargs(
+        self,
+        backend: str,
+        *,
+        images_dir: str | None,
+    ) -> Mapping[str, Any]:
+        """Return save context declared by one destination backend."""
+
+        backend_instance = self._get_backend(backend)
+        if not isinstance(backend_instance, DataSink):
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSink.")
+        return backend_instance.contextual_save_kwargs(
+            images_dir=images_dir,
+        )
+
+    def load_batch(self, file_paths: list[str | Path], backend: str, **kwargs) -> list[Any]:
         """
         Load multiple files using the specified backend.
 
@@ -335,12 +354,16 @@ class FileManager:
         except StorageResolutionError:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during batch load with backend {backend}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during batch load with backend {backend}: {e}", exc_info=True
+            )
             raise StorageResolutionError(
                 f"Failed to load batch of {len(file_paths)} files using backend '{backend}'"
             ) from e
 
-    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], backend: str, **kwargs) -> None:
+    def save_batch(
+        self, data_list: list[Any], output_paths: list[str | Path], backend: str, **kwargs
+    ) -> None:
         """
         Save multiple data objects using the specified backend.
 
@@ -360,13 +383,21 @@ class FileManager:
         except StorageResolutionError:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during batch save with backend {backend}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during batch save with backend {backend}: {e}", exc_info=True
+            )
             raise StorageResolutionError(
                 f"Failed to save batch of {len(data_list)} files using backend '{backend}'"
             ) from e
 
-    def list_image_files(self, directory: Union[str, Path], backend: str,
-                         pattern: str = None, extensions: Set[str] = DEFAULT_IMAGE_EXTENSIONS, recursive: bool = False) -> List[str]:
+    def list_image_files(
+        self,
+        directory: str | Path,
+        backend: str,
+        pattern: str = None,
+        extensions: set[str] = DEFAULT_IMAGE_EXTENSIONS,
+        recursive: bool = False,
+    ) -> list[str]:
         """
         List all image files in a directory using the specified backend.
 
@@ -390,18 +421,23 @@ class FileManager:
             TypeError: If directory is not a valid path type
             PathMismatchError: If the path scheme doesn't match the expected scheme for the backend
         """
-        # Get backend instance
         backend_instance = self._get_backend(backend)
 
         # List image files and apply natural sorting
         from .utils import natural_sort
+
         files = backend_instance.list_files(str(directory), pattern, extensions, recursive)
         return natural_sort([str(path) for path in files])
 
-
-    def list_files(self, directory: Union[str, Path], backend: str,
-                   pattern: str = None, extensions: Set[str] = None, recursive: bool = False,
-                   **kwargs) -> List[str]:
+    def list_files(
+        self,
+        directory: str | Path,
+        backend: str,
+        pattern: str = None,
+        extensions: set[str] = None,
+        recursive: bool = False,
+        **kwargs,
+    ) -> list[str]:
         """
         List all files in a directory using the specified backend.
 
@@ -431,11 +467,13 @@ class FileManager:
 
         # List files and apply natural sorting
         from .utils import natural_sort
-        files = backend_instance.list_files(str(directory), pattern, extensions, recursive, **kwargs)
+
+        files = backend_instance.list_files(
+            str(directory), pattern, extensions, recursive, **kwargs
+        )
         return natural_sort(files)
 
-
-    def find_file_recursive(self, directory: Union[str, Path], filename: str, backend: str) -> Union[str, None]:
+    def find_file_recursive(self, directory: str | Path, filename: str, backend: str) -> str | None:
         """
         Find a file recursively in a directory using the specified backend.
 
@@ -465,8 +503,7 @@ class FileManager:
         # File not found
         return None
 
-
-    def list_dir(self, path: Union[str, Path], backend: str) -> List[str]:
+    def list_dir(self, path: str | Path, backend: str) -> list[str]:
         if not isinstance(path, (str, Path)):
             raise TypeError(f"Expected str or Path, got {type(path)}")
 
@@ -476,6 +513,7 @@ class FileManager:
         try:
             # Get directory listing and apply natural sorting
             from .utils import natural_sort
+
             entries = backend_instance.list_dir(str(path))
             return natural_sort(entries)
         except (FileNotFoundError, NotADirectoryError):
@@ -483,9 +521,11 @@ class FileManager:
             raise
         except Exception as e:
             # Optional trace wrapper, no type mutation
-            raise RuntimeError(f"Unexpected failure in list_dir({path}) for backend {backend}") from e
+            raise RuntimeError(
+                f"Unexpected failure in list_dir({path}) for backend {backend}"
+            ) from e
 
-    def ensure_directory(self, directory: Union[str, Path], backend: str) -> str:
+    def ensure_directory(self, directory: str | Path, backend: str) -> str:
         """
         Ensure a directory exists, creating it if necessary.
 
@@ -512,9 +552,7 @@ class FileManager:
         # Ensure directory
         return backend_instance.ensure_directory(str(directory))
 
-
-
-    def exists(self, path: Union[str, Path], backend: str) -> bool:
+    def exists(self, path: str | Path, backend: str) -> bool:
         """
         Check if a path exists.
 
@@ -541,14 +579,13 @@ class FileManager:
         # Check if path exists
         return backend_instance.exists(str(path))
 
-
     def mirror_directory_with_symlinks(
         self,
-        source_dir: Union[str, Path],
-        target_dir: Union[str, Path],
+        source_dir: str | Path,
+        target_dir: str | Path,
         backend: str,
         recursive: bool = True,
-        overwrite_symlinks_only: bool = False
+        overwrite_symlinks_only: bool = False,
     ) -> int:
         """
         Mirror a directory structure from source to target and create symlinks to all files.
@@ -578,16 +615,14 @@ class FileManager:
             TypeError: If source_dir or target_dir is not a valid path type
             PathMismatchError: If the path scheme doesn't match the expected scheme for the backend
         """
-        # Get backend instance
-        backend_instance = self._get_backend(backend)
         # Mirror the directory structure and create symlinks for files recursively
         self.ensure_directory(target_dir, backend)
         try:
             # Ensure target directory exists
-            
+
             # Count symlinks
             symlink_count = 0
-            
+
             # Get all directories under source_dir (including source_dir itself)
 
             _, all_files = self.collect_dirs_and_files(source_dir, backend, recursive=True)
@@ -599,20 +634,27 @@ class FileManager:
             for file_path in all_files:
                 rel_path = Path(file_path).relative_to(Path(source_dir))
                 symlink_path = Path(target_dir) / rel_path
-                self.create_symlink(file_path, str(symlink_path), backend, overwrite_symlinks_only=overwrite_symlinks_only)
+                self.create_symlink(
+                    file_path,
+                    str(symlink_path),
+                    backend,
+                    overwrite_symlinks_only=overwrite_symlinks_only,
+                )
                 symlink_count += 1
 
             return symlink_count
 
         except Exception as e:
-            raise StorageResolutionError(f"Failed to mirror directory {source_dir} to {target_dir} with backend {backend}") from e
+            raise StorageResolutionError(
+                f"Failed to mirror directory {source_dir} to {target_dir} with backend {backend}"
+            ) from e
 
     def create_symlink(
         self,
-        source_path: Union[str, Path],
-        symlink_path: Union[str, Path],
+        source_path: str | Path,
+        symlink_path: str | Path,
         backend: str,
-        overwrite_symlinks_only: bool = False
+        overwrite_symlinks_only: bool = False,
     ) -> bool:
         """
         Create a symbolic link from source_path to symlink_path.
@@ -650,13 +692,17 @@ class FileManager:
                             f"Target exists and is not a symlink (overwrite_symlinks_only=True): {symlink_path}"
                         )
                     # Target is a symlink, allow overwrite
-                    backend_instance.create_symlink(str(source_path), str(symlink_path), overwrite=True)
+                    backend_instance.create_symlink(
+                        str(source_path), str(symlink_path), overwrite=True
+                    )
                 else:
                     # No overwrite allowed
                     raise FileExistsError(f"Target already exists: {symlink_path}")
             else:
                 # Target doesn't exist, create new symlink
-                backend_instance.create_symlink(str(source_path), str(symlink_path), overwrite=False)
+                backend_instance.create_symlink(
+                    str(source_path), str(symlink_path), overwrite=False
+                )
 
             return True
         except FileExistsError:
@@ -667,7 +713,7 @@ class FileManager:
                 f"Failed to create symlink from {source_path} to {symlink_path} with backend {backend}"
             ) from e
 
-    def delete(self, path: Union[str, Path], backend: str, recursive: bool = False) -> bool:
+    def delete(self, path: str | Path, backend: str, recursive: bool = False) -> bool:
         """
         Delete a file or directory.
 
@@ -696,24 +742,22 @@ class FileManager:
             # No virtual path conversion needed
             return backend_instance.delete(str(path))
         except Exception as e:
-            raise StorageResolutionError(
-                f"Failed to delete {path} with backend {backend}"
-            ) from e
+            raise StorageResolutionError(f"Failed to delete {path} with backend {backend}") from e
 
-    def delete_all(self, path: Union[str, Path], backend: str) -> bool:
+    def delete_all(self, path: str | Path, backend: str) -> bool:
         """
         Recursively delete a file, symlink, or directory at the given path.
-    
+
         This method performs no fallback, coercion, or resolution — it dispatches to the backend.
         All resolution and deletion behavior must be encoded in the backend's `delete_all()` method.
-    
+
         Args:
             path: The path to delete
             backend: The backend key (e.g., 'disk', 'memory', 'zarr')
-    
+
         Returns:
             True if successful
-    
+
         Raises:
             StorageResolutionError: If the backend operation fails
             FileNotFoundError: If the path does not exist
@@ -721,7 +765,7 @@ class FileManager:
         """
         backend_instance = self._get_backend(backend)
         path_str = str(path)
-    
+
         try:
             backend_instance.delete_all(path_str)
             return True
@@ -730,8 +774,7 @@ class FileManager:
                 f"Failed to delete_all({path_str}) using backend '{backend}'"
             ) from e
 
-
-    def copy(self, source_path: Union[str, Path], dest_path: Union[str, Path], backend: str) -> bool:
+    def copy(self, source_path: str | Path, dest_path: str | Path, backend: str) -> bool:
         """
         Copy a file, directory, or symlink from source_path to dest_path using the given backend.
 
@@ -762,9 +805,13 @@ class FileManager:
                 f"Failed to copy from {source_path} to {dest_path} on backend {backend}"
             ) from e
 
-
-    def move(self, source_path: Union[str, Path], dest_path: Union[str, Path], backend: str,
-             replace_symlinks: bool = False) -> bool:
+    def move(
+        self,
+        source_path: str | Path,
+        dest_path: str | Path,
+        backend: str,
+        replace_symlinks: bool = False,
+    ) -> bool:
         """
         Move a file, directory, or symlink from source_path to dest_path.
 
@@ -794,11 +841,15 @@ class FileManager:
                 if replace_symlinks:
                     # Check if destination is a symlink
                     if backend_instance.is_symlink(dest_path):
-                        logger.debug("Destination is a symlink, removing before move: %s", dest_path)
+                        logger.debug(
+                            "Destination is a symlink, removing before move: %s", dest_path
+                        )
                         backend_instance.delete(dest_path)
                     else:
                         # Destination exists but is not a symlink
-                        raise FileExistsError(f"Destination already exists and is not a symlink: {dest_path}")
+                        raise FileExistsError(
+                            f"Destination already exists and is not a symlink: {dest_path}"
+                        )
                 else:
                     # replace_symlinks=False, don't allow any overwriting
                     raise FileExistsError(f"Destination already exists: {dest_path}")
@@ -811,13 +862,10 @@ class FileManager:
             raise StorageResolutionError(
                 f"Failed to move from {source_path} to {dest_path} on backend {backend}"
             ) from e
-    
+
     def collect_dirs_and_files(
-        self,
-        base_dir: Union[str, Path],
-        backend: str,
-        recursive: bool = True
-    ) -> Tuple[List[str], List[str]]:
+        self, base_dir: str | Path, backend: str, recursive: bool = True
+    ) -> tuple[list[str], list[str]]:
         """
         Collect all valid directories and files starting from base_dir using breadth-first traversal.
 
@@ -829,8 +877,8 @@ class FileManager:
         base_dir = str(base_dir)
         # Use deque for breadth-first traversal (FIFO instead of LIFO)
         queue = deque([base_dir])
-        dirs: List[str] = []
-        files: List[str] = []
+        dirs: list[str] = []
+        files: list[str] = []
 
         while queue:
             current_path = queue.popleft()  # FIFO for breadth-first
@@ -842,12 +890,16 @@ class FileManager:
                 files.append(current_path)
                 continue
             except Exception as e:
-                print(f"[collect_dirs_and_files] Unexpected error at {current_path}: {type(e).__name__} — {e}")
+                print(
+                    f"[collect_dirs_and_files] Unexpected error at {current_path}: {type(e).__name__} — {e}"
+                )
                 continue  # Fail-safe: skip unexpected issues
 
             if entries is None:
                 # Defensive fallback — entries must be iterable
-                print(f"[collect_dirs_and_files] WARNING: list_dir() returned None at {current_path}")
+                print(
+                    f"[collect_dirs_and_files] WARNING: list_dir() returned None at {current_path}"
+                )
                 continue
 
             for entry in entries:
@@ -860,14 +912,17 @@ class FileManager:
                 except (NotADirectoryError, FileNotFoundError):
                     files.append(full_path)
                 except Exception as e:
-                    print(f"[collect_dirs_and_files] Skipping {full_path}: {type(e).__name__} — {e}")
+                    print(
+                        f"[collect_dirs_and_files] Skipping {full_path}: {type(e).__name__} — {e}"
+                    )
                     continue
 
         # Apply natural sorting to both dirs and files before returning
         from .utils import natural_sort
+
         return natural_sort(dirs), natural_sort(files)
-    
-    def is_file(self, path: Union[str, Path], backend: str) -> bool:
+
+    def is_file(self, path: str | Path, backend: str) -> bool:
         """
         Check if a given path is a file using the specified backend.
 
@@ -885,7 +940,7 @@ class FileManager:
             # Return False for any error (file not found, is a directory, backend issues)
             return False
 
-    def is_dir(self, path: Union[str, Path], backend: str) -> bool:
+    def is_dir(self, path: str | Path, backend: str) -> bool:
         """
         Check if a given path is a directory using the specified backend.
 
@@ -909,8 +964,8 @@ class FileManager:
             raise StorageResolutionError(
                 f"Failed to check if {path} is a directory with backend '{backend}'"
             ) from e
-            
-    def is_symlink(self, path: Union[str, Path], backend: str) -> bool:
+
+    def is_symlink(self, path: str | Path, backend: str) -> bool:
         """
         Check if a given path is a symbolic link using the specified backend.
 

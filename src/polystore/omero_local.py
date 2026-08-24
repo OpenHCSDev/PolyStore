@@ -7,26 +7,29 @@ Reads directly from OMERO binary repository, saves results back to OMERO.
 
 import logging
 import os
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Mapping, Optional, Set, Union, Tuple
-from collections import defaultdict
-from datetime import datetime
 import threading
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 # Cross-platform file locking
 try:
     import fcntl
+
     FCNTL_AVAILABLE = True
 except ImportError:
     import portalocker
+
     FCNTL_AVAILABLE = False
 
 import numpy as np
 
-from .base import VirtualBackend, PicklableBackend, storage_registry
-from .formats import FileFormat
+from .array_payload import storage_numpy_array
+from .base import PicklableBackend, VirtualBackend
+from .omero_tables import OMERO_TABLE_SERVICE
+from .omero_text import OMEROTextFormat
 
 logger = logging.getLogger(__name__)
 
@@ -37,32 +40,10 @@ DEFAULT_OMERO_WELL_DESCRIPTION_TEMPLATE = os.getenv(
 )
 
 
-class OMEROFileFormatRegistry:
-    """Registry for OMERO file format handlers (text files saved as FileAnnotations)."""
-
-    def __init__(self):
-        self._text_extensions: Set[str] = set()
-        self._mimetypes: Dict[str, str] = {}
-
-    def register_text_format(self, extensions: List[str], mimetype: str):
-        """Register a text format that should be saved as FileAnnotation."""
-        for ext in extensions:
-            ext = ext.lower()
-            self._text_extensions.add(ext)
-            self._mimetypes[ext] = mimetype
-
-    def is_text_format(self, ext: str) -> bool:
-        """Check if extension is registered as text format."""
-        return ext.lower() in self._text_extensions
-
-    def get_mimetype(self, ext: str) -> str:
-        """Get MIME type for extension."""
-        return self._mimetypes.get(ext.lower(), 'text/plain')
-
-
 @dataclass
 class ImageStructure:
     """Metadata for a single OMERO image."""
+
     image_id: int
     sizeZ: int
     sizeC: int
@@ -74,23 +55,73 @@ class ImageStructure:
 @dataclass
 class WellStructure:
     """Metadata for a single well."""
-    sites: Dict[int, ImageStructure]  # site_idx → ImageStructure
+
+    sites: dict[int, ImageStructure]  # site_idx → ImageStructure
 
 
 @dataclass
 class PlateStructure:
     """Lightweight metadata for entire plate."""
+
     plate_id: int
     parser_name: str
     microscope_type: str
-    wells: Dict[str, WellStructure]  # well_id → WellStructure
+    wells: dict[str, WellStructure]  # well_id → WellStructure
 
     # Cached for quick access
-    all_well_ids: Set[str]
+    all_well_ids: set[str]
     max_sites: int
     max_z: int
     max_c: int
     max_t: int
+
+
+@dataclass
+class ImagePlaneBatch:
+    """Own one OMERO image's normalized planes and declared ZCT dimensions."""
+
+    planes: dict[tuple[int, int, int], np.ndarray] = field(default_factory=dict)
+    size_z: int = 0
+    size_c: int = 0
+    size_t: int = 0
+
+    def add(self, *, z: int, c: int, t: int, data: Any) -> None:
+        """Normalize and add one plane at its zero-based OMERO coordinate."""
+
+        plane = storage_numpy_array(data)
+        if plane.ndim != 2:
+            raise ValueError(f"OMERO image planes must be 2D, got shape {plane.shape}")
+        self.planes[(z, c, t)] = plane
+        self.size_z = max(self.size_z, z + 1)
+        self.size_c = max(self.size_c, c + 1)
+        self.size_t = max(self.size_t, t + 1)
+
+    def iter_omero_planes(self):
+        """Yield a rectangular, dtype-consistent plane sequence in ZCT order."""
+
+        if not self.planes:
+            raise ValueError("Cannot create an OMERO image without planes")
+
+        height = max(plane.shape[0] for plane in self.planes.values())
+        width = max(plane.shape[1] for plane in self.planes.values())
+        dtype = np.result_type(*(plane.dtype for plane in self.planes.values()))
+
+        for t in range(self.size_t):
+            for c in range(self.size_c):
+                for z in range(self.size_z):
+                    plane = self.planes.get((z, c, t))
+                    if plane is None:
+                        yield np.zeros((height, width), dtype=dtype)
+                        continue
+
+                    normalized = np.asarray(plane, dtype=dtype)
+                    if normalized.shape == (height, width):
+                        yield normalized
+                        continue
+
+                    padded = np.zeros((height, width), dtype=dtype)
+                    padded[: normalized.shape[0], : normalized.shape[1]] = normalized
+                    yield padded
 
 
 class OMEROLocalBackend(VirtualBackend, PicklableBackend):
@@ -104,13 +135,13 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
     connection parameters across process boundaries.
     """
 
-    _backend_type = 'omero_local'
+    _backend_type = "omero_local"
 
     def resolve_listed_address(
         self,
-        listed_address: Union[str, Path],
+        listed_address: str | Path,
         *,
-        directory: Union[str, Path],
+        directory: str | Path,
     ) -> str:
         """Qualify a generated filename within its OMERO virtual directory."""
 
@@ -121,7 +152,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         return (base / address).as_posix()
 
     # Class-level lock dictionary for thread-safe well creation
-    _well_locks: Dict[str, threading.Lock] = {}
+    _well_locks: dict[str, threading.Lock] = {}
     _well_locks_lock = threading.Lock()  # Lock for the lock dictionary itself
 
     def contextual_save_kwargs(
@@ -147,16 +178,17 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
     def __init__(
         self,
-        omero_data_dir: Optional[Path] = None,
+        omero_data_dir: Path | None = None,
         omero_conn=None,
         namespace_prefix: str = "polystore",
         lock_dir_name: str = ".polystore",
     ):
         try:
             from omero.gateway import BlitzGateway
+
             self._BlitzGateway = BlitzGateway
-        except ImportError:
-            raise ImportError("omero-py required: pip install omero-py")
+        except ImportError as error:
+            raise ImportError("omero-py required: pip install omero-py") from error
 
         if omero_data_dir:
             omero_data_dir = Path(omero_data_dir)
@@ -170,21 +202,21 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
         # Store connection parameters for reconnection in worker processes
         self._conn_params = None
-        if omero_conn:
-            try:
-                self._conn_params = {
-                    'host': omero_conn.host,
-                    'port': omero_conn.port,
-                    'username': omero_conn.getUser().getName(),
-                    # Password not available from connection object
-                }
-            except:
-                pass  # Connection params not available
+        if omero_conn is not None:
+            user = omero_conn.getUser()
+            if user is None:
+                raise ValueError("Connected OMERO gateway has no authenticated user")
+            self._conn_params = {
+                "host": omero_conn.host,
+                "port": omero_conn.port,
+                "username": user.getName(),
+                # Password is intentionally obtained from the worker environment.
+            }
 
         # Caches for virtual filesystem
-        self._plate_metadata: Dict[int, PlateStructure] = {}
-        self._parser_cache: Dict[int, Any] = {}  # plate_id → parser instance
-        self._plate_name_cache: Dict[str, int] = {}  # plate_name → plate_id
+        self._plate_metadata: dict[int, PlateStructure] = {}
+        self._parser_cache: dict[int, Any] = {}  # plate_id → parser instance
+        self._plate_name_cache: dict[str, int] = {}  # plate_name → plate_id
 
         # Namespace configuration
         self._namespace_prefix = namespace_prefix
@@ -198,37 +230,14 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
         # Parser registry - use auto-discovered FilenameParser registry from openhcs
         from openhcs.microscopes.microscope_interfaces import FilenameParser
+
         self._parser_registry = FilenameParser.__registry__
-
-        # File format registry
-        self.format_registry = OMEROFileFormatRegistry()
-        self._register_formats()
-
-    def _register_formats(self):
-        """Register supported text file formats for FileAnnotation storage."""
-        # JSON files
-        self.format_registry.register_text_format(
-            FileFormat.JSON.extensions,
-            'application/json'
-        )
-
-        # CSV files
-        self.format_registry.register_text_format(
-            FileFormat.CSV.extensions,
-            'text/csv'
-        )
-
-        # Text files
-        self.format_registry.register_text_format(
-            FileFormat.TEXT.extensions,
-            'text/plain'
-        )
 
     def __getstate__(self):
         """Exclude unpicklable connection from pickle."""
         state = self.__dict__.copy()
         # Remove unpicklable connection
-        state['_initial_conn'] = None
+        state["_initial_conn"] = None
         return state
 
     def __setstate__(self, state):
@@ -236,7 +245,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         self.__dict__.update(state)
         # Connection will be retrieved from global registry in worker process
 
-    def get_connection_params(self) -> Optional[Dict[str, Any]]:
+    def get_connection_params(self) -> dict[str, Any] | None:
         """
         Return connection parameters for worker process reconnection.
 
@@ -248,7 +257,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         """
         return self._conn_params
 
-    def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
+    def set_connection_params(self, params: dict[str, Any] | None) -> None:
         """
         Set connection parameters (used during unpickling).
 
@@ -261,70 +270,40 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
     def _get_connection(self, **kwargs):
         """
-        Get OMERO connection from kwargs, instance, global registry, or create new one.
+        Get an explicit OMERO connection or reconnect from serialized parameters.
 
-        This method handles multiple scenarios:
-        1. Connection passed via kwargs (highest priority)
-        2. Connection stored in this instance
-        3. Connection from global registry backend
-        4. Create new connection using stored params (worker process)
-
-        This ensures the backend remains picklable for multiprocessing.
+        The instance connection is authoritative in its creating process. Pickled
+        workers reconnect from the parameters declared by PicklableBackend.
         """
-        conn = kwargs.get('omero_conn')
-        if not conn and self._initial_conn:
+        conn = kwargs.get("omero_conn")
+        if conn is None and self._initial_conn is not None:
             conn = self._initial_conn
 
-        if not conn:
-            # Try to get from global registry
-            # This handles the case where orchestrator copies the registry
-            # but the copy's backend doesn't have the connection
-            try:
-                backend = storage_registry.get('omero_local')
-                if backend and backend is not self and hasattr(backend, '_initial_conn') and backend._initial_conn:
-                    conn = backend._initial_conn
-                    # Cache it in this instance too
-                    self._initial_conn = conn
-                    logger.debug("Retrieved OMERO connection from global registry backend")
-            except Exception as e:
-                logger.debug(f"Could not get connection from global registry: {e}")
-
-        if not conn and self._conn_params:
-            # Worker process or fresh instance: create new connection using stored params
-            logger.info(f"Creating new OMERO connection to {self._conn_params.get('host')}:{self._conn_params.get('port')}")
-            try:
-                # Get password from environment or use default
-                import os
-                password = os.getenv("OMERO_PASSWORD", "polystore")
-
-                conn = self._BlitzGateway(
-                    self._conn_params['username'],
-                    password,
-                    host=self._conn_params['host'],
-                    port=self._conn_params['port']
+        if conn is None and self._conn_params is not None:
+            logger.info(
+                "Creating new OMERO connection to %s:%s",
+                self._conn_params["host"],
+                self._conn_params["port"],
+            )
+            conn = self._BlitzGateway(
+                self._conn_params["username"],
+                os.getenv("OMERO_PASSWORD", "polystore"),
+                host=self._conn_params["host"],
+                port=self._conn_params["port"],
+            )
+            if not conn.connect():
+                raise ConnectionError(
+                    "Failed to connect to OMERO at "
+                    f"{self._conn_params['host']}:{self._conn_params['port']}"
                 )
-                if not conn.connect():
-                    raise ConnectionError(f"Failed to connect to OMERO at {self._conn_params['host']}:{self._conn_params['port']}")
+            self._initial_conn = conn
+            logger.info("Successfully connected to OMERO")
 
-                # Python 3.11 compatibility: Ensure session is fully established
-                # by explicitly calling keepAlive() after connection
-                try:
-                    conn.c.sf.keepAlive(None)
-                except Exception as e:
-                    logger.warning(f"keepAlive() call failed (non-fatal): {e}")
-
-                # Cache the connection
-                self._initial_conn = conn
-                logger.info("Successfully connected to OMERO")
-            except Exception as e:
-                logger.error(f"Failed to create OMERO connection: {e}")
-                raise
-
-        if not conn:
+        if conn is None:
             raise ValueError(
                 "No OMERO connection available. "
-                "Pass omero_conn via kwargs, set in instance, ensure global registry has connection, "
-                "or provide connection params for auto-reconnection."
+                "Pass omero_conn, construct the backend with one, or provide "
+                "PicklableBackend connection parameters."
             )
         return conn
 
@@ -332,27 +311,21 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         """Validate OMERO connection is available."""
         self._get_connection(**kwargs)
 
-    def _get_parser_from_plate_metadata(self, plate) -> str:
-        """Get parser name from OMERO plate metadata."""
-        for ann in plate.listAnnotations():
-            if hasattr(ann, "getNs") and ann.getNs() == self._metadata_namespace:
-                metadata = {kv[0]: kv[1] for kv in ann.getValue()}
-                parser_name = metadata.get(self._parser_key)
-                if parser_name:
-                    return parser_name
+    def _plate_metadata_value(self, plate, key: str) -> str:
+        """Return one value from the plate's declared OpenHCS map annotation."""
 
-        raise ValueError(f"Plate {plate.getId()} missing {self._parser_key} metadata")
+        from omero.gateway import MapAnnotationWrapper
 
-    def _get_microscope_type_from_plate_metadata(self, plate) -> str:
-        """Get microscope type from OMERO plate metadata."""
-        for ann in plate.listAnnotations():
-            if hasattr(ann, "getNs") and ann.getNs() == self._metadata_namespace:
-                metadata = {kv[0]: kv[1] for kv in ann.getValue()}
-                microscope_type = metadata.get(self._microscope_key)
-                if microscope_type:
-                    return microscope_type
+        for annotation in plate.listAnnotations():
+            if not isinstance(annotation, MapAnnotationWrapper):
+                continue
+            if annotation.getNs() != self._metadata_namespace:
+                continue
+            metadata = dict(annotation.getValue())
+            if key in metadata:
+                return str(metadata[key])
 
-        raise ValueError(f"Plate {plate.getId()} missing {self._microscope_key} metadata")
+        raise ValueError(f"Plate {plate.getId()} missing {key} metadata")
 
     def _load_parser(self, parser_name: str):
         """Dynamically load parser class by name."""
@@ -381,27 +354,29 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             ValueError: If plate not found or missing metadata
         """
         import time
-        
+
         conn = self._get_connection(**kwargs)
 
         # Query OMERO for plate with retry mechanism
         # Plates may need time to become available after upload
         max_retries = 30
         retry_delay = 1.0
-        
+
         for attempt in range(max_retries):
             plate = conn.getObject("Plate", plate_id)
             if plate:
                 break
             if attempt < max_retries - 1:
-                logger.info(f"Plate {plate_id} not found yet, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                logger.info(
+                    f"Plate {plate_id} not found yet, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})"
+                )
                 time.sleep(retry_delay)
             else:
                 raise ValueError(f"OMERO Plate not found after {max_retries} retries: {plate_id}")
 
         # Get parser metadata
-        parser_name = self._get_parser_from_plate_metadata(plate)
-        microscope_type = self._get_microscope_type_from_plate_metadata(plate)
+        parser_name = self._plate_metadata_value(plate, self._parser_key)
+        microscope_type = self._plate_metadata_value(plate, self._microscope_key)
 
         # Load parser (cache it)
         if plate_id not in self._parser_cache:
@@ -416,9 +391,8 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         max_t = 0
 
         for well in plate.listChildren():
-            # Handle both OMERO rtypes and plain Python types
-            row = well.row.val if hasattr(well.row, 'val') else well.row
-            col = well.column.val if hasattr(well.column, 'val') else well.column
+            row = int(well.row)
+            col = int(well.column)
             well_id = f"{chr(ord('A') + row)}{col + 1:02d}"
             all_well_ids.add(well_id)
 
@@ -435,7 +409,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                     sizeC=image.getSizeC(),
                     sizeT=image.getSizeT(),
                     sizeY=image.getSizeY(),
-                    sizeX=image.getSizeX()
+                    sizeX=image.getSizeX(),
                 )
                 sites[site_idx] = image_struct
 
@@ -457,14 +431,16 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             max_sites=max_sites,
             max_z=max_z,
             max_c=max_c,
-            max_t=max_t
+            max_t=max_t,
         )
 
-        logger.info(f"Loaded plate structure for {plate_id}: "
-                    f"{len(wells)} wells, {max_sites} sites, "
-                    f"{max_z}Z × {max_c}C × {max_t}T")
-    
-    def load(self, file_path: Union[str, Path], **kwargs) -> np.ndarray:
+        logger.info(
+            f"Loaded plate structure for {plate_id}: "
+            f"{len(wells)} wells, {max_sites} sites, "
+            f"{max_z}Z × {max_c}C × {max_t}T"
+        )
+
+    def load(self, file_path: str | Path, **kwargs) -> np.ndarray:
         """
         Load by parsing filename to extract coordinates, then lookup image.
 
@@ -484,10 +460,13 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
         # Extract plate_id from plate directory name
         import re
+
         plate_dir_name = plate_dir.name  # "plate_59" or "plate_59_outputs"
-        match = re.match(r'plate_(\d+)', plate_dir_name)
+        match = re.match(r"plate_(\d+)", plate_dir_name)
         if not match:
-            raise ValueError(f"Could not extract plate_id from path: {file_path}. Expected /omero/plate_<id>/filename format")
+            raise ValueError(
+                f"Could not extract plate_id from path: {file_path}. Expected /omero/plate_<id>/filename format"
+            )
 
         plate_id = int(match.group(1))
 
@@ -506,11 +485,11 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         if not parsed:
             raise ValueError(f"Cannot parse filename: {filename}")
 
-        well_id = parsed['well']
-        site_idx = parsed['site']
-        z_idx = parsed['z_index'] - 1  # Convert to 0-based
-        c_idx = parsed['channel'] - 1
-        t_idx = parsed['timepoint'] - 1
+        well_id = parsed["well"]
+        site_idx = parsed["site"]
+        z_idx = parsed["z_index"] - 1  # Convert to 0-based
+        c_idx = parsed["channel"] - 1
+        t_idx = parsed["timepoint"] - 1
 
         # Lookup image_id from structure
         if well_id not in plate_struct.wells:
@@ -539,12 +518,14 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         pixels = image.getPrimaryPixels()
         plane = pixels.getPlane(z_idx, c_idx, t_idx)  # Returns 2D numpy array
 
-        logger.debug(f"Loaded {filename} → image {image_struct.image_id}, "
-                     f"z={z_idx}, c={c_idx}, t={t_idx}, shape={plane.shape}")
+        logger.debug(
+            f"Loaded {filename} → image {image_struct.image_id}, "
+            f"z={z_idx}, c={c_idx}, t={t_idx}, shape={plane.shape}"
+        )
 
         return plane
 
-    def save(self, data: Any, output_path: Union[str, Path], **kwargs) -> None:
+    def save(self, data: Any, output_path: str | Path, **kwargs) -> None:
         """
         Save data to OMERO.
 
@@ -565,13 +546,13 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # Explicit type dispatch - fail-loud
         if self._is_roi_payload(data):
             # ROI data - save as OMERO ROI objects
-            images_dir = kwargs.pop('images_dir', None)
+            images_dir = kwargs.pop("images_dir", None)
             self._save_rois(data, output_path, images_dir=images_dir, **kwargs)
         elif self._is_text_payload(data, output_path):
             # Try to parse as tabular data and save as OMERO.table
             # Extract images_dir from kwargs if present (passed via filemanager context)
             # Remove it from kwargs to avoid duplicate keyword argument error
-            images_dir = kwargs.pop('images_dir', None)
+            images_dir = kwargs.pop("images_dir", None)
             self._save_as_table_or_annotation(data, output_path, images_dir=images_dir, **kwargs)
         else:
             # Image data - save as OMERO image
@@ -586,19 +567,14 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
     def _is_text_payload(self, data: Any, output_path: Path) -> bool:
         """Return whether one payload uses OMERO's annotation/table save path."""
-        return isinstance(data, str) and self.format_registry.is_text_format(
-            output_path.suffix
-        )
+        return isinstance(data, str) and OMEROTextFormat.for_path(output_path) is not None
 
-    def _save_as_table_or_annotation(self, text_content: str, output_path: Path, images_dir: str = None, **kwargs) -> None:
+    def _save_as_table_or_annotation(
+        self, text_content: str, output_path: Path, images_dir: str = None, **kwargs
+    ) -> None:
         """
         Try to parse text content as tabular data and save as OMERO.table.
         If parsing fails, fall back to FileAnnotation.
-
-        Supports:
-        - CSV files (direct parsing)
-        - JSON files (if they contain tabular data)
-        - TXT files (if they contain tabular data)
 
         Args:
             text_content: Text content to save
@@ -606,65 +582,26 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             images_dir: Directory containing images (required for analysis results to link to correct plate)
             **kwargs: Additional arguments
         """
-        import pandas as pd
-        from io import StringIO
-        import json
+        table = OMEROTextFormat.require_path(output_path).table(text_content)
+        if table is None:
+            self._save_text_annotation(
+                text_content,
+                output_path,
+                images_dir=images_dir,
+                **kwargs,
+            )
+            return
 
-        df = None
+        self._save_csv_as_table(
+            table.to_csv(index=False),
+            output_path,
+            images_dir=images_dir,
+            **kwargs,
+        )
 
-        # Try to parse based on file extension
-        suffix = output_path.suffix.lower()
-
-        try:
-            if suffix == '.csv':
-                # Parse CSV directly
-                df = pd.read_csv(StringIO(text_content))
-            elif suffix == '.json':
-                # Try to parse JSON as tabular data
-                data = json.loads(text_content)
-                # Check if it's a list of dicts (table-like) or a dict with list values
-                if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-                    df = pd.DataFrame(data)
-                elif isinstance(data, dict):
-                    # Try to convert dict to DataFrame
-                    df = pd.DataFrame(data)
-            elif suffix == '.txt':
-                # Try to parse as CSV (tab or comma separated)
-                # First try tab-separated
-                try:
-                    df = pd.read_csv(StringIO(text_content), sep='\t')
-                    # Check if it actually parsed into multiple columns
-                    if len(df.columns) == 1:
-                        # Try comma-separated
-                        df = pd.read_csv(StringIO(text_content))
-                except:
-                    # Try comma-separated
-                    try:
-                        df = pd.read_csv(StringIO(text_content))
-                    except:
-                        # Try to parse as key-value pairs (e.g., "Key: Value" format)
-                        lines = text_content.strip().split('\n')
-                        data = {}
-                        for line in lines:
-                            if ':' in line:
-                                key, value = line.split(':', 1)
-                                data[key.strip()] = [value.strip()]
-                        if data:
-                            df = pd.DataFrame(data)
-        except Exception:
-            # Parsing failed, will fall back to FileAnnotation
-            df = None
-
-        # If we successfully parsed tabular data, save as OMERO.table
-        if df is not None and not df.empty and len(df.columns) > 0:
-            # Convert back to CSV for the table creation method
-            csv_content = df.to_csv(index=False)
-            self._save_csv_as_table(csv_content, output_path, images_dir=images_dir, **kwargs)
-        else:
-            # Fall back to FileAnnotation
-            self._save_text_annotation(text_content, output_path, images_dir=images_dir, **kwargs)
-
-    def _save_csv_as_table(self, csv_content: str, output_path: Path, images_dir: str = None, **kwargs) -> None:
+    def _save_csv_as_table(
+        self, csv_content: str, output_path: Path, images_dir: str = None, **kwargs
+    ) -> None:
         """
         Save CSV content as an OMERO.table (queryable structured data).
 
@@ -676,11 +613,12 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             images_dir: Directory containing images (required to link table to correct plate)
             **kwargs: Additional arguments
         """
-        from omero.grid import LongColumn, DoubleColumn, StringColumn, BoolColumn
+        from io import StringIO
+
+        import pandas as pd
+        from omero.grid import BoolColumn, DoubleColumn, LongColumn, StringColumn
         from omero.model import FileAnnotationI
         from omero.rtypes import rstring
-        import pandas as pd
-        from io import StringIO
 
         conn = self._get_connection(**kwargs)
 
@@ -700,17 +638,17 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # The path contains the INPUT plate ID (274), but we need the OUTPUT plate ID
         # We must parse the full plate name and query OMERO to get the actual ID
         images_dir = Path(images_dir)
-        plate_name, base_id, is_derived = self._parse_omero_path(images_dir)
+        plate_name, _, _ = self._parse_omero_path(images_dir)
 
         # Query OMERO for the actual plate ID by name
         plate_id = self._find_plate_by_name(plate_name, **kwargs)
-        if not plate_id:
+        if plate_id is None:
             raise ValueError(f"Plate '{plate_name}' not found in OMERO (images dir: {images_dir})")
 
         # Determine table name from filename
         # Remove ALL extensions (e.g., "file.roi.zip.json" -> "file")
         # OMERO table names cannot contain dots except for the .h5 extension
-        table_name = output_path.name.split('.')[0]
+        table_name = output_path.name.split(".")[0]
 
         # Build column objects based on DataFrame dtypes
         columns = []
@@ -719,94 +657,25 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
             # Determine column type from pandas dtype
             if pd.api.types.is_integer_dtype(col_data):
-                col = LongColumn(col_name, '', [])
+                col = LongColumn(col_name, "", [])
                 col.values = col_data.astype(int).tolist()
             elif pd.api.types.is_float_dtype(col_data):
-                col = DoubleColumn(col_name, '', [])
+                col = DoubleColumn(col_name, "", [])
                 col.values = col_data.astype(float).tolist()
             elif pd.api.types.is_bool_dtype(col_data):
-                col = BoolColumn(col_name, '', [])
+                col = BoolColumn(col_name, "", [])
                 col.values = col_data.astype(bool).tolist()
             else:
                 # Default to string column
                 # Calculate max string length (OMERO requires size > 0)
                 str_values = col_data.astype(str).tolist()
                 max_len = max(len(s) for s in str_values) if str_values else 1
-                col = StringColumn(col_name, '', max_len, [])
+                col = StringColumn(col_name, "", max_len, [])
                 col.values = str_values
 
             columns.append(col)
 
-        # Create table via OMERO.tables service
-        # Python 3.11 compatibility: In multiprocessing contexts, the sharedResources
-        # may not be immediately available after connection. Retry with exponential backoff.
-        import time
-
-        max_retries = 3
-        retry_delay = 0.1  # Start with 100ms
-
-        for attempt in range(max_retries):
-            try:
-                resources = conn.c.sf.sharedResources()
-
-                # Get repository ID - fail-loud if no repositories available
-                repositories = resources.repositories()
-                if not repositories or not repositories.descriptions:
-                    if attempt < max_retries - 1:
-                        # Retry - repositories may not be ready yet
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
-                        continue
-                    else:
-                        raise RuntimeError(
-                            "No OMERO repositories available for table creation after retries. "
-                            "This may indicate an OMERO server configuration issue."
-                        )
-
-                # Get repository ID with explicit None checks
-                repo_desc = repositories.descriptions[0]
-                repo_id_obj = repo_desc.getId()
-
-                if repo_id_obj is None:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-                        continue
-                    else:
-                        raise RuntimeError(
-                            f"Repository description exists but getId() returned None after retries. "
-                            f"This may be a Python 3.11/Ice compatibility issue."
-                        )
-
-                repository_id = repo_id_obj.getValue()
-
-                if repository_id is None:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-                        continue
-                    else:
-                        raise RuntimeError(
-                            f"Repository ID object exists but getValue() returned None after retries. "
-                            f"This may be a Python 3.11/Ice compatibility issue."
-                        )
-
-                # Successfully got repository_id, create table
-                table = resources.newTable(repository_id, f"{table_name}.h5")
-                break  # Success, exit retry loop
-
-            except Exception as e:
-                if attempt < max_retries - 1 and "null table" in str(e).lower():
-                    # Retry on "null table" errors
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                    continue
-                else:
-                    # Re-raise on final attempt or non-retryable errors
-                    raise
-
-        if table is None:
-            raise RuntimeError("Failed to create OMERO.table")
+        table = OMERO_TABLE_SERVICE.create_table(conn, f"{table_name}.h5")
 
         try:
             # Initialize table with columns
@@ -822,7 +691,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             file_ann = FileAnnotationI()
             file_ann.setFile(orig_file)
             file_ann.setNs(rstring(self._analysis_table_namespace))
-            file_ann.setDescription(rstring(f'Analysis results table: {table_name}'))
+            file_ann.setDescription(rstring(f"Analysis results table: {table_name}"))
             file_ann = conn.getUpdateService().saveAndReturnObject(file_ann)
 
             # Link to plate
@@ -839,7 +708,9 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         finally:
             table.close()
 
-    def _save_text_annotation(self, text_content: str, output_path: Path, images_dir: str = None, **kwargs) -> None:
+    def _save_text_annotation(
+        self, text_content: str, output_path: Path, images_dir: str = None, **kwargs
+    ) -> None:
         """Save text content as a FileAnnotation attached to OMERO object.
 
         Args:
@@ -874,40 +745,37 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         import tempfile
 
         # Write content to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix=output_path.suffix, delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=output_path.suffix, delete=False) as tmp:
             tmp.write(text_content)
             tmp_path = tmp.name
 
         try:
             # Upload file to OMERO with the actual filename from output_path
-            # Get MIME type from registry
-            mimetype = self.format_registry.get_mimetype(output_path.suffix)
+            mimetype = OMEROTextFormat.require_path(output_path).mimetype
 
             file_ann = conn.createFileAnnfromLocalFile(
                 tmp_path,
                 origFilePathAndName=output_path.name,  # Use actual filename, not temp name
                 mimetype=mimetype,
                 ns=self._analysis_namespace,
-                desc=f'Analysis results: {output_path.name}'
+                desc=f"Analysis results: {output_path.name}",
             )
 
             # Attach to plate
             plate = conn.getObject("Plate", plate_id)
-            if plate:
+            if plate is not None:
                 plate.linkAnnotation(file_ann)
                 logger.info(f"Attached {output_path.name} as FileAnnotation to plate {plate_id}")
             else:
                 logger.warning(f"Plate {plate_id} not found, FileAnnotation created but not linked")
         finally:
-            # Clean up temp file
-            import os
             os.unlink(tmp_path)
 
     def _save_image(self, data: Any, output_path: Path, **kwargs) -> None:
         """Save image data to OMERO as new image."""
         conn = self._get_connection(**kwargs)
 
-        dataset_id = kwargs.get('dataset_id')
+        dataset_id = kwargs.get("dataset_id")
         if not dataset_id:
             raise ValueError("dataset_id required")
 
@@ -944,32 +812,13 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             sizeZ=sizeZ,
             sizeC=sizeC,
             sizeT=sizeT,
-            description=kwargs.get('description', DEFAULT_OMERO_DESCRIPTION),
-            dataset=dataset
+            description=kwargs.get("description", DEFAULT_OMERO_DESCRIPTION),
+            dataset=dataset,
         )
 
         logger.info(f"Created OMERO image {new_image.getId()}: {image_name}")
 
-    def exists(self, path: Union[str, Path], **kwargs) -> bool:
-        """
-        Check if a file/annotation exists in OMERO.
-
-        For text files (JSON/CSV): Check if FileAnnotation exists
-        For images: Check if image exists in plate
-        """
-        path = Path(path)
-
-        # For text files, check FileAnnotations using registry
-        if self.format_registry.is_text_format(path.suffix):
-            # For now, return False to allow overwrite
-            # TODO: Implement proper FileAnnotation lookup
-            return False
-
-        # For images, check if image exists
-        # TODO: Implement proper image lookup
-        return False
-
-    def delete(self, path: Union[str, Path], **kwargs) -> bool:
+    def delete(self, path: str | Path, **kwargs) -> bool:
         """
         Delete a file/annotation from OMERO.
 
@@ -979,7 +828,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         path = Path(path)
 
         # For text files, delete FileAnnotation using registry
-        if self.format_registry.is_text_format(path.suffix):
+        if OMEROTextFormat.for_path(path) is not None:
             # For now, just log and return success
             # FileAnnotations will be overwritten on save
             logger.debug(f"Delete requested for {path} - will be overwritten on save")
@@ -989,7 +838,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         logger.warning(f"Delete not supported for OMERO images: {path}")
         return False
 
-    def _parse_omero_path(self, path: Path) -> Tuple[str, int, bool]:
+    def _parse_omero_path(self, path: Path) -> tuple[str, int, bool]:
         """Extract (plate_name, base_id, is_derived) from path.
 
         This method extracts the OMERO plate name from a path by combining the base plate directory
@@ -1012,7 +861,9 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # Extract subdirectories (everything between base_name and filename)
         # For /omero/plate_289_outputs/images/A01.tif, subdirs should be ["images"]
         # parts[3:-1] excludes both the base_name (parts[2]) and the filename (parts[-1])
-        subdirs = list(parts[3:-1]) if len(parts) > 4 else (list(parts[3:]) if len(parts) == 4 else [])
+        subdirs = (
+            list(parts[3:-1]) if len(parts) > 4 else (list(parts[3:]) if len(parts) == 4 else [])
+        )
 
         if not base_name.startswith("plate_"):
             raise ValueError(f"OMERO path must use 'plate_{{id}}' format: {base_name}")
@@ -1040,7 +891,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
         return plate_struct.wells[well_id].sites[site].image_id
 
-    def _find_plate_by_name(self, plate_name: str, **kwargs) -> Optional[int]:
+    def _find_plate_by_name(self, plate_name: str, **kwargs) -> int | None:
         """Query OMERO for plate by name."""
         conn = self._get_connection(**kwargs)
         plates = conn.getObjects("Plate", attributes={"name": plate_name})
@@ -1048,7 +899,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             return plate.getId()
         return None
 
-    def save_batch(self, data_list: List[Any], identifiers: List[Union[str, Path]], **kwargs) -> None:
+    def save_batch(self, data_list: list[Any], identifiers: list[str | Path], **kwargs) -> None:
         """Save images in one plate batch and route other artifacts individually."""
         if len(data_list) != len(identifiers):
             raise ValueError(f"Length mismatch: {len(data_list)} vs {len(identifiers)}")
@@ -1058,7 +909,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         image_data = []
         image_identifiers = []
         individual_items = []
-        for data, identifier in zip(data_list, identifiers):
+        for data, identifier in zip(data_list, identifiers, strict=True):
             output_path = Path(identifier)
             if self._is_roi_payload(data) or self._is_text_payload(data, output_path):
                 individual_items.append((data, identifier))
@@ -1073,17 +924,17 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
     def _save_image_batch(
         self,
-        data_list: List[Any],
-        identifiers: List[Union[str, Path]],
+        data_list: list[Any],
+        identifiers: list[str | Path],
         **kwargs,
     ) -> None:
         """Save one batch of image planes through OMERO plate creation."""
 
-        parser_name = kwargs.get('parser_name')
+        parser_name = kwargs.get("parser_name")
         if not parser_name:
             raise ValueError("parser_name required for OMERO save_batch")
 
-        microscope_type = kwargs.get('microscope_type')
+        microscope_type = kwargs.get("microscope_type")
         if not microscope_type:
             raise ValueError("microscope_type required for OMERO save_batch")
 
@@ -1097,27 +948,30 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             raise ValueError(f"Cannot save batch across multiple plates: {plate_names}")
 
         parser = self._load_parser(parser_name)
-        plate_name, base_id, is_derived = self._parse_omero_path(Path(identifiers[0]))
+        plate_name, base_id, _ = self._parse_omero_path(Path(identifiers[0]))
 
         # Group data by image (well + site)
-        images = defaultdict(lambda: {'planes': {}, 'max_z': 0, 'max_c': 0, 'max_t': 0})
-        for data, path in zip(data_list, identifiers):
+        images: dict[tuple[str, int], ImagePlaneBatch] = {}
+        for data, path in zip(data_list, identifiers, strict=True):
             parsed = parser.parse_filename(Path(path).name)
-            well_id, site = parsed['well'], parsed['site']
-            z, c, t = parsed.get('z_index', 1) - 1, parsed.get('channel', 1) - 1, parsed.get('timepoint', 1) - 1
+            well_id, site = parsed["well"], parsed["site"]
+            z, c, t = (
+                parsed.get("z_index", 1) - 1,
+                parsed.get("channel", 1) - 1,
+                parsed.get("timepoint", 1) - 1,
+            )
 
             image_key = (well_id, site)
-            images[image_key]['planes'][(z, c, t)] = data
-            images[image_key]['max_z'] = max(images[image_key]['max_z'], z + 1)
-            images[image_key]['max_c'] = max(images[image_key]['max_c'], c + 1)
-            images[image_key]['max_t'] = max(images[image_key]['max_t'], t + 1)
+            images.setdefault(image_key, ImagePlaneBatch()).add(z=z, c=c, t=t, data=data)
 
         # Get or create plate with locking
         plate_id = self._plate_name_cache.get(plate_name)
         if plate_id is None:
             # Remove parser_name and microscope_type from kwargs to avoid duplicate argument error
             # (they're already passed as positional arguments)
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ('parser_name', 'microscope_type')}
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items() if k not in ("parser_name", "microscope_type")
+            }
             plate_id = self._get_or_create_plate_with_lock(
                 plate_name, base_id, parser_name, microscope_type, images, **filtered_kwargs
             )
@@ -1126,14 +980,16 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # Write planes
         self._write_planes_to_plate(plate_id, images, **kwargs)
 
-    def _get_or_create_plate_with_lock(self, plate_name, base_id, parser_name, microscope_type, images, **kwargs):
+    def _get_or_create_plate_with_lock(
+        self, plate_name, base_id, parser_name, microscope_type, images, **kwargs
+    ):
         """Create plate with file locking (like zarr metadata)."""
-        lock_dir = Path.home() / self._lock_dir_name / 'omero_locks'
+        lock_dir = Path.home() / self._lock_dir_name / "omero_locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = lock_dir / f"{plate_name}.lock"
 
         try:
-            with open(lock_path, 'w') as lock_file:
+            with open(lock_path, "w") as lock_file:
                 if FCNTL_AVAILABLE:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
                 else:
@@ -1144,40 +1000,24 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                     self._load_plate_structure(existing_id, **kwargs)
                     return existing_id
 
-                return self._create_derived_plate(plate_name, base_id, parser_name, microscope_type, images, **kwargs)
+                return self._create_derived_plate(
+                    plate_name, base_id, parser_name, microscope_type, images, **kwargs
+                )
         finally:
-            if lock_path.exists():
-                try:
-                    lock_path.unlink()
-                except:
-                    pass
+            lock_path.unlink(missing_ok=True)
 
-    def _create_derived_plate(self, plate_name, base_id, parser_name, microscope_type, images, **kwargs):
+    def _create_derived_plate(
+        self, plate_name, base_id, parser_name, microscope_type, images, **kwargs
+    ):
         """Create plate from grouped image data."""
         conn = self._get_connection(**kwargs)
 
         # Import OMERO model classes
         import omero.model
-        from omero.rtypes import rstring, rint
         from omero.model import NamedValue
+        from omero.rtypes import rint, rstring
 
         update_service = conn.getUpdateService()
-
-        # Extract structure with MAX dimensions (Napari pattern)
-        wells_structure = defaultdict(lambda: {'sites': {}})
-        for (well_id, site), img_data in images.items():
-            max_height = max_width = 0
-            dtype = None
-            for plane_data in img_data['planes'].values():
-                h, w = plane_data.shape
-                max_height, max_width = max(max_height, h), max(max_width, w)
-                if dtype is None:
-                    dtype = plane_data.dtype
-
-            wells_structure[well_id]['sites'][site] = {
-                'sizeZ': img_data['max_z'], 'sizeC': img_data['max_c'], 'sizeT': img_data['max_t'],
-                'height': max_height, 'width': max_width, 'dtype': dtype
-            }
 
         # Create plate
         plate = omero.model.PlateI()
@@ -1190,27 +1030,32 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # Attach metadata
         metadata_ann = omero.model.MapAnnotationI()
         metadata_ann.setNs(rstring(self._metadata_namespace))
-        metadata_ann.setMapValue([
-            NamedValue(self._parser_key, parser_name),
-            NamedValue(self._microscope_key, microscope_type),
-        ])
+        metadata_ann.setMapValue(
+            [
+                NamedValue(self._parser_key, parser_name),
+                NamedValue(self._microscope_key, microscope_type),
+            ]
+        )
         plate.linkAnnotation(metadata_ann)
 
         prov_ann = omero.model.MapAnnotationI()
         prov_ann.setNs(rstring(self._provenance_namespace))
-        prov_ann.setMapValue([
-            NamedValue("source_plate_id", str(base_id)),
-            NamedValue("created_by", self._namespace_prefix),
-            NamedValue("timestamp", datetime.now().isoformat())
-        ])
+        prov_ann.setMapValue(
+            [
+                NamedValue("source_plate_id", str(base_id)),
+                NamedValue("created_by", self._namespace_prefix),
+                NamedValue("timestamp", datetime.now().isoformat()),
+            ]
+        )
         plate.linkAnnotation(prov_ann)
         update_service.saveObject(plate)
 
         # Create wells WITHOUT images
         # Images will be created with actual data in _write_planes_to_plate
         # This fixes the bug where placeholder zero images caused first well to be black
-        for well_id, well_data in wells_structure.items():
-            row, col = ord(well_id[0]) - ord('A'), int(well_id[1:]) - 1
+        well_ids = {well_id for well_id, _ in images}
+        for well_id in well_ids:
+            row, col = ord(well_id[0]) - ord("A"), int(well_id[1:]) - 1
             well = omero.model.WellI()
             well.setPlate(plate)
             well.setRow(rint(row))
@@ -1231,68 +1076,31 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         for (well_id, site), img_data in images.items():
             # Check if well/site already exists
             try:
-                image_id = self._get_image_id(plate_id, well_id, site)
+                self._get_image_id(plate_id, well_id, site)
                 # Image exists - skip it (already written)
-                logger.info(f"Image for {well_id} site {site} already exists in plate {plate_id}, skipping")
+                logger.info(
+                    f"Image for {well_id} site {site} already exists in plate {plate_id}, skipping"
+                )
                 continue
             except ValueError:
                 # Image doesn't exist - create it with all planes
                 pass
 
-            # Calculate max dimensions for padding
-            max_height = max_width = 0
-            dtype = None
-            for plane_data in img_data['planes'].values():
-                h, w = plane_data.shape
-                max_height, max_width = max(max_height, h), max(max_width, w)
-                if dtype is None:
-                    dtype = plane_data.dtype
-
-            sizeZ = img_data['max_z']
-            sizeC = img_data['max_c']
-            sizeT = img_data['max_t']
-
-            # Generate all planes in ZCT order with padding
-            def plane_generator():
-                for t in range(sizeT):
-                    for c in range(sizeC):
-                        for z in range(sizeZ):
-                            key = (z, c, t)
-                            if key in img_data['planes']:
-                                data = img_data['planes'][key]
-
-                                # Convert CuPy arrays to NumPy (OMERO requires NumPy)
-                                if hasattr(data, 'get'):  # CuPy array
-                                    data = data.get()
-
-                                h, w = data.shape
-
-                                # Pad if needed
-                                if h < max_height or w < max_width:
-                                    padded = np.zeros((max_height, max_width), dtype=dtype)
-                                    padded[:h, :w] = data
-                                    yield padded
-                                else:
-                                    yield data
-                            else:
-                                # Missing plane - yield zeros
-                                yield np.zeros((max_height, max_width), dtype=dtype)
-
             # Create complete image with all planes at once
             image = conn.createImageFromNumpySeq(
-                zctPlanes=plane_generator(),
+                zctPlanes=img_data.iter_omero_planes(),
                 imageName=f"{well_id}_s{site:03d}",
-                sizeZ=sizeZ,
-                sizeC=sizeC,
-                sizeT=sizeT,
+                sizeZ=img_data.size_z,
+                sizeC=img_data.size_c,
+                sizeT=img_data.size_t,
                 description=DEFAULT_OMERO_WELL_DESCRIPTION_TEMPLATE.format(
                     well_id=well_id,
                     site=site,
-                )
+                ),
             )
 
             # Link image to well
-            row, col = ord(well_id[0]) - ord('A'), int(well_id[1:]) - 1
+            row, col = ord(well_id[0]) - ord("A"), int(well_id[1:]) - 1
 
             # Check if well exists, create if not
             query_service = conn.getQueryService()
@@ -1312,12 +1120,12 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
             # Use threading lock for thread safety + file lock for process safety
             with well_lock:
-                lock_dir = Path.home() / self._lock_dir_name / 'omero_locks'
+                lock_dir = Path.home() / self._lock_dir_name / "omero_locks"
                 lock_dir.mkdir(parents=True, exist_ok=True)
                 lock_path = lock_dir / f"{lock_key}.lock"
 
                 try:
-                    with open(lock_path, 'w') as lock_file:
+                    with open(lock_path, "w") as lock_file:
                         if FCNTL_AVAILABLE:
                             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
                         else:
@@ -1337,11 +1145,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                             well.setColumn(rint(col))
                             well_obj = update_service.saveAndReturnObject(well)
                 finally:
-                    if lock_path.exists():
-                        try:
-                            lock_path.unlink()
-                        except:
-                            pass
+                    lock_path.unlink(missing_ok=True)
 
             # Link image to well
             # Reload well with wellSamples collection loaded
@@ -1358,8 +1162,14 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # Reload plate structure to include new wells/images
         self._load_plate_structure(plate_id)
 
-    def list_files(self, directory: Union[str, Path], pattern: str = "*",
-                   extensions: Set[str] = None, recursive: bool = False, **kwargs) -> List[str]:
+    def list_files(
+        self,
+        directory: str | Path,
+        pattern: str = "*",
+        extensions: set[str] = None,
+        recursive: bool = False,
+        **kwargs,
+    ) -> list[str]:
         """
         Generate filenames on-demand from plate structure.
 
@@ -1415,14 +1225,14 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                                 channel=c + 1,
                                 z_index=z + 1,
                                 timepoint=t + 1,
-                                extension='.tif'
+                                extension=".tif",
                             )
                             filenames.append(filename)
 
         logger.debug(f"Generated {len(filenames)} filenames on-demand for plate {plate_id}")
         return filenames
 
-    def exists(self, path: Union[str, Path]) -> bool:
+    def exists(self, path: str | Path) -> bool:
         """
         Check if a virtual OMERO path exists.
 
@@ -1447,7 +1257,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         except (ValueError, IndexError):
             return False
 
-    def ensure_directory(self, directory: Union[str, Path]) -> None:
+    def ensure_directory(self, directory: str | Path) -> None:
         """
         Ensure directory exists (no-op for OMERO virtual backend).
 
@@ -1461,11 +1271,11 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # No-op for virtual backend - directories are implicit in OMERO
         pass
 
-    def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
+    def load_batch(self, file_paths: list[str | Path], **kwargs) -> list[Any]:
         """Load multiple images from OMERO."""
         return [self.load(fp, **kwargs) for fp in file_paths]
 
-    def _save_rois(self, rois: List, output_path: Path, images_dir: str = None, **kwargs) -> str:
+    def _save_rois(self, rois: list, output_path: Path, images_dir: str = None, **kwargs) -> str:
         """Save ROIs to OMERO by linking to images in the materialized plate.
 
         Args:
@@ -1476,9 +1286,10 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         Returns:
             String describing where ROIs were saved
         """
-        from .roi import PolygonShape, PolylineShape, MaskShape, PointShape, EllipseShape
         import omero.model
-        from omero.rtypes import rstring, rdouble, rint
+        from omero.rtypes import rdouble, rstring
+
+        from .roi import EllipseShape, PointShape, PolygonShape, PolylineShape
 
         conn = self._get_connection(**kwargs)
 
@@ -1502,7 +1313,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
 
         # Extract well ID from filename (first component before underscore)
         filename = output_path.name
-        well_id_from_filename = filename.split('_')[0]  # "A01" or "A1"
+        well_id_from_filename = filename.split("_")[0]  # "A01" or "A1"
 
         # Query OMERO for images in this well of the materialized plate
         plate = conn.getObject("Plate", plate_id)
@@ -1517,7 +1328,9 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             well_pos = w.getWellPos()  # e.g., "A1"
             # Normalize both to compare: remove leading zeros from column number
             # "A01" -> "A1", "A1" -> "A1"
-            normalized_filename_well = well_id_from_filename[0] + str(int(well_id_from_filename[1:]))
+            normalized_filename_well = well_id_from_filename[0] + str(
+                int(well_id_from_filename[1:])
+            )
             if well_pos == normalized_filename_well:
                 well = w
                 break
@@ -1558,8 +1371,8 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                         polygon.setPoints(rstring(points_str))
 
                         # Set metadata
-                        if 'label' in roi.metadata:
-                            polygon.setTextValue(rstring(str(roi.metadata['label'])))
+                        if "label" in roi.metadata:
+                            polygon.setTextValue(rstring(str(roi.metadata["label"])))
 
                         omero_roi.addShape(polygon)
 
@@ -1573,8 +1386,8 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                         polyline.setPoints(rstring(points_str))
 
                         # Set metadata
-                        if 'label' in roi.metadata:
-                            polyline.setTextValue(rstring(str(roi.metadata['label'])))
+                        if "label" in roi.metadata:
+                            polyline.setTextValue(rstring(str(roi.metadata["label"])))
 
                         omero_roi.addShape(polyline)
 
@@ -1586,8 +1399,8 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                         ellipse.setRadiusX(rdouble(shape.radius_x))
                         ellipse.setRadiusY(rdouble(shape.radius_y))
 
-                        if 'label' in roi.metadata:
-                            ellipse.setTextValue(rstring(str(roi.metadata['label'])))
+                        if "label" in roi.metadata:
+                            ellipse.setTextValue(rstring(str(roi.metadata["label"])))
 
                         omero_roi.addShape(ellipse)
 
@@ -1597,8 +1410,8 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                         point.setX(rdouble(shape.x))
                         point.setY(rdouble(shape.y))
 
-                        if 'label' in roi.metadata:
-                            point.setTextValue(rstring(str(roi.metadata['label'])))
+                        if "label" in roi.metadata:
+                            point.setTextValue(rstring(str(roi.metadata["label"])))
 
                         omero_roi.addShape(point)
 
