@@ -24,6 +24,7 @@ from .exceptions import StorageResolutionError
 from .formats import FileFormat
 
 logger = logging.getLogger(__name__)
+DISK_TEXT_ENCODING = "utf-8"
 
 
 def optional_import(module_name):
@@ -293,34 +294,36 @@ class DiskStorageBackend(StorageBackend):
         return numeric_arrays[0]
 
     def _text_writer(self, path, data, **kwargs):
-        """Write text data to file. Accepts and ignores extra kwargs for compatibility."""
-        path.write_text(str(data))
+        """Write UTF-8 text bytes without platform newline translation."""
+
+        del kwargs
+        path.write_bytes(str(data).encode(DISK_TEXT_ENCODING))
 
     def _text_reader(self, path):
-        return path.read_text()
+        return path.read_text(encoding=DISK_TEXT_ENCODING)
 
     def _json_writer(self, path, data, **kwargs):
         import json
 
         # Ensure parent directory exists
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2))
+        self._text_writer(path, json.dumps(data, indent=2))
 
     def _json_reader(self, path):
         import json
 
-        return json.loads(path.read_text())
+        return json.loads(self._text_reader(path))
 
     def _csv_writer(self, path, data, **kwargs):
         import csv
 
         # Handle pre-formatted CSV strings (from pandas to_csv)
         if isinstance(data, str):
-            path.write_text(data)
+            self._text_writer(path, data)
             return
 
         # Assume data is a list of rows or a dict
-        with path.open("w", newline="") as f:
+        with path.open("w", newline="", encoding=DISK_TEXT_ENCODING) as f:
             if isinstance(data, dict):
                 # Write dict as CSV with headers
                 writer = csv.DictWriter(f, fieldnames=data.keys())
@@ -355,7 +358,7 @@ class DiskStorageBackend(StorageBackend):
     def _csv_reader(self, path):
         import csv
 
-        with path.open("r", newline="") as f:
+        with path.open("r", newline="", encoding=DISK_TEXT_ENCODING) as f:
             reader = csv.DictReader(f)
             return list(reader)
 

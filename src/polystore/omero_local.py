@@ -28,7 +28,7 @@ import numpy as np
 
 from .array_payload import storage_numpy_array
 from .base import PicklableBackend, VirtualBackend
-from .omero_tables import OMERO_TABLE_SERVICE
+from .omero_tables import OMERO_TABLE_SERVICE, OMEROTableColumnType
 from .omero_text import OMEROTextFormat
 
 logger = logging.getLogger(__name__)
@@ -616,7 +616,6 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         from io import StringIO
 
         import pandas as pd
-        from omero.grid import BoolColumn, DoubleColumn, LongColumn, StringColumn
         from omero.model import FileAnnotationI
         from omero.rtypes import rstring
 
@@ -650,30 +649,9 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         # OMERO table names cannot contain dots except for the .h5 extension
         table_name = output_path.name.split(".")[0]
 
-        # Build column objects based on DataFrame dtypes
-        columns = []
-        for col_name in df.columns:
-            col_data = df[col_name]
-
-            # Determine column type from pandas dtype
-            if pd.api.types.is_integer_dtype(col_data):
-                col = LongColumn(col_name, "", [])
-                col.values = col_data.astype(int).tolist()
-            elif pd.api.types.is_float_dtype(col_data):
-                col = DoubleColumn(col_name, "", [])
-                col.values = col_data.astype(float).tolist()
-            elif pd.api.types.is_bool_dtype(col_data):
-                col = BoolColumn(col_name, "", [])
-                col.values = col_data.astype(bool).tolist()
-            else:
-                # Default to string column
-                # Calculate max string length (OMERO requires size > 0)
-                str_values = col_data.astype(str).tolist()
-                max_len = max(len(s) for s in str_values) if str_values else 1
-                col = StringColumn(col_name, "", max_len, [])
-                col.values = str_values
-
-            columns.append(col)
+        columns = [
+            OMEROTableColumnType.column_for(col_name, df[col_name]) for col_name in df.columns
+        ]
 
         table = OMERO_TABLE_SERVICE.create_table(conn, f"{table_name}.h5")
 

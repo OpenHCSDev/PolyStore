@@ -3,6 +3,7 @@
 Keep tests small and focused — these hit CSV/JSON/TEXT handlers, listing,
 ensure_directory idempotence, and symlink creation.
 """
+
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,23 @@ def test_text_json_csv_save_load(tmp_path: Path):
     loaded = disk.load(c)
     assert isinstance(loaded, list)
     assert loaded[0]["a"] == "1"
+
+
+def test_preformatted_text_is_written_as_exact_utf8_bytes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    content = "well,count\r\nA01,2\r\n"
+    output_path = tmp_path / "summary.csv"
+
+    def reject_platform_text_translation(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("text persistence must bypass platform newline translation")
+
+    monkeypatch.setattr(Path, "write_text", reject_platform_text_translation)
+    DiskBackend().save(content, output_path)
+
+    assert output_path.read_bytes() == content.encode(disk_module.DISK_TEXT_ENCODING)
 
 
 def test_tiff_save_normalizes_external_array_payload(tmp_path, monkeypatch) -> None:

@@ -1,15 +1,76 @@
 """Tests for the declaration-owned OMERO.tables capability boundary."""
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from polystore.omero_tables import (
+    OMEROTableColumnType,
     OMEROTableService,
     OMEROTableServiceUnavailableError,
 )
 
 _DEFAULT_TABLE = object()
+
+
+class _Column:
+    def __init__(self, *declaration) -> None:
+        self.declaration = declaration
+        self.values = []
+
+
+class _LongColumn(_Column):
+    pass
+
+
+class _DoubleColumn(_Column):
+    pass
+
+
+class _BoolColumn(_Column):
+    pass
+
+
+class _StringColumn(_Column):
+    pass
+
+
+@pytest.fixture
+def omero_grid_columns(monkeypatch):
+    grid = ModuleType("omero.grid")
+    grid.LongColumn = _LongColumn
+    grid.DoubleColumn = _DoubleColumn
+    grid.BoolColumn = _BoolColumn
+    grid.StringColumn = _StringColumn
+    omero = ModuleType("omero")
+    omero.__path__ = []
+    monkeypatch.setitem(sys.modules, "omero", omero)
+    monkeypatch.setitem(sys.modules, "omero.grid", grid)
+
+
+@pytest.mark.parametrize(
+    ("series", "column_type", "values"),
+    (
+        (pd.Series([1, 2]), _LongColumn, [1, 2]),
+        (pd.Series([1.5, 2.5]), _DoubleColumn, [1.5, 2.5]),
+        (pd.Series([True, False]), _BoolColumn, [True, False]),
+        (pd.Series(["A01", float("nan")], dtype=object), _StringColumn, ["A01", "nan"]),
+    ),
+)
+def test_table_column_type_owns_dtype_projection(
+    omero_grid_columns,
+    series,
+    column_type,
+    values,
+) -> None:
+    column = OMEROTableColumnType.column_for("value", series)
+
+    assert isinstance(column, column_type)
+    assert column.values == values
+    if isinstance(column, _StringColumn):
+        assert column.declaration == ("value", "", 3, [])
 
 
 class _Resources:

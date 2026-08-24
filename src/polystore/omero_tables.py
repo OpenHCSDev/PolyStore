@@ -4,10 +4,106 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+OMEROColumnMatcher = Callable[[Any], bool]
+OMEROColumnBuilder = Callable[[str, Any], Any]
+
+
+def _integer_column_matches(series: Any) -> bool:
+    import pandas as pd
+
+    return bool(pd.api.types.is_integer_dtype(series))
+
+
+def _float_column_matches(series: Any) -> bool:
+    import pandas as pd
+
+    return bool(pd.api.types.is_float_dtype(series))
+
+
+def _bool_column_matches(series: Any) -> bool:
+    import pandas as pd
+
+    return bool(pd.api.types.is_bool_dtype(series))
+
+
+def _fallback_column_matches(series: Any) -> bool:
+    del series
+    return True
+
+
+def _integer_column(name: str, series: Any) -> Any:
+    from omero.grid import LongColumn
+
+    column = LongColumn(name, "", [])
+    column.values = series.astype(int).tolist()
+    return column
+
+
+def _float_column(name: str, series: Any) -> Any:
+    from omero.grid import DoubleColumn
+
+    column = DoubleColumn(name, "", [])
+    column.values = series.astype(float).tolist()
+    return column
+
+
+def _bool_column(name: str, series: Any) -> Any:
+    from omero.grid import BoolColumn
+
+    column = BoolColumn(name, "", [])
+    column.values = series.astype(bool).tolist()
+    return column
+
+
+def _string_column(name: str, series: Any) -> Any:
+    from omero.grid import StringColumn
+
+    values = [str(value) for value in series.tolist()]
+    column = StringColumn(
+        name,
+        "",
+        max((len(value) for value in values), default=1),
+        [],
+    )
+    column.values = values
+    return column
+
+
+class OMEROTableColumnType(Enum):
+    """One pandas dtype family's complete OMERO column projection."""
+
+    def __new__(
+        cls,
+        identity: str,
+        matches: OMEROColumnMatcher,
+        build: OMEROColumnBuilder,
+    ):
+        member = object.__new__(cls)
+        member._value_ = identity
+        member._matches = matches
+        member._build = build
+        return member
+
+    INTEGER = ("integer", _integer_column_matches, _integer_column)
+    FLOAT = ("float", _float_column_matches, _float_column)
+    BOOLEAN = ("boolean", _bool_column_matches, _bool_column)
+    STRING = ("string", _fallback_column_matches, _string_column)
+
+    @classmethod
+    def column_for(cls, name: str, series: Any) -> Any:
+        """Build the first declared OMERO column matching one pandas series."""
+
+        return next(member for member in cls if member._matches(series))._build(
+            name,
+            series,
+        )
 
 
 class OMEROTableServiceUnavailableError(RuntimeError):
