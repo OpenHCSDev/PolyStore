@@ -122,8 +122,8 @@ class OMEROTableService:
 
         return bool(connection.c.sf.sharedResources().areTablesEnabled())
 
-    def create_table(self, connection: Any, path: str) -> Any:
-        """Create one table through a ready service and repository declaration."""
+    def wait_until_available(self, connection: Any) -> Any:
+        """Return shared resources after the declared table capability is ready."""
 
         resources = connection.c.sf.sharedResources()
         retry_delays = iter(self.readiness_retry_delays_seconds)
@@ -138,6 +138,13 @@ class OMEROTableService:
                 retry_delay,
             )
             time.sleep(retry_delay)
+
+        return resources
+
+    def create_table(self, connection: Any, path: str) -> Any:
+        """Create one table through a ready service and repository declaration."""
+
+        resources = self.wait_until_available(connection)
 
         repository_map = resources.repositories()
         descriptions = repository_map.descriptions

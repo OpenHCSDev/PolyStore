@@ -142,6 +142,19 @@ def test_table_service_waits_on_capability_instead_of_exception_text(
     assert resources.created_tables == [(7, "measurements.h5")]
 
 
+def test_table_service_exposes_declared_readiness_wait(monkeypatch) -> None:
+    observed_delays: list[float] = []
+    monkeypatch.setattr("polystore.omero_tables.time.sleep", observed_delays.append)
+    resources = _Resources([False, True])
+
+    ready_resources = OMEROTableService(
+        readiness_retry_delays_seconds=(0.1,),
+    ).wait_until_available(_connection(resources))
+
+    assert ready_resources is resources
+    assert observed_delays == [0.1]
+
+
 def test_table_service_fails_before_create_when_capability_stays_unavailable() -> None:
     resources = _Resources([False])
 
