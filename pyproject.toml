@@ -81,7 +81,8 @@ omero = [
 
 bioformats = [
     "pyimagej==1.7.0",
-    "scyjava>=1.12.0",
+    "imglyb==2.1.0",
+    "scyjava==1.12.5",
 ]
 
 all = [
@@ -93,7 +94,8 @@ all = [
     "cupy>=12.0.0",
     "pyzmq>=25.0.0",
     "pyimagej==1.7.0",
-    "scyjava>=1.12.0",
+    "imglyb==2.1.0",
+    "scyjava==1.12.5",
 ]
 
 dev = [

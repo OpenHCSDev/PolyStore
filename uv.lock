@@ -568,6 +568,21 @@ wheels = [
 ]
 
 [[package]]
+name = "cjdk"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "progressbar2" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/12/1b/9203dbc890918e65b3917b1c0715cccdc8a4cd13f56ed12dca0727f8007f/cjdk-0.5.0.tar.gz", hash = "sha256:c83bdb06749a2cdee8e0c9ca1612e10b629286a0a48115ecc2e892e072d5315a", size = 144429, upload-time = "2026-01-07T23:05:30.882Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/fe/d8d293c0d88ee6e1d6882039e577d20282535baa45bfa9525f709ebd26a9/cjdk-0.5.0-py3-none-any.whl", hash = "sha256:e4c563afe9fe9e2841c734b5919bb6e31f371220a1cf23a037642d7ccad59b03", size = 27355, upload-time = "2026-01-07T23:05:29.568Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1409,6 +1424,20 @@ wheels = [
 ]
 
 [[package]]
+name = "imglyb"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jpype1" },
+    { name = "numpy" },
+    { name = "scyjava" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/97/e6/9fa4ff8aab684dd3ae58be7d782155ba72a2584dcf5779785206c1ca2b8a/imglyb-2.1.0.tar.gz", hash = "sha256:9651860278bd4f05d74b47d7ea06df7f24e39cfbfb541208d913fbd01c48c276", size = 18015, upload-time = "2023-03-10T22:01:03.564Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/61/d088cd14e5a56b3fe0be6390d9b06cfb5f5974cd504c5c81126df4853e0f/imglyb-2.1.0-py3-none-any.whl", hash = "sha256:a9630171d869e4d0d1d138552f9c08562c7f7dffa9482d9c25383928a6c8ada7", size = 16767, upload-time = "2023-03-10T22:01:01.88Z" },
+]
+
+[[package]]
 name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1497,6 +1526,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/c7/fc0755ebd999c7c66ac4203d99f958d5ffc0a34eb270f57932ca0213bb54/jaxlib-0.5.3-cp313-cp313-manylinux2014_x86_64.whl", hash = "sha256:bb7593cb7fffcb13963f22fa5229ed960b8fb4ae5ec3b0820048cbd67f1e8e31", size = 105130796, upload-time = "2025-03-19T18:25:05.574Z" },
     { url = "https://files.pythonhosted.org/packages/83/98/e32da21a490dc408d172ba246d6c47428482fe50d771c3f813e5fc063781/jaxlib-0.5.3-cp313-cp313-win_amd64.whl", hash = "sha256:8019f73a10b1290f988dd3768c684f3a8a147239091c3b790ce7e47e3bbc00bd", size = 65792205, upload-time = "2025-03-19T18:25:10.684Z" },
     { url = "https://files.pythonhosted.org/packages/88/c6/0d69ed0d408c811959a471563afa99baecacdc56ed1799002e309520b565/jaxlib-0.5.3-cp313-cp313t-manylinux2014_x86_64.whl", hash = "sha256:4c9a9d4cda091a3ef068ace8379fff9e98eea2fc51dbdd7c3386144a1bdf715d", size = 105318736, upload-time = "2025-03-25T15:00:12.514Z" },
+]
+
+[[package]]
+name = "jgo"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cjdk" },
+    { name = "psutil" },
+    { name = "requests" },
+    { name = "semver" },
+    { name = "tomli-w" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b2/48/257c2c38c12f92b5ab11a86beee69a5b17f0b52b5f9ddb16e48a19ca0b09/jgo-3.1.0.tar.gz", hash = "sha256:e36199e018f62de5d4b13183d2a8bd9d95e9a80360ed06674af15a908dd02996", size = 237513, upload-time = "2026-06-14T02:37:03.511Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/b9/d1be277052b9a10a8d1a9dc52ed1385b85871d9c44cb1c898644e5f95be6/jgo-3.1.0-py3-none-any.whl", hash = "sha256:5264c4952e64f78acfbb266f63b2dcb705a21a1db30e0e95bb98a776ee984844", size = 181091, upload-time = "2026-06-14T02:37:02.328Z" },
 ]
 
 [[package]]
@@ -1684,6 +1729,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/48/44/2b5b95b7aa39fb2d8d9d956e0f3d5d45aef2ae1d942d4c3ffac2f9cfed1a/kiwisolver-1.5.0-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:be4a51a55833dc29ab5d7503e7bcb3b3af3402d266018137127450005cdfe737", size = 79892, upload-time = "2026-03-09T13:15:49.694Z" },
     { url = "https://files.pythonhosted.org/packages/52/7d/7157f9bba6b455cfb4632ed411e199fc8b8977642c2b12082e1bd9e6d173/kiwisolver-1.5.0-pp311-pypy311_pp73-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:daae526907e262de627d8f70058a0f64acc9e2641c164c99c8f594b34a799a16", size = 77603, upload-time = "2026-03-09T13:15:50.945Z" },
     { url = "https://files.pythonhosted.org/packages/0a/dd/8050c947d435c8d4bc94e3252f4d8bb8a76cfb424f043a8680be637a57f1/kiwisolver-1.5.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:59cd8683f575d96df5bb48f6add94afc055012c29e28124fcae2b63661b9efb1", size = 73558, upload-time = "2026-03-09T13:15:52.112Z" },
+]
+
+[[package]]
+name = "labeling"
+version = "0.1.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "tifffile", version = "2026.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "tifffile", version = "2026.7.14", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/40/dfa6bd232e7afd1fc0867a27450a03e639b7ad1c98a7ae887e540e712f96/labeling-0.1.15.tar.gz", hash = "sha256:797389f825e88451feead379ec2c1327037daf2b64547882265652bcee3b113d", size = 51596, upload-time = "2025-10-15T09:15:58.199Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/a2/16bacfd93787862fe33abcd63bc9f9ada01ccd7d882e468a36bb4a014217/labeling-0.1.15-py3-none-any.whl", hash = "sha256:36d8b0fa46c94053407b7b9d9b8566b820953631a1942b00cefdd35cbe01ee71", size = 7920, upload-time = "2025-10-15T09:15:57.193Z" },
 ]
 
 [[package]]
@@ -2708,7 +2768,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.2.3"
+version = "0.2.4"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
@@ -2716,6 +2776,7 @@ dependencies = [
     { name = "metaclass-registry" },
     { name = "numpy" },
     { name = "ome-zarr" },
+    { name = "platformdirs" },
     { name = "portalocker" },
     { name = "zarr" },
     { name = "zmqruntime" },
@@ -2724,12 +2785,20 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "cupy" },
+    { name = "imglyb" },
     { name = "jax" },
     { name = "ome-zarr" },
+    { name = "pyimagej" },
     { name = "pyzmq" },
+    { name = "scyjava" },
     { name = "tensorflow" },
     { name = "torch" },
     { name = "zarr" },
+]
+bioformats = [
+    { name = "imglyb" },
+    { name = "pyimagej" },
+    { name = "scyjava" },
 ]
 cupy = [
     { name = "cupy" },
@@ -2798,6 +2867,8 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "extra == 'gpu'", specifier = ">=13.3.0,<14.0.0" },
     { name = "genbadge", extras = ["coverage"], marker = "extra == 'dev'" },
     { name = "imageio", specifier = ">=2.37.0" },
+    { name = "imglyb", marker = "extra == 'all'", specifier = "==2.1.0" },
+    { name = "imglyb", marker = "extra == 'bioformats'", specifier = "==2.1.0" },
     { name = "jax", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "jax", marker = "extra == 'gpu'", specifier = ">=0.5.3,<0.6.0" },
     { name = "jax", marker = "extra == 'jax'", specifier = ">=0.4.0" },
@@ -2814,13 +2885,18 @@ requires-dist = [
     { name = "omero-py", marker = "extra == 'omero'", specifier = ">=5.19.0" },
     { name = "pandas", marker = "extra == 'dev'", specifier = ">=2.3.1" },
     { name = "pandas", marker = "extra == 'omero'", specifier = ">=2.3.1" },
+    { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "portalocker", specifier = ">=2.8.0" },
     { name = "pyclesperanto", marker = "extra == 'gpu'", specifier = ">=0.17.1" },
+    { name = "pyimagej", marker = "extra == 'all'", specifier = "==1.7.0" },
+    { name = "pyimagej", marker = "extra == 'bioformats'", specifier = "==1.7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "pyzmq", marker = "extra == 'all'", specifier = ">=25.0.0" },
     { name = "pyzmq", marker = "extra == 'streaming'", specifier = ">=25.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "scyjava", marker = "extra == 'all'", specifier = "==1.12.5" },
+    { name = "scyjava", marker = "extra == 'bioformats'", specifier = "==1.12.5" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=4.0.0" },
     { name = "sphinx-design", marker = "extra == 'docs'", specifier = ">=0.5.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.0.0" },
@@ -2839,7 +2915,7 @@ requires-dist = [
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=2.18.0,<3.0" },
     { name = "zmqruntime", specifier = ">=0.1.22" },
 ]
-provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "all", "dev", "docs", "gpu"]
+provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "bioformats", "all", "dev", "docs", "gpu"]
 
 [[package]]
 name = "portalocker"
@@ -2851,6 +2927,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5e/77/65b857a69ed876e1951e88aaba60f5ce6120c33703f7cb61a3c894b8c1b6/portalocker-3.2.0.tar.gz", hash = "sha256:1f3002956a54a8c3730586c5c77bf18fae4149e07eaf1c29fc3faf4d5a3f89ac", size = 95644, upload-time = "2025-06-14T13:20:40.03Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4b/a6/38c8e2f318bf67d338f4d629e93b0b4b9af331f455f0390ea8ce4a099b26/portalocker-3.2.0-py3-none-any.whl", hash = "sha256:3cdc5f565312224bc570c49337bd21428bba0ef363bbcf58b9ef4a9f11779968", size = 22424, upload-time = "2025-06-14T13:20:38.083Z" },
+]
+
+[[package]]
+name = "progressbar2"
+version = "4.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-utils" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/1e/5bd376abe32a392e74fffd82feb42ee1472d263bd358d628af20663d0346/progressbar2-4.6.0.tar.gz", hash = "sha256:fe48c8955a84428af77bff2642ba47041e1b8f7c867a5b7cc94f8bc255a8f0cf", size = 542464, upload-time = "2026-08-14T01:07:30.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/4c/ba64c450164fa4feaa9c4bb1c6445811d89d6a1995bfc58d039273b698af/progressbar2-4.6.0-py3-none-any.whl", hash = "sha256:2d78bdeb1debef92a39dd9042e0689542bd72d6e2f30b13432db371aa9d8ee4e", size = 104185, upload-time = "2026-08-14T01:07:28.474Z" },
 ]
 
 [[package]]
@@ -3063,6 +3151,24 @@ wheels = [
 ]
 
 [[package]]
+name = "pyimagej"
+version = "1.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "imglyb" },
+    { name = "jgo" },
+    { name = "jpype1" },
+    { name = "labeling" },
+    { name = "numpy" },
+    { name = "scyjava" },
+    { name = "xarray" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/bb/b912b525d48305bf66e43506de7d01f61278879eb9b938733f32da9aa8f7/pyimagej-1.7.0.tar.gz", hash = "sha256:a13d877de72c827ee45b46720f51e7b10e39097d9b8d5d9413b9d284f55e393d", size = 64723, upload-time = "2025-05-24T20:13:42.435Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/96/bcf9f2e90460ac1d4707279a700cdc634e90b2fc30878ce4705b7edffc53/pyimagej-1.7.0-py3-none-any.whl", hash = "sha256:bdc604a659beccdb44670b6f170393f53c0f4ff76093e7dbc086b28124769428", size = 38540, upload-time = "2025-05-24T20:13:41.445Z" },
+]
+
+[[package]]
 name = "pyparsing"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3124,6 +3230,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/a7/bcdb96b1a634475cacb06f2e0a243372e35972a69c0dee7d1af9a8960a6c/python_introspect-0.1.10.tar.gz", hash = "sha256:bad096fd04040f0855ee6bbe72752dbd765aaafaa53a3622ab3cd2922e3a5518", size = 38244, upload-time = "2026-08-22T01:09:01.453Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/02/f5/abc79638beb8476e6d7132a278138be9b2fbfb6ab4c16d784f59ec2fa63a/python_introspect-0.1.10-py3-none-any.whl", hash = "sha256:df6b684063515f33e3cf2a42d5f598b21e157c6b754bba8d57051433b568c2f5", size = 31639, upload-time = "2026-08-22T01:09:00.354Z" },
+]
+
+[[package]]
+name = "python-utils"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/4f/ffd054f649cb9deca624a61d83fd17ce5b6247ba6c41a5881b0c639573d7/python_utils-4.0.0.tar.gz", hash = "sha256:51d84b297d9877205a76e65f970e3275d1aa9c1cf3d508af2c459247eb4fe701", size = 43027, upload-time = "2026-07-02T18:07:54.953Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/89/daba77b0167e3e03ead14cf0caa02193b6b9d402d03db93651ca9c9f1815/python_utils-4.0.0-py3-none-any.whl", hash = "sha256:96b969a878bbc147e69db60aac7c618ff97f7e5e03e9d78ade85d764af71faa5", size = 39928, upload-time = "2026-07-02T18:07:53.673Z" },
 ]
 
 [[package]]
@@ -3564,6 +3682,28 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/86/5185061a1fcc41d18c5dc2463969b3a3964b31d9ac67b2fb05d4c7ff7670/scipy-1.18.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:9aac6192fac56bf2ca534389d24623f07b39ff83317d58287285e7fbd622ff76", size = 37472480, upload-time = "2026-06-19T15:01:35.136Z" },
     { url = "https://files.pythonhosted.org/packages/31/8e/f04c68e39919a010d34f2ee1367fd705b0a25a02f609d755f0bfbc0a15fc/scipy-1.18.0-cp314-cp314t-win_amd64.whl", hash = "sha256:e40baea28ae7f5475c779741e2d90b1247c78531207b49c7030e698ff81cee3f", size = 37365390, upload-time = "2026-06-19T15:01:38.091Z" },
     { url = "https://files.pythonhosted.org/packages/d5/19/969dc072906c84dd0a3b05dcf57ea750936087d7873549e408b35cfc3f97/scipy-1.18.0-cp314-cp314t-win_arm64.whl", hash = "sha256:368e0a705903c466aa5f08eefb39e6b1b6b2d659e7352a31fd9e2438365be0f8", size = 25279661, upload-time = "2026-06-19T15:01:40.817Z" },
+]
+
+[[package]]
+name = "scyjava"
+version = "1.12.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jgo" },
+    { name = "jpype1" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/3e/2d8e9036d03282fe7ed756230a81d8e58b05154f5777d33b5777a9005efa/scyjava-1.12.5.tar.gz", hash = "sha256:b68280398be2306f07b9353ac25fc0b3af3c69b3645f7a7c565019b39df7b683", size = 56103, upload-time = "2026-04-02T17:30:35.399Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/66/3478c72314e98bd3cb33e6674e121bc4236a04614028aa18b604a667847c/scyjava-1.12.5-py3-none-any.whl", hash = "sha256:da1eac62f1cce930cc3b4df1eee2f83397cdbbe46f9769fabbd80d9fce259e16", size = 39702, upload-time = "2026-04-02T17:30:34.14Z" },
+]
+
+[[package]]
+name = "semver"
+version = "3.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/d1/d3159231aec234a59dd7d601e9dd9fe96f3afff15efd33c1070019b26132/semver-3.0.4.tar.gz", hash = "sha256:afc7d8c584a5ed0a11033af086e8af226a9c0b206f313e0301f8dd7b6b589602", size = 269730, upload-time = "2025-01-24T13:19:27.617Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/24/4d91e05817e92e3a61c8a21e08fd0f390f5301f1c448b137c57c4bc6e543/semver-3.0.4-py3-none-any.whl", hash = "sha256:9c824d87ba7f7ab4a1890799cec8596f15c1241cb473404ea1cb0c55e4b04746", size = 17912, upload-time = "2025-01-24T13:19:24.949Z" },
 ]
 
 [[package]]
@@ -4115,6 +4255,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tomli-w"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/75/241269d1da26b624c0d5e110e8149093c759b7a286138f4efd61a60e75fe/tomli_w-1.2.0.tar.gz", hash = "sha256:2dd14fac5a47c27be9cd4c976af5a12d87fb1f0b4512f81d69cce3b35ae25021", size = 7184, upload-time = "2025-01-15T12:07:24.262Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/18/c86eb8e0202e32dd3df50d43d7ff9854f8e0603945ff398974c1d91ac1ef/tomli_w-1.2.0-py3-none-any.whl", hash = "sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90", size = 6675, upload-time = "2025-01-15T12:07:22.074Z" },
+]
+
+[[package]]
 name = "toolz"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4345,6 +4494,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/4f/ac12fda57a55068a094ec42851fb0a40e8489d8941863d517452de62e507/wrapt-2.2.2-cp314-cp314t-win_amd64.whl", hash = "sha256:d09db0f7e8357060d3c38fc22a018aba683a796bf184360fd1a58f6fc180dc77", size = 82462, upload-time = "2026-06-20T23:49:21.631Z" },
     { url = "https://files.pythonhosted.org/packages/48/a7/df732dac86d9b2027c56bd163dbc883e037b16c3469614752e148d219c61/wrapt-2.2.2-cp314-cp314t-win_arm64.whl", hash = "sha256:f32fe639c39561ccc187bcae17e9271be0eb45f1c2952510d2f29b33ab577347", size = 81182, upload-time = "2026-06-20T23:49:23.199Z" },
     { url = "https://files.pythonhosted.org/packages/6e/d2/6317eb6d4554855bbf12d61857774af34747bf88a42c19bf306de67e2fa3/wrapt-2.2.2-py3-none-any.whl", hash = "sha256:5bad217350f19ce99ca5b5e71d406765ea86fe541628426772b657375ee1c048", size = 61460, upload-time = "2026-06-20T23:49:42.966Z" },
+]
+
+[[package]]
+name = "xarray"
+version = "2026.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ea/96/3f7bdd00e505ec3698903415b30135024703e017b28c6b61f98da3193b0d/xarray-2026.7.0.tar.gz", hash = "sha256:361b495928fdbf5b58d0969bb6775339019da5e93ca74d61ddf4eb5edd6ce604", size = 3145348, upload-time = "2026-07-09T17:38:26.515Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/5b/28365212062939d213802e5e5fe855cdb231e1c2a93254ba1690066504e3/xarray-2026.7.0-py3-none-any.whl", hash = "sha256:bf9dd130b93806dc78e90c1b7ac24851b31557b888674c53622235691cf21824", size = 1426778, upload-time = "2026-07-09T17:38:24.224Z" },
 ]
 
 [[package]]

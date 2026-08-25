@@ -63,6 +63,8 @@ The core install includes NumPy, ArrayBridge, metaclass-registry, file locking,
 platform-aware cache paths, image I/O, Zarr/OME-Zarr support, and ZMQRuntime.
 Framework and streaming extras add their corresponding optional runtimes.
 Install ``polystore[bioformats]`` for the package-owned PyImageJ and
-Bio-Formats bridge.
+Bio-Formats bridge. Its first use materializes a checksummed Fiji, JDK, and
+PyImageJ bridge runtime; later processes reuse that complete local cache
+without Maven resolution.
 
 Full documentation: [polystore.readthedocs.io](https://polystore.readthedocs.io)

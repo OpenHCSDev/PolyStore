@@ -44,12 +44,19 @@ class _SystemProperties:
 
 
 class _ScyJava:
-    def __init__(self, *, started: bool, java_version: str) -> None:
+    def __init__(
+        self,
+        *,
+        started: bool,
+        java_version: str,
+        endpoints: tuple[str, ...] = (),
+    ) -> None:
         self._started = started
         self.constraints: list[dict[str, str]] = []
         self.shutdown_count = 0
         self.config = SimpleNamespace(
-            set_java_constraints=lambda **constraints: self.constraints.append(constraints)
+            endpoints=list(endpoints),
+            set_java_constraints=lambda **constraints: self.constraints.append(constraints),
         )
         self._system = _SystemProperties(java_version)
 
@@ -133,15 +140,20 @@ def test_runtime_selects_bundled_java_before_initialization(monkeypatch) -> None
     monkeypatch.setattr(jpype.config, "destroy_jvm", False)
     distribution = _Distribution()
     runtime = _runtime(distribution)
-    scyjava = _ScyJava(started=False, java_version="21.0.7")
+    scyjava = _ScyJava(
+        started=False,
+        java_version="21.0.7",
+        endpoints=("example:external-runtime",),
+    )
     imagej = _ImageJ(scyjava)
 
     gateway = runtime.initialize(imagej, scyjava, mode="headless")
 
     assert gateway is imagej.gateway
     assert scyjava.constraints == [{"fetch": "never", "version": "21"}]
-    assert imagej.calls == [("/test/imagej", "headless")]
-    assert imagej.java_homes == ["/test/java"]
+    assert scyjava.config.endpoints == []
+    assert imagej.calls == [(str(Path("/test/imagej")), "headless")]
+    assert imagej.java_homes == [str(Path("/test/java"))]
     assert distribution.materialization_count == 1
     assert distribution.compatibility_checks == [gateway]
     assert jpype.config.destroy_jvm is True

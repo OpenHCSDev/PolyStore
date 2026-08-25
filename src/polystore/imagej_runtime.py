@@ -73,12 +73,13 @@ class ImageJRuntimePolicy:
         return gateway
 
     def configure_java(self, scyjava_module: Any) -> None:
-        """Require bundled Java startup or validate the active JVM."""
+        """Make the bundle the sole fresh-JVM classpath and Java authority."""
 
         self._configure_controlled_jvm_shutdown()
         if scyjava_module.jvm_started():
             self.require_compatible_active_java(scyjava_module)
             return
+        scyjava_module.config.endpoints.clear()
         scyjava_module.config.set_java_constraints(
             fetch="never",
             version=self.java_version,

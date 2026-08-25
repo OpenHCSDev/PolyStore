@@ -29,6 +29,12 @@ Public declarations
 
 .. autoclass:: polystore.imagej_distribution.ImageJRuntimeLaunch
 
+.. autoclass:: polystore.imagej_distribution.ImageJRuntimeArchive
+
+.. autoclass:: polystore.imagej_distribution.ImageJArchiveDownloadPolicy
+
+.. autoclass:: polystore.imagej_distribution.ImageJRuntimeOverlay
+
 .. autoclass:: polystore.imagej_distribution.FijiArchiveDistribution
 
 .. autoclass:: polystore.imagej_distribution.FijiBundleAsset
