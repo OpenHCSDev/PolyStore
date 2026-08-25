@@ -71,6 +71,7 @@ from .metadata_writer import (
 from .omero_address import (
     OMEROAddressComponent,
     OMEROPlaneAddress,
+    OMEROPlaneFilenameTemplate,
     OMEROWellAddress,
 )
 from .roi import (
@@ -161,6 +162,7 @@ __all__ = [
     "resolve_subdirectory_path",
     "OMEROAddressComponent",
     "OMEROPlaneAddress",
+    "OMEROPlaneFilenameTemplate",
     "OMEROWellAddress",
     "detect_legacy_format",
     "migrate_legacy_metadata",

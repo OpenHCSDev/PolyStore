@@ -24,6 +24,11 @@ image filenames. ``OMEROPlaneAddress`` owns that filename grammar and
 labels such as ``A01`` or ``AA01``. Reading a plate does not require annotations
 from a host application.
 
+``OMEROPlaneAddress`` represents a concrete image plane and therefore requires
+exact component values. ``OMEROPlaneFilenameTemplate`` represents the same
+component-owned grammar at pattern-discovery boundaries, where a component may
+instead contain a symbolic field such as ``{iii}``.
+
 The live Ice gateway is not pickled. The backend records connection parameters
 and worker processes reconnect when needed; deployments must provide the worker
 credential environment explicitly.

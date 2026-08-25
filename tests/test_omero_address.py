@@ -5,6 +5,7 @@ import pytest
 from polystore import (
     OMEROAddressComponent,
     OMEROPlaneAddress,
+    OMEROPlaneFilenameTemplate,
     OMEROWellAddress,
 )
 
@@ -90,6 +91,42 @@ def test_omero_plane_address_binds_one_based_site_and_zero_based_plane_indices()
     assert address.zero_based(OMEROAddressComponent.CHANNEL) == 0
     assert address.zero_based(OMEROAddressComponent.Z_INDEX) == 1
     assert address.zero_based(OMEROAddressComponent.TIMEPOINT) == 2
+
+
+def test_omero_plane_filename_template_owns_symbolic_component_round_trip() -> None:
+    template = OMEROPlaneFilenameTemplate(
+        (
+            (OMEROAddressComponent.WELL, "A01"),
+            (OMEROAddressComponent.SITE, "{iii}"),
+            (OMEROAddressComponent.CHANNEL, 2),
+            (OMEROAddressComponent.Z_INDEX, 3),
+            (OMEROAddressComponent.TIMEPOINT, 1),
+        )
+    )
+
+    assert template.filename() == "A01_s{iii}_w2_z003_t001.tif"
+    assert OMEROPlaneFilenameTemplate.from_filename(template.filename()) == template
+    assert OMEROPlaneFilenameTemplate.from_filename(
+        "A01_s001_w2_z003_t001_result_suffix.tif"
+    ) == OMEROPlaneFilenameTemplate(
+        (
+            (OMEROAddressComponent.WELL, "A01"),
+            (OMEROAddressComponent.SITE, 1),
+            (OMEROAddressComponent.CHANNEL, 2),
+            (OMEROAddressComponent.Z_INDEX, 3),
+            (OMEROAddressComponent.TIMEPOINT, 1),
+        )
+    )
+    assert dict(template.projected_values()) == {
+        OMEROAddressComponent.WELL: "A01",
+        OMEROAddressComponent.SITE: "{iii}",
+        OMEROAddressComponent.CHANNEL: 2,
+        OMEROAddressComponent.Z_INDEX: 3,
+        OMEROAddressComponent.TIMEPOINT: 1,
+    }
+
+    with pytest.raises(ValueError, match="site must be a positive integer"):
+        OMEROPlaneAddress(template.projected_values())
 
 
 def test_omero_wire_mapping_requires_complete_declared_components() -> None:

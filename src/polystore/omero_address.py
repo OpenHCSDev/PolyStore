@@ -14,6 +14,39 @@ from typing import cast
 OMEROAddressValue = str | int
 
 
+@dataclass(frozen=True, slots=True)
+class OMEROAddressTemplateField:
+    """One symbolic field in an OMERO plane filename template."""
+
+    name: str
+
+    @classmethod
+    def capture_pattern(cls) -> str:
+        """Return the filename grammar for a symbolic template field."""
+
+        return r"\{[A-Za-z_][A-Za-z0-9_]*\}"
+
+    @classmethod
+    def from_value(cls, value: object) -> OMEROAddressTemplateField | None:
+        """Parse a serialized template field at the filename boundary."""
+
+        if not isinstance(value, str) or re.fullmatch(cls.capture_pattern(), value) is None:
+            return None
+        return cls(value[1:-1])
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.name) is None:
+            raise ValueError(f"Invalid OMERO address template field: {self.name!r}")
+
+    def render(self) -> str:
+        """Render the field at the filename-template boundary."""
+
+        return f"{{{self.name}}}"
+
+
+OMEROAddressTemplateValue = OMEROAddressValue | OMEROAddressTemplateField
+
+
 class OMEROAddressComponentBehaviorABC(ABC):
     """Leaf behavior owned by one OMERO address component declaration."""
 
@@ -33,6 +66,28 @@ class OMEROAddressComponentBehaviorABC(ABC):
     @abstractmethod
     def filename_fragment(self, component_name: str, value: object) -> str:
         """Render one normalized component value."""
+
+    @abstractmethod
+    def filename_template_pattern(self, component_name: str) -> str:
+        """Return this component's exact-or-symbolic template grammar."""
+
+    @abstractmethod
+    def filename_template_fragment(self, component_name: str, value: object) -> str:
+        """Render one exact value or nominal symbolic template field."""
+
+    def normalize_template(
+        self,
+        component_name: str,
+        value: object,
+    ) -> OMEROAddressTemplateValue:
+        """Normalize one exact value or serialized template field."""
+
+        if isinstance(value, OMEROAddressTemplateField):
+            return value
+        template_field = OMEROAddressTemplateField.from_value(value)
+        if template_field is not None:
+            return template_field
+        return self.normalize(component_name, value)
 
     def zero_based(self, component_name: str, value: object) -> int:
         """Project a plane coordinate onto a zero-based OMERO array index."""
@@ -59,6 +114,18 @@ class OMEROWellComponentBehavior(OMEROAddressComponentBehaviorABC):
 
     def filename_fragment(self, component_name: str, value: object) -> str:
         return self.normalize(component_name, value)
+
+    def filename_template_pattern(self, component_name: str) -> str:
+        return (
+            f"(?P<{component_name}>(?:[A-Za-z]+\\d+|"
+            f"{OMEROAddressTemplateField.capture_pattern()}))"
+        )
+
+    def filename_template_fragment(self, component_name: str, value: object) -> str:
+        normalized = self.normalize_template(component_name, value)
+        if isinstance(normalized, OMEROAddressTemplateField):
+            return normalized.render()
+        return cast(str, normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +159,18 @@ class OMEROPlaneCoordinateBehavior(OMEROAddressComponentBehaviorABC):
         normalized = self.normalize(component_name, value)
         return f"_{self.prefix}{normalized:0{self.padding}d}"
 
+    def filename_template_pattern(self, component_name: str) -> str:
+        return (
+            f"_{self.prefix}(?P<{component_name}>(?:\\d+|"
+            f"{OMEROAddressTemplateField.capture_pattern()}))"
+        )
+
+    def filename_template_fragment(self, component_name: str, value: object) -> str:
+        normalized = self.normalize_template(component_name, value)
+        if isinstance(normalized, OMEROAddressTemplateField):
+            return f"_{self.prefix}{normalized.render()}"
+        return f"_{self.prefix}{normalized:0{self.padding}d}"
+
     def zero_based(self, component_name: str, value: object) -> int:
         return self.normalize(component_name, value) - 1
 
@@ -121,6 +200,15 @@ class OMEROAddressComponent(Enum):
 
     def filename_fragment(self, value: object) -> str:
         return self.value.filename_fragment(self.component_name, value)
+
+    def normalize_template(self, value: object) -> OMEROAddressTemplateValue:
+        return self.value.normalize_template(self.component_name, value)
+
+    def filename_template_pattern(self) -> str:
+        return self.value.filename_template_pattern(self.component_name)
+
+    def filename_template_fragment(self, value: object) -> str:
+        return self.value.filename_template_fragment(self.component_name, value)
 
     def captured_value(self, match: re.Match[str]) -> OMEROAddressValue:
         return self.normalize(match.group(self.component_name))
@@ -229,6 +317,41 @@ class OMEROWellAddress:
         return f"{self.row_label}{self.column_index + 1:02d}"
 
 
+def _require_complete_component_values(
+    component_values: Iterable[tuple[OMEROAddressComponent, object]],
+) -> dict[OMEROAddressComponent, object]:
+    """Validate and index one complete OMERO component projection."""
+
+    supplied_values = tuple(component_values)
+    if any(not isinstance(component, OMEROAddressComponent) for component, _ in supplied_values):
+        raise TypeError("OMERO addresses require OMEROAddressComponent members")
+    values_by_component = dict(supplied_values)
+    if len(values_by_component) != len(supplied_values):
+        raise ValueError("Each OMERO address component may be bound only once")
+    missing = tuple(
+        component for component in OMEROAddressComponent if component not in values_by_component
+    )
+    if missing:
+        raise ValueError(
+            "OMERO plane address must bind every declared component: "
+            + ", ".join(f"missing {component.component_name}" for component in missing)
+        )
+    return values_by_component
+
+
+def _normalize_extension(extension: str) -> str:
+    """Normalize one OMERO plane filename extension."""
+
+    normalized_extension = str(extension).strip()
+    if not normalized_extension or any(
+        separator in normalized_extension for separator in ("/", "\\")
+    ):
+        raise ValueError(f"Invalid OMERO plane extension: {extension!r}")
+    if not normalized_extension.startswith("."):
+        normalized_extension = f".{normalized_extension}"
+    return normalized_extension
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class OMEROPlaneAddress:
     """Canonical virtual filename identity for one OMERO image plane."""
@@ -242,36 +365,13 @@ class OMEROPlaneAddress:
         *,
         extension: str = ".tif",
     ) -> None:
-        supplied_values = tuple(component_values)
-        if any(
-            not isinstance(component, OMEROAddressComponent) for component, _ in supplied_values
-        ):
-            raise TypeError("OMERO addresses require OMEROAddressComponent members")
-        values_by_component = dict(supplied_values)
-        if len(values_by_component) != len(supplied_values):
-            raise ValueError("Each OMERO address component may be bound only once")
-        missing = tuple(
-            component for component in OMEROAddressComponent if component not in values_by_component
-        )
-        if missing:
-            raise ValueError(
-                "OMERO plane address must bind every declared component: "
-                + ", ".join(f"missing {component.component_name}" for component in missing)
-            )
-
+        values_by_component = _require_complete_component_values(component_values)
         normalized_values = tuple(
             (component, component.normalize(values_by_component[component]))
             for component in OMEROAddressComponent
         )
-        normalized_extension = str(extension).strip()
-        if not normalized_extension or any(
-            separator in normalized_extension for separator in ("/", "\\")
-        ):
-            raise ValueError(f"Invalid OMERO plane extension: {extension!r}")
-        if not normalized_extension.startswith("."):
-            normalized_extension = f".{normalized_extension}"
         object.__setattr__(self, "_component_values", normalized_values)
-        object.__setattr__(self, "extension", normalized_extension)
+        object.__setattr__(self, "extension", _normalize_extension(extension))
 
     @classmethod
     def from_component_values(
@@ -457,6 +557,102 @@ class OMEROPlaneAddress:
         return (
             "".join(
                 component.filename_fragment(value) for component, value in self.declared_values()
+            )
+            + self.extension
+        )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class OMEROPlaneFilenameTemplate:
+    """Exact or symbolic OMERO plane identity for filename pattern systems."""
+
+    _component_values: tuple[tuple[OMEROAddressComponent, OMEROAddressTemplateValue], ...]
+    extension: str
+
+    def __init__(
+        self,
+        component_values: Iterable[tuple[OMEROAddressComponent, object]],
+        *,
+        extension: str = ".tif",
+    ) -> None:
+        values_by_component = _require_complete_component_values(component_values)
+        object.__setattr__(
+            self,
+            "_component_values",
+            tuple(
+                (
+                    component,
+                    component.normalize_template(values_by_component[component]),
+                )
+                for component in OMEROAddressComponent
+            ),
+        )
+        object.__setattr__(self, "extension", _normalize_extension(extension))
+
+    @classmethod
+    def from_member_projection(
+        cls,
+        source_values: Iterable[tuple[Enum, object]],
+        *,
+        extension: str = ".tif",
+    ) -> OMEROPlaneFilenameTemplate:
+        """Construct a template from another nominal component family."""
+
+        return cls(
+            OMEROAddressComponent.project_values(source_values),
+            extension=extension,
+        )
+
+    @classmethod
+    @cache
+    def filename_pattern(cls) -> re.Pattern[str]:
+        """Derive exact-or-symbolic grammar from the component owners."""
+
+        return re.compile(
+            "^"
+            + "".join(component.filename_template_pattern() for component in OMEROAddressComponent)
+            + r"(?:_[^.]*)?(?P<extension>(?:\.[A-Za-z0-9]+)+)$"
+        )
+
+    @classmethod
+    def from_filename(cls, filename: str) -> OMEROPlaneFilenameTemplate | None:
+        """Parse one exact or symbolic OMERO plane filename template."""
+
+        basename = PurePosixPath(str(filename).replace("\\", "/")).name
+        match = cls.filename_pattern().fullmatch(basename)
+        if match is None:
+            return None
+        return cls(
+            (
+                (
+                    component,
+                    component.normalize_template(match.group(component.component_name)),
+                )
+                for component in OMEROAddressComponent
+            ),
+            extension=match.group("extension"),
+        )
+
+    def projected_values(
+        self,
+    ) -> tuple[tuple[OMEROAddressComponent, OMEROAddressValue], ...]:
+        """Project nominal template fields onto serialized boundary values."""
+
+        return tuple(
+            (
+                component,
+                value.render() if isinstance(value, OMEROAddressTemplateField) else value,
+            )
+            for component, value in self._component_values
+        )
+
+    def filename(self) -> str:
+        """Render through component-owned exact-or-symbolic fragments."""
+
+        return (
+            "".join(
+                component.filename_template_fragment(value)
+                for component, value in self._component_values
             )
             + self.extension
         )
