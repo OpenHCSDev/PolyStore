@@ -80,7 +80,7 @@ omero = [
 ]
 
 bioformats = [
-    "pyimagej>=1.4.1",
+    "pyimagej==1.7.0",
     "scyjava>=1.12.0",
 ]
 
@@ -92,7 +92,7 @@ all = [
     "tensorflow>=2.12.0",
     "cupy>=12.0.0",
     "pyzmq>=25.0.0",
-    "pyimagej>=1.4.1",
+    "pyimagej==1.7.0",
     "scyjava>=1.12.0",
 ]
 

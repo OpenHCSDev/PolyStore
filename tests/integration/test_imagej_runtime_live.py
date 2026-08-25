@@ -23,6 +23,7 @@ def test_declared_fiji_runtime_initializes_with_bioformats() -> None:
 
     gateway = None
     try:
+        assert imagej.__version__ == "1.7.0"
         gateway = FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="headless")
 
         assert str(gateway.getVersion()).startswith("2.18.0/")
