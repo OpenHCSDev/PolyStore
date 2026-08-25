@@ -61,11 +61,12 @@ host-path syntax.
 Application boundary
 --------------------
 
-PolyStore owns OMERO address, storage, and persistence semantics. Applications
-may project the nominal ``OMEROPlaneAxis`` values exposed by an
-``OMEROPlaneAddress`` into their own axis declarations, but the backend never
-imports those declarations. This keeps ``OMEROLocalBackend`` usable as a
-standalone PolyStore extension.
+PolyStore owns OMERO address, storage, and persistence semantics. The
+``OMEROAddressComponent`` members own well and plane-coordinate parsing,
+normalization, rendering, and zero-based projection. Applications may project
+the ordered nominal values exposed by an ``OMEROPlaneAddress`` into their own
+component declarations, but the backend never imports those declarations. This
+keeps ``OMEROLocalBackend`` usable as a standalone PolyStore extension.
 
 OMERO deployment and application workflows belong to ``omero_openhcs``;
 OpenHCS pipeline/source integration is documented in the OpenHCS integration

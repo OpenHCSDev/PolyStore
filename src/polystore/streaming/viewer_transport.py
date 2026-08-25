@@ -48,12 +48,20 @@ class ViewerDisplayConfigABC(ABC):
         """Project backend-specific display fields onto the viewer wire payload."""
 
 
+class ViewerFilenameParseResultABC(ABC):
+    """Nominal parsed filename result projected explicitly onto viewer wire data."""
+
+    @abstractmethod
+    def component_wire_mapping(self) -> ViewerWireMapping:
+        """Return component metadata without filename-only fields."""
+
+
 class ViewerFilenameParserABC(ABC):
     """Filename parser surface needed by viewer streaming metadata."""
 
     @abstractmethod
-    def parse_filename(self, filename: str) -> ViewerWireMapping | None:
-        """Return component metadata parsed from a filename."""
+    def parse_filename(self, filename: str) -> ViewerFilenameParseResultABC | None:
+        """Return a nominal component result parsed from a filename."""
 
 
 class ViewerMetadataHandlerABC(ABC):
@@ -89,8 +97,7 @@ class ViewerTransportConfigSelection(ABC, metaclass=AutoRegisterMeta):
             if selection_type.accepts(value):
                 return selection_type.from_raw(value)
         raise TypeError(
-            "transport_config must be a ZMQConfig, "
-            "ViewerTransportConfigSelection, or None."
+            "transport_config must be a ZMQConfig, " "ViewerTransportConfigSelection, or None."
         )
 
     @classmethod
@@ -236,8 +243,7 @@ class PathMappedViewerStreamSourceMetadata(ViewerStreamSourceMetadata):
                     source_label=f"path metadata for {file_path!r}",
                 )
         raise KeyError(
-            "Viewer stream path-mapped component metadata has no entry for "
-            f"{file_path!r}."
+            "Viewer stream path-mapped component metadata has no entry for " f"{file_path!r}."
         )
 
 
@@ -509,9 +515,7 @@ class ViewerStreamBackendKwargs:
         expected = frozenset((ViewerStreamKwarg.STREAM_REQUEST.value,))
         actual = frozenset(kwargs)
         if actual != expected:
-            raise ValueError(
-                "Viewer stream backends require exactly one kwarg: stream_request"
-            )
+            raise ValueError("Viewer stream backends require exactly one kwarg: stream_request")
         value = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
         if not isinstance(value, ViewerStreamRequest):
             raise TypeError("stream_request must be a ViewerStreamRequest instance")
@@ -559,7 +563,9 @@ class ViewerMessageExtraAuthority:
     """Formal boundary for absent caller-supplied viewer message extras."""
 
     @staticmethod
-    def payload(message_extra: Mapping[str, ViewerWireValue] | None) -> dict[str, ViewerWireValue]:
+    def payload(
+        message_extra: Mapping[str, ViewerWireValue] | None,
+    ) -> dict[str, ViewerWireValue]:
         if message_extra is None:
             return {}
         return ViewerWirePayload.mapping(

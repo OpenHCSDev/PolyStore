@@ -3,62 +3,160 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from functools import cache
 from pathlib import PurePosixPath
-from typing import ClassVar
+from typing import cast
+
+OMEROAddressValue = str | int
 
 
-class OMEROPlaneAxis(Enum):
-    """Declare one OMERO virtual-filename axis and its wire presentation."""
-
-    SITE = ("s", 3)
-    CHANNEL = ("w", 0)
-    Z_INDEX = ("z", 3)
-    TIMEPOINT = ("t", 3)
-
-    def __init__(self, prefix: str, padding: int) -> None:
-        self._prefix = prefix
-        self._padding = padding
+class OMEROAddressComponentBehaviorABC(ABC):
+    """Leaf behavior owned by one OMERO address component declaration."""
 
     @property
-    def component_name(self) -> str:
-        """Return the generic filename-parser name derived from this declaration."""
+    @abstractmethod
+    def is_plane_coordinate(self) -> bool:
+        """Return whether this component indexes pixels within a well image."""
 
-        return self.name.lower()
+    @abstractmethod
+    def normalize(self, component_name: str, value: object) -> OMEROAddressValue:
+        """Normalize one declared component value."""
 
-    def normalize(self, value: int | str) -> int:
-        """Normalize one positive, one-based coordinate for this axis."""
+    @abstractmethod
+    def filename_pattern(self, component_name: str) -> str:
+        """Return this component's named-capture filename grammar."""
 
+    @abstractmethod
+    def filename_fragment(self, component_name: str, value: object) -> str:
+        """Render one normalized component value."""
+
+    def zero_based(self, component_name: str, value: object) -> int:
+        """Project a plane coordinate onto a zero-based OMERO array index."""
+
+        raise TypeError(f"{component_name} is not an OMERO plane coordinate")
+
+
+@dataclass(frozen=True, slots=True)
+class OMEROWellComponentBehavior(OMEROAddressComponentBehaviorABC):
+    """Own well-label parsing and rendering behavior."""
+
+    @property
+    def is_plane_coordinate(self) -> bool:
+        return False
+
+    def normalize(self, component_name: str, value: object) -> str:
+        del component_name
+        if isinstance(value, OMEROWellAddress):
+            return value.label
+        return OMEROWellAddress.from_label(str(value)).label
+
+    def filename_pattern(self, component_name: str) -> str:
+        return OMEROWellAddress.filename_pattern(component_name)
+
+    def filename_fragment(self, component_name: str, value: object) -> str:
+        return self.normalize(component_name, value)
+
+
+@dataclass(frozen=True, slots=True)
+class OMEROPlaneCoordinateBehavior(OMEROAddressComponentBehaviorABC):
+    """Own one positive one-based plane coordinate's wire behavior."""
+
+    prefix: str
+    padding: int
+
+    @property
+    def is_plane_coordinate(self) -> bool:
+        return True
+
+    def normalize(self, component_name: str, value: object) -> int:
         if isinstance(value, bool):
-            raise ValueError(f"{self.component_name} must be a positive integer")
+            raise ValueError(f"{component_name} must be a positive integer")
         if isinstance(value, int):
             normalized = value
         elif isinstance(value, str) and value.strip().isdecimal():
             normalized = int(value.strip())
         else:
-            raise ValueError(f"{self.component_name} must be a positive integer")
+            raise ValueError(f"{component_name} must be a positive integer")
         if normalized < 1:
-            raise ValueError(f"{self.component_name} must be a positive integer")
+            raise ValueError(f"{component_name} must be a positive integer")
         return normalized
 
+    def filename_pattern(self, component_name: str) -> str:
+        return f"_{self.prefix}(?P<{component_name}>\\d+)"
+
+    def filename_fragment(self, component_name: str, value: object) -> str:
+        normalized = self.normalize(component_name, value)
+        return f"_{self.prefix}{normalized:0{self.padding}d}"
+
+    def zero_based(self, component_name: str, value: object) -> int:
+        return self.normalize(component_name, value) - 1
+
+
+class OMEROAddressComponent(Enum):
+    """Single declaration of every component in an OMERO virtual address."""
+
+    WELL = OMEROWellComponentBehavior()
+    SITE = OMEROPlaneCoordinateBehavior("s", 3)
+    CHANNEL = OMEROPlaneCoordinateBehavior("w", 0)
+    Z_INDEX = OMEROPlaneCoordinateBehavior("z", 3)
+    TIMEPOINT = OMEROPlaneCoordinateBehavior("t", 3)
+
+    @property
+    def component_name(self) -> str:
+        return self.name.lower()
+
+    @property
+    def is_plane_coordinate(self) -> bool:
+        return self.value.is_plane_coordinate
+
+    def normalize(self, value: object) -> OMEROAddressValue:
+        return self.value.normalize(self.component_name, value)
+
     def filename_pattern(self) -> str:
-        """Return this axis member's named-capture filename grammar."""
+        return self.value.filename_pattern(self.component_name)
 
-        return f"_{self._prefix}(?P<{self.component_name}>\\d+)"
+    def filename_fragment(self, value: object) -> str:
+        return self.value.filename_fragment(self.component_name, value)
 
-    def filename_fragment(self, value: int | str) -> str:
-        """Render one coordinate through this axis member's wire declaration."""
-
-        normalized = self.normalize(value)
-        return f"_{self._prefix}{normalized:0{self._padding}d}"
-
-    def captured_value(self, match: re.Match[str]) -> int:
-        """Read and normalize this axis member from a regex match."""
-
+    def captured_value(self, match: re.Match[str]) -> OMEROAddressValue:
         return self.normalize(match.group(self.component_name))
+
+    def zero_based(self, value: object) -> int:
+        return self.value.zero_based(self.component_name, value)
+
+    @classmethod
+    def plane_coordinates(cls) -> tuple[OMEROAddressComponent, ...]:
+        """Derive the ordered coordinate subset from member-owned behavior."""
+
+        return tuple(component for component in cls if component.is_plane_coordinate)
+
+    @classmethod
+    def project_values(
+        cls,
+        source_values: Iterable[tuple[Enum, object]],
+    ) -> tuple[tuple[OMEROAddressComponent, object], ...]:
+        """Project another nominal enum through matching declaration names."""
+
+        projected_by_name: dict[str, object] = {}
+        for component, value in source_values:
+            if not isinstance(component, Enum):
+                raise TypeError("Projected OMERO components must be enum members")
+            if component.name in projected_by_name:
+                raise ValueError(f"Projected component {component.name!r} was bound more than once")
+            projected_by_name[component.name] = value
+
+        missing = tuple(
+            component.name for component in cls if component.name not in projected_by_name
+        )
+        if missing:
+            raise ValueError(
+                "OMERO component projection lacks declared members: " + ", ".join(missing)
+            )
+        return tuple((component, projected_by_name[component.name]) for component in cls)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,20 +166,18 @@ class OMEROWellAddress:
     row_index: int
     column_index: int
 
-    component_name: ClassVar[str] = "well"
-
     @classmethod
-    def filename_pattern(cls) -> str:
+    def filename_pattern(cls, component_name: str) -> str:
         """Return the named-capture grammar for a canonical well label."""
 
-        return f"(?P<{cls.component_name}>[A-Za-z]+\\d+)"
+        return f"(?P<{component_name}>[A-Za-z]+\\d+)"
 
     @classmethod
     @cache
     def label_pattern(cls) -> re.Pattern[str]:
         """Compile the canonical well-label grammar for direct parsing."""
 
-        return re.compile(f"^{cls.filename_pattern()}$")
+        return re.compile(f"^{cls.filename_pattern(OMEROAddressComponent.WELL.component_name)}$")
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -99,7 +195,7 @@ class OMEROWellAddress:
         if match is None:
             raise ValueError(f"Invalid OMERO well label: {label!r}")
 
-        normalized = match.group(cls.component_name)
+        normalized = match.group(OMEROAddressComponent.WELL.component_name)
         column_start = next(
             index for index, character in enumerate(normalized) if character.isdecimal()
         )
@@ -134,89 +230,161 @@ class OMEROWellAddress:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class OMEROPlaneCoordinates:
-    """Complete OMERO plane coordinates keyed by nominal axis declarations."""
-
-    _axis_values: tuple[tuple[OMEROPlaneAxis, int], ...]
-
-    def __init__(
-        self,
-        axis_values: Mapping[OMEROPlaneAxis, int | str],
-    ) -> None:
-        if any(not isinstance(axis, OMEROPlaneAxis) for axis in axis_values):
-            raise TypeError("OMERO coordinates require OMEROPlaneAxis keys")
-        missing = frozenset(OMEROPlaneAxis) - frozenset(axis_values)
-        if missing:
-            raise ValueError(
-                "OMERO plane coordinates must bind every declared axis: "
-                + ", ".join(
-                    f"missing {axis.component_name}" for axis in OMEROPlaneAxis if axis in missing
-                )
-            )
-
-        object.__setattr__(
-            self,
-            "_axis_values",
-            tuple((axis, axis.normalize(axis_values[axis])) for axis in OMEROPlaneAxis),
-        )
-
-    @classmethod
-    def from_match(cls, match: re.Match[str]) -> OMEROPlaneCoordinates:
-        """Construct coordinates by asking every axis to read its own capture."""
-
-        return cls({axis: axis.captured_value(match) for axis in OMEROPlaneAxis})
-
-    def __getitem__(self, axis: OMEROPlaneAxis) -> int:
-        if not isinstance(axis, OMEROPlaneAxis):
-            raise TypeError("OMERO coordinates are indexed by OMEROPlaneAxis")
-        for declared_axis, value in self.declared_values():
-            if declared_axis is axis:
-                return value
-        raise KeyError(axis)
-
-    def declared_values(self) -> tuple[tuple[OMEROPlaneAxis, int], ...]:
-        """Return values in the wire order owned by the axis declaration."""
-
-        return self._axis_values
-
-    def zero_based(self, axis: OMEROPlaneAxis) -> int:
-        """Project a declared one-based coordinate onto an OMERO array index."""
-
-        return self[axis] - 1
-
-    @classmethod
-    @cache
-    def filename_pattern(cls) -> str:
-        """Derive the complete coordinate grammar from nominal axes."""
-
-        return "".join(axis.filename_pattern() for axis in OMEROPlaneAxis)
-
-    def filename_fragment(self) -> str:
-        """Render all coordinates through their nominal axis declarations."""
-
-        return "".join(axis.filename_fragment(value) for axis, value in self.declared_values())
-
-
-@dataclass(frozen=True, slots=True)
 class OMEROPlaneAddress:
     """Canonical virtual filename identity for one OMERO image plane."""
 
-    well: OMEROWellAddress
-    coordinates: OMEROPlaneCoordinates
-    extension: str = ".tif"
+    _component_values: tuple[tuple[OMEROAddressComponent, OMEROAddressValue], ...]
+    extension: str
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.well, OMEROWellAddress):
-            raise TypeError("well must be an OMEROWellAddress")
-        if not isinstance(self.coordinates, OMEROPlaneCoordinates):
-            raise TypeError("coordinates must be OMEROPlaneCoordinates")
+    def __init__(
+        self,
+        component_values: Iterable[tuple[OMEROAddressComponent, object]],
+        *,
+        extension: str = ".tif",
+    ) -> None:
+        supplied_values = tuple(component_values)
+        if any(
+            not isinstance(component, OMEROAddressComponent) for component, _ in supplied_values
+        ):
+            raise TypeError("OMERO addresses require OMEROAddressComponent members")
+        values_by_component = dict(supplied_values)
+        if len(values_by_component) != len(supplied_values):
+            raise ValueError("Each OMERO address component may be bound only once")
+        missing = tuple(
+            component for component in OMEROAddressComponent if component not in values_by_component
+        )
+        if missing:
+            raise ValueError(
+                "OMERO plane address must bind every declared component: "
+                + ", ".join(f"missing {component.component_name}" for component in missing)
+            )
 
-        extension = str(self.extension).strip()
-        if not extension or any(separator in extension for separator in ("/", "\\")):
-            raise ValueError(f"Invalid OMERO plane extension: {self.extension!r}")
-        if not extension.startswith("."):
-            extension = f".{extension}"
-        object.__setattr__(self, "extension", extension)
+        normalized_values = tuple(
+            (component, component.normalize(values_by_component[component]))
+            for component in OMEROAddressComponent
+        )
+        normalized_extension = str(extension).strip()
+        if not normalized_extension or any(
+            separator in normalized_extension for separator in ("/", "\\")
+        ):
+            raise ValueError(f"Invalid OMERO plane extension: {extension!r}")
+        if not normalized_extension.startswith("."):
+            normalized_extension = f".{normalized_extension}"
+        object.__setattr__(self, "_component_values", normalized_values)
+        object.__setattr__(self, "extension", normalized_extension)
+
+    @classmethod
+    def from_component_values(
+        cls,
+        component_values: (
+            Mapping[OMEROAddressComponent, object] | Iterable[tuple[OMEROAddressComponent, object]]
+        ),
+        *,
+        extension: str = ".tif",
+    ) -> OMEROPlaneAddress:
+        """Construct an address from its single component declaration surface."""
+
+        return cls(
+            component_values.items() if isinstance(component_values, Mapping) else component_values,
+            extension=extension,
+        )
+
+    @classmethod
+    def from_plane_indices(
+        cls,
+        *,
+        well: str | OMEROWellAddress,
+        site: int,
+        channel: int,
+        z_index: int,
+        timepoint: int,
+        extension: str = ".tif",
+    ) -> OMEROPlaneAddress:
+        """Bind a one-based site and OMERO's zero-based C/Z/T indices."""
+
+        return cls(
+            (
+                (OMEROAddressComponent.WELL, well),
+                (OMEROAddressComponent.SITE, site),
+                (OMEROAddressComponent.CHANNEL, channel + 1),
+                (OMEROAddressComponent.Z_INDEX, z_index + 1),
+                (OMEROAddressComponent.TIMEPOINT, timepoint + 1),
+            ),
+            extension=extension,
+        )
+
+    @classmethod
+    def from_member_projection(
+        cls,
+        source_values: Iterable[tuple[Enum, object]],
+        *,
+        extension: str = ".tif",
+    ) -> OMEROPlaneAddress:
+        """Construct from another nominal component declaration."""
+
+        return cls.from_component_values(
+            OMEROAddressComponent.project_values(source_values),
+            extension=extension,
+        )
+
+    @classmethod
+    def from_wire_mapping(
+        cls,
+        component_values: Mapping[str, object],
+        *,
+        extension: str = ".tif",
+    ) -> OMEROPlaneAddress:
+        """Construct at an explicit string-keyed API boundary."""
+
+        missing = tuple(
+            component.component_name
+            for component in OMEROAddressComponent
+            if component.component_name not in component_values
+        )
+        if missing:
+            raise ValueError("OMERO component mapping lacks declared fields: " + ", ".join(missing))
+        return cls.from_component_values(
+            (
+                (component, component_values[component.component_name])
+                for component in OMEROAddressComponent
+            ),
+            extension=extension,
+        )
+
+    def declared_values(
+        self,
+    ) -> tuple[tuple[OMEROAddressComponent, OMEROAddressValue], ...]:
+        """Return every address value from the canonical component declaration."""
+
+        return self._component_values
+
+    def value_for(self, component: OMEROAddressComponent) -> OMEROAddressValue:
+        """Return one value through its exact OMERO component declaration."""
+
+        if not isinstance(component, OMEROAddressComponent):
+            raise TypeError("OMERO address lookup requires OMEROAddressComponent")
+        for declared_component, value in self._component_values:
+            if declared_component is component:
+                return value
+        raise KeyError(component)
+
+    @property
+    def well(self) -> OMEROWellAddress:
+        """Return the canonical well address."""
+
+        return OMEROWellAddress.from_label(cast(str, self.value_for(OMEROAddressComponent.WELL)))
+
+    def coordinate(self, component: OMEROAddressComponent) -> int:
+        """Return one positive one-based plane coordinate."""
+
+        if not component.is_plane_coordinate:
+            raise TypeError(f"{component.component_name} is not a plane coordinate")
+        return cast(int, self.value_for(component))
+
+    def zero_based(self, component: OMEROAddressComponent) -> int:
+        """Project one declared coordinate onto an OMERO array index."""
+
+        return component.zero_based(self.coordinate(component))
 
     @classmethod
     @cache
@@ -225,18 +393,20 @@ class OMEROPlaneAddress:
 
         return re.compile(
             "^"
-            + OMEROWellAddress.filename_pattern()
-            + OMEROPlaneCoordinates.filename_pattern()
+            + "".join(component.filename_pattern() for component in OMEROAddressComponent)
             + r"(?:_[^.]*)?(?P<extension>(?:\.[A-Za-z0-9]+)+)$"
         )
 
     @classmethod
     @cache
     def image_name_pattern(cls) -> re.Pattern[str]:
-        """Derive persisted OMERO image-name grammar from the site declaration."""
+        """Derive persisted OMERO image-name grammar from declared components."""
 
         return re.compile(
-            "^" + OMEROWellAddress.filename_pattern() + OMEROPlaneAxis.SITE.filename_pattern() + "$"
+            "^"
+            + OMEROAddressComponent.WELL.filename_pattern()
+            + OMEROAddressComponent.SITE.filename_pattern()
+            + "$"
         )
 
     @classmethod
@@ -248,10 +418,9 @@ class OMEROPlaneAddress:
     ) -> str:
         """Render the persisted OMERO image identity for one well/site."""
 
-        well_address = (
-            well if isinstance(well, OMEROWellAddress) else OMEROWellAddress.from_label(well)
-        )
-        return f"{well_address.label}{OMEROPlaneAxis.SITE.filename_fragment(site)}"
+        return OMEROAddressComponent.WELL.filename_fragment(
+            well
+        ) + OMEROAddressComponent.SITE.filename_fragment(site)
 
     @classmethod
     def site_for_well_sample(
@@ -263,17 +432,11 @@ class OMEROPlaneAddress:
     ) -> int:
         """Resolve a well-sample site from a declared image name or OMERO order."""
 
-        well_address = (
-            well if isinstance(well, OMEROWellAddress) else OMEROWellAddress.from_label(well)
-        )
+        well_label = OMEROAddressComponent.WELL.normalize(well)
         match = cls.image_name_pattern().fullmatch(str(image_name))
-        if (
-            match is not None
-            and OMEROWellAddress.from_label(match.group(OMEROWellAddress.component_name))
-            == well_address
-        ):
-            return OMEROPlaneAxis.SITE.captured_value(match)
-        return OMEROPlaneAxis.SITE.normalize(ordinal)
+        if match is not None and OMEROAddressComponent.WELL.captured_value(match) == well_label:
+            return cast(int, OMEROAddressComponent.SITE.captured_value(match))
+        return cast(int, OMEROAddressComponent.SITE.normalize(ordinal))
 
     @classmethod
     def from_filename(cls, filename: str) -> OMEROPlaneAddress | None:
@@ -283,13 +446,17 @@ class OMEROPlaneAddress:
         match = cls.filename_pattern().fullmatch(basename)
         if match is None:
             return None
-        return cls(
-            well=OMEROWellAddress.from_label(match.group(OMEROWellAddress.component_name)),
-            coordinates=OMEROPlaneCoordinates.from_match(match),
+        return cls.from_component_values(
+            ((component, component.captured_value(match)) for component in OMEROAddressComponent),
             extension=match.group("extension"),
         )
 
     def filename(self) -> str:
         """Render the canonical OMERO virtual filename."""
 
-        return f"{self.well.label}{self.coordinates.filename_fragment()}{self.extension}"
+        return (
+            "".join(
+                component.filename_fragment(value) for component, value in self.declared_values()
+            )
+            + self.extension
+        )

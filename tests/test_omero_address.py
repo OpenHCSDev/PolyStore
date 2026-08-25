@@ -3,9 +3,8 @@
 import pytest
 
 from polystore import (
+    OMEROAddressComponent,
     OMEROPlaneAddress,
-    OMEROPlaneAxis,
-    OMEROPlaneCoordinates,
     OMEROWellAddress,
 )
 
@@ -38,41 +37,69 @@ def test_omero_well_labels_reject_invalid_coordinates(label: str) -> None:
 
 def test_omero_plane_filenames_round_trip_canonical_components() -> None:
     address = OMEROPlaneAddress(
-        well=OMEROWellAddress.from_label("AA01"),
-        coordinates=OMEROPlaneCoordinates(
-            {
-                OMEROPlaneAxis.SITE: "9",
-                OMEROPlaneAxis.CHANNEL: 2,
-                OMEROPlaneAxis.Z_INDEX: "3",
-                OMEROPlaneAxis.TIMEPOINT: 1,
-            }
+        (
+            (OMEROAddressComponent.WELL, "AA01"),
+            (OMEROAddressComponent.SITE, "9"),
+            (OMEROAddressComponent.CHANNEL, 2),
+            (OMEROAddressComponent.Z_INDEX, "3"),
+            (OMEROAddressComponent.TIMEPOINT, 1),
         ),
         extension="ome.tif",
     )
 
     assert address.filename() == "AA01_s009_w2_z003_t001.ome.tif"
     assert OMEROPlaneAddress.from_filename(address.filename()) == address
-    assert address.coordinates[OMEROPlaneAxis.SITE] == 9
-    assert address.coordinates[OMEROPlaneAxis.Z_INDEX] == 3
+    assert address.coordinate(OMEROAddressComponent.SITE) == 9
+    assert address.coordinate(OMEROAddressComponent.Z_INDEX) == 3
 
 
-def test_omero_plane_coordinates_require_nominal_axis_keys() -> None:
-    with pytest.raises(TypeError, match="OMEROPlaneAxis keys"):
-        OMEROPlaneCoordinates(  # type: ignore[arg-type]
-            {
-                "site": 1,
-                "channel": 2,
-                "z_index": 3,
-                "timepoint": 4,
-            }
+def test_omero_plane_address_requires_nominal_component_keys() -> None:
+    with pytest.raises(TypeError, match="OMEROAddressComponent members"):
+        OMEROPlaneAddress(  # type: ignore[arg-type]
+            (
+                ("well", "A01"),
+                ("site", 1),
+                ("channel", 2),
+                ("z_index", 3),
+                ("timepoint", 4),
+            )
         )
 
     with pytest.raises(ValueError, match="missing timepoint"):
-        OMEROPlaneCoordinates(
+        OMEROPlaneAddress(
+            (
+                (OMEROAddressComponent.WELL, "A01"),
+                (OMEROAddressComponent.SITE, 1),
+                (OMEROAddressComponent.CHANNEL, 2),
+                (OMEROAddressComponent.Z_INDEX, 3),
+            )
+        )
+
+
+def test_omero_plane_address_binds_one_based_site_and_zero_based_plane_indices() -> None:
+    address = OMEROPlaneAddress.from_plane_indices(
+        well="B02",
+        site=3,
+        channel=0,
+        z_index=1,
+        timepoint=2,
+        extension=".ome.tif",
+    )
+
+    assert address.filename() == "B02_s003_w1_z002_t003.ome.tif"
+    assert address.zero_based(OMEROAddressComponent.CHANNEL) == 0
+    assert address.zero_based(OMEROAddressComponent.Z_INDEX) == 1
+    assert address.zero_based(OMEROAddressComponent.TIMEPOINT) == 2
+
+
+def test_omero_wire_mapping_requires_complete_declared_components() -> None:
+    with pytest.raises(ValueError, match="lacks declared fields: timepoint"):
+        OMEROPlaneAddress.from_wire_mapping(
             {
-                OMEROPlaneAxis.SITE: 1,
-                OMEROPlaneAxis.CHANNEL: 2,
-                OMEROPlaneAxis.Z_INDEX: 3,
+                "well": "A01",
+                "site": 1,
+                "channel": 1,
+                "z_index": 1,
             }
         )
 
@@ -83,14 +110,12 @@ def test_omero_plane_parser_accepts_result_suffix_without_mirroring_grammar() ->
     )
 
     assert address == OMEROPlaneAddress(
-        well=OMEROWellAddress.from_label("A01"),
-        coordinates=OMEROPlaneCoordinates(
-            {
-                OMEROPlaneAxis.SITE: 1,
-                OMEROPlaneAxis.CHANNEL: 2,
-                OMEROPlaneAxis.Z_INDEX: 3,
-                OMEROPlaneAxis.TIMEPOINT: 4,
-            }
+        (
+            (OMEROAddressComponent.WELL, "A01"),
+            (OMEROAddressComponent.SITE, 1),
+            (OMEROAddressComponent.CHANNEL, 2),
+            (OMEROAddressComponent.Z_INDEX, 3),
+            (OMEROAddressComponent.TIMEPOINT, 4),
         ),
         extension=".tif",
     )

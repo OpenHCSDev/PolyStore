@@ -20,9 +20,8 @@ from .array_payload import storage_numpy_array
 from .atomic import file_lock
 from .base import PicklableBackend, VirtualBackend
 from .omero_address import (
+    OMEROAddressComponent,
     OMEROPlaneAddress,
-    OMEROPlaneAxis,
-    OMEROPlaneCoordinates,
     OMEROWellAddress,
 )
 from .omero_tables import OMERO_TABLE_SERVICE, OMEROTableColumnType
@@ -439,10 +438,10 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             raise ValueError(f"Cannot parse filename: {filename}")
 
         well_id = address.well.label
-        site_idx = address.coordinates[OMEROPlaneAxis.SITE]
-        z_idx = address.coordinates.zero_based(OMEROPlaneAxis.Z_INDEX)
-        c_idx = address.coordinates.zero_based(OMEROPlaneAxis.CHANNEL)
-        t_idx = address.coordinates.zero_based(OMEROPlaneAxis.TIMEPOINT)
+        site_idx = address.coordinate(OMEROAddressComponent.SITE)
+        z_idx = address.zero_based(OMEROAddressComponent.Z_INDEX)
+        c_idx = address.zero_based(OMEROAddressComponent.CHANNEL)
+        t_idx = address.zero_based(OMEROAddressComponent.TIMEPOINT)
 
         # Lookup image_id from structure
         if well_id not in plate_struct.wells:
@@ -866,10 +865,10 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             if address is None:
                 raise ValueError(f"Cannot parse OMERO plane filename: {Path(path).name}")
             well_id = address.well.label
-            site = address.coordinates[OMEROPlaneAxis.SITE]
-            z = address.coordinates.zero_based(OMEROPlaneAxis.Z_INDEX)
-            c = address.coordinates.zero_based(OMEROPlaneAxis.CHANNEL)
-            t = address.coordinates.zero_based(OMEROPlaneAxis.TIMEPOINT)
+            site = address.coordinate(OMEROAddressComponent.SITE)
+            z = address.zero_based(OMEROAddressComponent.Z_INDEX)
+            c = address.zero_based(OMEROAddressComponent.CHANNEL)
+            t = address.zero_based(OMEROAddressComponent.TIMEPOINT)
 
             image_key = (well_id, site)
             images.setdefault(image_key, ImagePlaneBatch()).add(z=z, c=c, t=t, data=data)
@@ -1082,16 +1081,12 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                 for t in range(image_struct.sizeT):
                     for z in range(image_struct.sizeZ):
                         for c in range(image_struct.sizeC):
-                            filename = OMEROPlaneAddress(
-                                well=OMEROWellAddress.from_label(well_id),
-                                coordinates=OMEROPlaneCoordinates(
-                                    {
-                                        OMEROPlaneAxis.SITE: site_idx,
-                                        OMEROPlaneAxis.CHANNEL: c + 1,
-                                        OMEROPlaneAxis.Z_INDEX: z + 1,
-                                        OMEROPlaneAxis.TIMEPOINT: t + 1,
-                                    }
-                                ),
+                            filename = OMEROPlaneAddress.from_plane_indices(
+                                well=well_id,
+                                site=site_idx,
+                                channel=c,
+                                z_index=z,
+                                timepoint=t,
                                 extension=".tif",
                             ).filename()
                             filenames.append(filename)
