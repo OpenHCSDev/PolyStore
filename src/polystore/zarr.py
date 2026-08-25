@@ -19,6 +19,7 @@ import numpy as np
 import zarr
 
 from .array_payload import storage_numpy_array
+from .atomic import file_lock
 from .base import PicklableBackend, StorageBackend
 from .config import ZarrConfig
 from .constants import Backend
@@ -153,17 +154,6 @@ def _ensure_ome_zarr(timeout: float = 30.0):
         cache["write_well_metadata"],
         cache["parse_url"],
     )
-
-
-# Cross-platform file locking
-try:
-    import fcntl
-
-    FCNTL_AVAILABLE = True
-except ImportError:
-    import portalocker
-
-    FCNTL_AVAILABLE = False
 
 
 class ZarrStorageBackend(StorageBackend, PicklableBackend):
@@ -620,18 +610,11 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         lock_path = store_path.with_suffix(".metadata.lock")
 
         try:
-            with open(lock_path, "w") as lock_file:
-                if FCNTL_AVAILABLE:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                else:
-                    portalocker.lock(lock_file, portalocker.LOCK_EX)
+            with file_lock(lock_path):
                 self._ensure_plate_metadata(root, row, col, field_count)
         except Exception as e:
             logger.error(f"Failed to update plate metadata with lock: {e}")
             raise
-        finally:
-            if lock_path.exists():
-                lock_path.unlink()
 
     def _ensure_plate_metadata(
         self,

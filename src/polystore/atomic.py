@@ -10,32 +10,27 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
-# Cross-platform file locking
-try:
-    import fcntl
-    FCNTL_AVAILABLE = True
-except ImportError:
-    # Windows compatibility - use portalocker
-    import portalocker
-    FCNTL_AVAILABLE = False
+import portalocker
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
 class LockConfig:
     """Configuration constants for file locking operations."""
+
     DEFAULT_TIMEOUT: float = 30.0
     DEFAULT_POLL_INTERVAL: float = 0.1
-    LOCK_SUFFIX: str = '.lock'
-    TEMP_PREFIX: str = '.tmp'
+    LOCK_SUFFIX: str = ".lock"
+    TEMP_PREFIX: str = ".tmp"
     JSON_INDENT: int = 2
 
 
@@ -44,89 +39,82 @@ LOCK_CONFIG = LockConfig()
 
 class FileLockError(Exception):
     """Raised when file locking operations fail."""
-    pass
 
 
 class FileLockTimeoutError(FileLockError):
     """Raised when file lock acquisition times out."""
-    pass
 
 
 @contextmanager
 def file_lock(
-    lock_path: Union[str, Path],
+    lock_path: str | Path,
     timeout: float = LOCK_CONFIG.DEFAULT_TIMEOUT,
-    poll_interval: float = LOCK_CONFIG.DEFAULT_POLL_INTERVAL
-):
+    poll_interval: float = LOCK_CONFIG.DEFAULT_POLL_INTERVAL,
+) -> Iterator[None]:
     """Context manager for exclusive file locking."""
     lock_path = Path(lock_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    lock_fd = None
+    lock_fd = _acquire_lock_with_timeout(lock_path, timeout, poll_interval)
     try:
-        lock_fd = _acquire_lock_with_timeout(lock_path, timeout, poll_interval)
         yield
-    except FileLockTimeoutError:
-        raise
-    except Exception as e:
-        raise FileLockError(f"File lock operation failed for {lock_path}: {e}") from e
     finally:
         _cleanup_lock(lock_fd, lock_path)
 
 
 def _acquire_lock_with_timeout(lock_path: Path, timeout: float, poll_interval: float) -> int:
     """Acquire file lock with timeout and return file descriptor."""
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
 
-    while time.time() < deadline:
-        if lock_fd := _try_acquire_lock(lock_path):
+    while True:
+        lock_fd = _try_acquire_lock(lock_path)
+        if lock_fd is not None:
             return lock_fd
-        time.sleep(poll_interval)
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            break
+        time.sleep(min(poll_interval, remaining_seconds))
 
     raise FileLockTimeoutError(f"Failed to acquire lock {lock_path} within {timeout}s")
 
 
-def _try_acquire_lock(lock_path: Path) -> Optional[int]:
+def _try_acquire_lock(lock_path: Path) -> int | None:
     """Try to acquire lock once, return fd or None."""
+    lock_fd = None
     try:
-        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
-        if FCNTL_AVAILABLE:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        else:
-            # Windows: use portalocker
-            portalocker.lock(lock_fd, portalocker.LOCK_EX | portalocker.LOCK_NB)
-        logger.debug(f"Acquired file lock: {lock_path}")
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY, 0o600)
+        portalocker.lock(lock_fd, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        logger.debug("Acquired file lock: %s", lock_path)
         return lock_fd
-    except (OSError, IOError):
-        return None
-
-
-def _cleanup_lock(lock_fd: Optional[int], lock_path: Path) -> None:
-    """Clean up file lock resources."""
-    if lock_fd is not None:
-        try:
-            if FCNTL_AVAILABLE:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            else:
-                # Windows: use portalocker
-                portalocker.unlock(lock_fd)
+    except (OSError, portalocker.exceptions.LockException):
+        if lock_fd is not None:
             os.close(lock_fd)
-            logger.debug(f"Released file lock: {lock_path}")
-        except Exception as e:
-            logger.warning(f"Error releasing lock {lock_path}: {e}")
+        return None
+    except BaseException:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        raise
 
-    if lock_path.exists():
+
+def _cleanup_lock(lock_fd: int, lock_path: Path) -> None:
+    """Clean up file lock resources."""
+    try:
+        portalocker.unlock(lock_fd)
+        logger.debug("Released file lock: %s", lock_path)
+    except (OSError, portalocker.exceptions.LockException) as exc:
+        logger.warning("Error releasing lock %s: %s", lock_path, exc)
+    finally:
         try:
-            lock_path.unlink()
-        except Exception as e:
-            logger.warning(f"Error removing lock file {lock_path}: {e}")
+            os.close(lock_fd)
+        except OSError as exc:
+            logger.warning("Error closing lock %s: %s", lock_path, exc)
 
 
 def atomic_write_json(
-    file_path: Union[str, Path],
-    data: Dict[str, Any],
+    file_path: str | Path,
+    data: dict[str, Any],
     indent: int = LOCK_CONFIG.JSON_INDENT,
-    ensure_directory: bool = True
+    ensure_directory: bool = True,
 ) -> None:
     """Atomically write JSON data to file using temporary file + rename."""
     file_path = Path(file_path)
@@ -144,14 +132,14 @@ def atomic_write_json(
         raise FileLockError(f"Atomic JSON write failed for {file_path}: {e}") from e
 
 
-def _write_to_temp_file(file_path: Path, data: Dict[str, Any], indent: int) -> str:
+def _write_to_temp_file(file_path: Path, data: dict[str, Any], indent: int) -> str:
     """Write data to temporary file and return path."""
     with tempfile.NamedTemporaryFile(
-        mode='w',
+        mode="w",
         dir=file_path.parent,
         prefix=f"{LOCK_CONFIG.TEMP_PREFIX}{file_path.name}",
-        suffix='.json',
-        delete=False
+        suffix=".json",
+        delete=False,
     ) as tmp_file:
         json.dump(data, tmp_file, indent=indent)
         tmp_file.flush()
@@ -160,14 +148,14 @@ def _write_to_temp_file(file_path: Path, data: Dict[str, Any], indent: int) -> s
 
 
 def atomic_update_json(
-    file_path: Union[str, Path],
-    update_func: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    file_path: str | Path,
+    update_func: Callable[[dict[str, Any] | None], dict[str, Any]],
     lock_timeout: float = LOCK_CONFIG.DEFAULT_TIMEOUT,
-    default_data: Optional[Dict[str, Any]] = None
+    default_data: dict[str, Any] | None = None,
 ) -> None:
     """Atomically update JSON file using read-modify-write with file locking."""
     file_path = Path(file_path)
-    lock_path = file_path.with_suffix(f'{file_path.suffix}{LOCK_CONFIG.LOCK_SUFFIX}')
+    lock_path = file_path.with_suffix(f"{file_path.suffix}{LOCK_CONFIG.LOCK_SUFFIX}")
 
     with file_lock(lock_path, timeout=lock_timeout):
         current_data = _read_json_or_default(file_path, default_data)
@@ -181,14 +169,16 @@ def atomic_update_json(
         logger.debug(f"Atomically updated JSON file: {file_path}")
 
 
-def _read_json_or_default(file_path: Path, default_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _read_json_or_default(
+    file_path: Path, default_data: dict[str, Any] | None
+) -> dict[str, Any] | None:
     """Read JSON file or return default data if file doesn't exist or is invalid."""
     if not file_path.exists():
         return default_data
 
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to read {file_path}, using default: {e}")
         return default_data

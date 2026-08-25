@@ -14,19 +14,10 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-# Cross-platform file locking
-try:
-    import fcntl
-
-    FCNTL_AVAILABLE = True
-except ImportError:
-    import portalocker
-
-    FCNTL_AVAILABLE = False
-
 import numpy as np
 
 from .array_payload import storage_numpy_array
+from .atomic import file_lock
 from .base import PicklableBackend, VirtualBackend
 from .omero_tables import OMERO_TABLE_SERVICE, OMEROTableColumnType
 from .omero_text import OMEROTextFormat
@@ -966,23 +957,15 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = lock_dir / f"{plate_name}.lock"
 
-        try:
-            with open(lock_path, "w") as lock_file:
-                if FCNTL_AVAILABLE:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                else:
-                    portalocker.lock(lock_file, portalocker.LOCK_EX)
+        with file_lock(lock_path):
+            existing_id = self._find_plate_by_name(plate_name, **kwargs)
+            if existing_id:
+                self._load_plate_structure(existing_id, **kwargs)
+                return existing_id
 
-                existing_id = self._find_plate_by_name(plate_name, **kwargs)
-                if existing_id:
-                    self._load_plate_structure(existing_id, **kwargs)
-                    return existing_id
-
-                return self._create_derived_plate(
-                    plate_name, base_id, parser_name, microscope_type, images, **kwargs
-                )
-        finally:
-            lock_path.unlink(missing_ok=True)
+            return self._create_derived_plate(
+                plate_name, base_id, parser_name, microscope_type, images, **kwargs
+            )
 
     def _create_derived_plate(
         self, plate_name, base_id, parser_name, microscope_type, images, **kwargs
@@ -1102,28 +1085,20 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
                 lock_dir.mkdir(parents=True, exist_ok=True)
                 lock_path = lock_dir / f"{lock_key}.lock"
 
-                try:
-                    with open(lock_path, "w") as lock_file:
-                        if FCNTL_AVAILABLE:
-                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                        else:
-                            portalocker.lock(lock_file, portalocker.LOCK_EX)
+                with file_lock(lock_path):
+                    # Re-check if well exists after acquiring both locks
+                    # Use findAllByQuery since findByQuery throws exception on null
+                    wells = query_service.findAllByQuery(query, params)
+                    well_obj = wells[0] if wells else None
 
-                        # Re-check if well exists after acquiring both locks
-                        # Use findAllByQuery since findByQuery throws exception on null
-                        wells = query_service.findAllByQuery(query, params)
-                        well_obj = wells[0] if wells else None
-
-                        if not well_obj:
-                            # Create new well
-                            update_service = conn.getUpdateService()
-                            well = omero.model.WellI()
-                            well.setPlate(omero.model.PlateI(plate_id, False))
-                            well.setRow(rint(row))
-                            well.setColumn(rint(col))
-                            well_obj = update_service.saveAndReturnObject(well)
-                finally:
-                    lock_path.unlink(missing_ok=True)
+                    if not well_obj:
+                        # Create new well
+                        update_service = conn.getUpdateService()
+                        well = omero.model.WellI()
+                        well.setPlate(omero.model.PlateI(plate_id, False))
+                        well.setRow(rint(row))
+                        well.setColumn(rint(col))
+                        well_obj = update_service.saveAndReturnObject(well)
 
             # Link image to well
             # Reload well with wellSamples collection loaded

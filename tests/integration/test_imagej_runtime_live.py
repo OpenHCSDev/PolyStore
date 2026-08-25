@@ -25,8 +25,11 @@ def test_declared_fiji_runtime_initializes_with_bioformats() -> None:
     try:
         gateway = FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="headless")
 
-        assert str(gateway.getVersion()).startswith("2.17.0/")
+        assert str(gateway.getVersion()).startswith("2.18.0/")
         assert gateway.legacy.isActive()
+        assert str(scyjava.jimport("java.lang.System").getProperty("java.version")).startswith(
+            "21."
+        )
         assert scyjava.jimport("loci.formats.ImageReader") is not None
         assert scyjava.jimport("loci.formats.MetadataTools") is not None
     finally:

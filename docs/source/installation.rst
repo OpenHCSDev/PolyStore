@@ -11,8 +11,8 @@ PolyStore requires Python 3.11 or newer.
    python -m pip install polystore
 
 The declared core includes NumPy, ArrayBridge, metaclass-registry,
-portalocker, imageio, Zarr, and OME-Zarr. Optional extras add individual array
-frameworks or streaming support:
+portalocker, platformdirs, imageio, Zarr, OME-Zarr, and ZMQRuntime. Optional
+extras add individual array frameworks or streaming support:
 
 .. code-block:: console
 
@@ -35,13 +35,17 @@ ImageJ runtimes
 ---------------
 
 Install the optional bridge with ``pip install "polystore[bioformats]"``.
-``FIJI_IMAGEJ_RUNTIME`` pins the tested Fiji Maven release and its compatible
-managed JDK. Applications using PolyStore's Bio-Formats bridge or a Fiji
-streaming process should initialize PyImageJ through that policy before any JVM
-starts. This keeps the distribution and Java compatibility requirement in one
-package-owned declaration. The Fiji declaration also owns a bounded retry
-schedule for transient artifact-resolution failures. Retries stop once a JVM
-has started, because a partially initialized process cannot safely change its
-Java runtime. Process owners must close the gateway through the policy's
-``shutdown`` method so the JVM is destroyed while the Python runtime is still
-valid, rather than during interpreter finalization.
+``FIJI_IMAGEJ_RUNTIME`` selects a platform-specific, checksummed application
+bundle from one immutable official Fiji archive. On first use, PolyStore
+downloads and atomically extracts that bundle into the operating system's user
+cache. The bundle includes its compatible JDK, so initialization does not
+resolve a mutable Maven dependency graph. The first initialization downloads
+several hundred megabytes and reports progress; later processes reuse the
+verified cache.
+
+Applications using PolyStore's Bio-Formats bridge or a Fiji streaming process
+should initialize PyImageJ through that policy before any JVM starts. The
+policy validates both the active Java feature version and the ImageJ
+distribution. Process owners must close the gateway through its ``shutdown``
+method so the JVM is destroyed while the Python runtime is still valid, rather
+than during interpreter finalization.

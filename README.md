@@ -60,8 +60,9 @@ python -m pip install polystore
 ```
 
 The core install includes NumPy, ArrayBridge, metaclass-registry, file locking,
-image I/O, and Zarr/OME-Zarr support. Framework and streaming extras add their
-corresponding optional runtimes. Install ``polystore[bioformats]`` for the
-package-owned PyImageJ and Bio-Formats bridge.
+platform-aware cache paths, image I/O, Zarr/OME-Zarr support, and ZMQRuntime.
+Framework and streaming extras add their corresponding optional runtimes.
+Install ``polystore[bioformats]`` for the package-owned PyImageJ and
+Bio-Formats bridge.
 
 Full documentation: [polystore.readthedocs.io](https://polystore.readthedocs.io)

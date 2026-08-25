@@ -70,11 +70,8 @@ jobs:
       - name: Cache the declared JDK and ImageJ artifacts
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/cjdk
-            ~/.jgo
-            ~/.m2/repository
-          key: ${{ runner.os }}-polystore-imagej-${{ hashFiles('src/polystore/imagej_runtime.py') }}
+          path: ~/.cache/polystore
+          key: ${{ runner.os }}-polystore-imagej-${{ hashFiles('src/polystore/imagej_distribution.py', 'src/polystore/imagej_runtime.py') }}
 
       - name: Install the Bio-Formats integration
         run: |

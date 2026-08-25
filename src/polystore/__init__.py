@@ -38,6 +38,14 @@ from .base import (
 from .constants import Backend, MemoryType
 from .filemanager import FileManager
 from .formats import DEFAULT_IMAGE_EXTENSIONS, FileFormat
+from .imagej_distribution import (
+    FIJI_IMAGEJ_DISTRIBUTION,
+    FijiArchiveDistribution,
+    FijiBundleAsset,
+    ImageJDistributionABC,
+    ImageJDistributionUnavailableError,
+    ImageJRuntimeLaunch,
+)
 from .imagej_runtime import (
     FIJI_IMAGEJ_RUNTIME,
     ImageJRuntimePolicy,
@@ -99,6 +107,12 @@ __all__ = [
     "ImageJRuntimePolicy",
     "ImageJRuntimeUnavailableError",
     "FIJI_IMAGEJ_RUNTIME",
+    "ImageJDistributionABC",
+    "ImageJDistributionUnavailableError",
+    "ImageJRuntimeLaunch",
+    "FijiArchiveDistribution",
+    "FijiBundleAsset",
+    "FIJI_IMAGEJ_DISTRIBUTION",
     "DEFAULT_IMAGE_EXTENSIONS",
     "BackendBase",
     "DataSink",

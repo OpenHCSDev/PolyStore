@@ -8,6 +8,7 @@ API orientation
    backends
    registry
    atomic
+   imagej_runtime
    exceptions
 
 Primary imports

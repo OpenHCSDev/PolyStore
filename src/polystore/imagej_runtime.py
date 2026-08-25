@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from .imagej_distribution import FIJI_IMAGEJ_DISTRIBUTION, ImageJDistributionABC
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,11 +18,9 @@ class ImageJRuntimeUnavailableError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ImageJRuntimePolicy:
-    """Own an ImageJ endpoint, managed Java requirement, and process lifecycle."""
+    """Own an ImageJ distribution, bundled Java requirement, and process lifecycle."""
 
-    endpoint: str
-    java_fetch: str
-    java_vendor: str
+    distribution: ImageJDistributionABC
     java_version: str
     initialization_retry_delays_seconds: tuple[float, ...] = ()
 
@@ -37,42 +37,50 @@ class ImageJRuntimePolicy:
         *,
         mode: str,
     ) -> Any:
-        """Initialize the declared endpoint with its compatible managed JVM."""
+        """Initialize the declared distribution with its compatible bundled JVM."""
 
+        if scyjava_module.jvm_started():
+            self.require_compatible_active_java(scyjava_module)
+            gateway = imagej_module.init(None, mode=mode)
+            self.distribution.require_compatible_gateway(gateway)
+            return gateway
+
+        launch = self.distribution.materialize()
         self.configure_java(scyjava_module)
         retry_delays = iter(self.initialization_retry_delays_seconds)
-        while True:
-            try:
-                gateway = imagej_module.init(self.endpoint, mode=mode)
-                break
-            except Exception as exc:
-                retry_delay = next(retry_delays, None)
-                if retry_delay is None or scyjava_module.jvm_started():
-                    raise ImageJRuntimeUnavailableError(
-                        f"Could not initialize {self.endpoint} with managed Java "
-                        f"{self.java_version}."
-                    ) from exc
-                logger.warning(
-                    "ImageJ initialization failed before JVM startup; retrying %s "
-                    "in %.1f seconds: %s",
-                    self.endpoint,
-                    retry_delay,
-                    exc,
-                )
-                time.sleep(retry_delay)
+        with launch.activated_environment() as imagej_target:
+            while True:
+                try:
+                    gateway = imagej_module.init(imagej_target, mode=mode)
+                    break
+                except Exception as exc:
+                    retry_delay = next(retry_delays, None)
+                    if retry_delay is None or scyjava_module.jvm_started():
+                        raise ImageJRuntimeUnavailableError(
+                            f"Could not initialize {self.distribution.label} with "
+                            f"bundled Java {self.java_version}."
+                        ) from exc
+                    logger.warning(
+                        "ImageJ initialization failed before JVM startup; retrying %s "
+                        "in %.1f seconds: %s",
+                        self.distribution.label,
+                        retry_delay,
+                        exc,
+                    )
+                    time.sleep(retry_delay)
         self.require_compatible_active_java(scyjava_module)
+        self.distribution.require_compatible_gateway(gateway)
         return gateway
 
     def configure_java(self, scyjava_module: Any) -> None:
-        """Select managed Java before startup or validate the active JVM."""
+        """Require bundled Java startup or validate the active JVM."""
 
         self._configure_controlled_jvm_shutdown()
         if scyjava_module.jvm_started():
             self.require_compatible_active_java(scyjava_module)
             return
         scyjava_module.config.set_java_constraints(
-            fetch=self.java_fetch,
-            vendor=self.java_vendor,
+            fetch="never",
             version=self.java_version,
         )
 
@@ -101,8 +109,9 @@ class ImageJRuntimePolicy:
         active_major = _java_major_version(active_version)
         if active_major != self.java_major_version:
             raise ImageJRuntimeUnavailableError(
-                f"{self.endpoint} requires Java {self.java_version}; the active JVM "
-                f"is Java {active_version}. Start this runtime in a fresh process."
+                f"{self.distribution.label} requires Java {self.java_version}; the "
+                f"active JVM is Java {active_version}. Start this runtime in a fresh "
+                "process."
             )
 
 
@@ -120,9 +129,7 @@ def _java_major_version(version: str) -> int:
 
 
 FIJI_IMAGEJ_RUNTIME = ImageJRuntimePolicy(
-    endpoint="sc.fiji:fiji:2.17.0",
-    java_fetch="always",
-    java_vendor="zulu",
-    java_version="11",
+    distribution=FIJI_IMAGEJ_DISTRIBUTION,
+    java_version="21",
     initialization_retry_delays_seconds=(1.0, 2.0),
 )

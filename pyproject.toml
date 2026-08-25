@@ -45,6 +45,7 @@ dependencies = [
     "zarr>=2.18.0,<3.0",  # Required for ZarrStorageBackend
     "ome-zarr>=0.11.0",   # Required for OME-ZARR HCS compliance
     "zmqruntime>=0.1.22",
+    "platformdirs>=4.0.0",
 ]
 
 [project.optional-dependencies]
