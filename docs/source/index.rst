@@ -30,4 +30,5 @@ Requirements
 
 PolyStore requires Python 3.11 or newer. Its declared core dependencies include
 NumPy, ArrayBridge, metaclass-registry, portalocker, imageio, Zarr, and
-OME-Zarr. Optional extras add array frameworks and viewer transport runtimes.
+OME-Zarr. Optional extras add array frameworks, viewer transport runtimes, and
+the PyImageJ-backed Bio-Formats bridge.

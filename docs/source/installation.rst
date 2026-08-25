@@ -34,11 +34,12 @@ Development
 ImageJ runtimes
 ---------------
 
-``FIJI_IMAGEJ_RUNTIME`` declares the Fiji Maven endpoint and its compatible
-managed Java runtime. Applications using PolyStore's Bio-Formats bridge or
-Fiji streaming process should initialize PyImageJ through that policy before
-any JVM starts. This keeps the endpoint and Java compatibility requirement in
-one package-owned declaration. The Fiji declaration also owns a bounded retry
+Install the optional bridge with ``pip install "polystore[bioformats]"``.
+``FIJI_IMAGEJ_RUNTIME`` pins the tested Fiji Maven release and its compatible
+managed JDK. Applications using PolyStore's Bio-Formats bridge or a Fiji
+streaming process should initialize PyImageJ through that policy before any JVM
+starts. This keeps the distribution and Java compatibility requirement in one
+package-owned declaration. The Fiji declaration also owns a bounded retry
 schedule for transient artifact-resolution failures. Retries stop once a JVM
 has started, because a partially initialized process cannot safely change its
 Java runtime. Process owners must close the gateway through the policy's

@@ -69,14 +69,14 @@ def test_fiji_runtime_selects_managed_java_before_initialization(monkeypatch) ->
     import jpype.config
 
     monkeypatch.setattr(jpype.config, "destroy_jvm", False)
-    scyjava = _ScyJava(started=False, java_version="21.0.8")
+    scyjava = _ScyJava(started=False, java_version="11.0.28")
     imagej = _ImageJ(scyjava)
 
     gateway = FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="headless")
 
     assert gateway is imagej.gateway
-    assert scyjava.constraints == [{"fetch": "always", "vendor": "zulu-jre", "version": "21"}]
-    assert imagej.calls == [("sc.fiji:fiji", "headless")]
+    assert scyjava.constraints == [{"fetch": "always", "vendor": "zulu", "version": "11"}]
+    assert imagej.calls == [("sc.fiji:fiji:2.17.0", "headless")]
     assert jpype.config.destroy_jvm is True
 
 
@@ -85,7 +85,7 @@ def test_fiji_runtime_shuts_down_gateway_before_jvm(monkeypatch) -> None:
 
     events: list[str] = []
     gateway = _Gateway(events)
-    scyjava = _ScyJava(started=True, java_version="21")
+    scyjava = _ScyJava(started=True, java_version="11")
     original_shutdown = scyjava.shutdown_jvm
 
     def record_shutdown() -> None:
@@ -117,23 +117,23 @@ def test_fiji_runtime_stops_jvm_after_gateway_disposal_failure() -> None:
 
 
 def test_runtime_accepts_compatible_active_java_without_reconfiguration() -> None:
-    scyjava = _ScyJava(started=True, java_version="21")
+    scyjava = _ScyJava(started=True, java_version="11")
     imagej = _ImageJ(scyjava)
 
     FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="interactive")
 
     assert scyjava.constraints == []
-    assert imagej.calls == [("sc.fiji:fiji", "interactive")]
+    assert imagej.calls == [("sc.fiji:fiji:2.17.0", "interactive")]
 
 
-@pytest.mark.parametrize("java_version", ("1.8.0_452", "11.0.28", "26"))
+@pytest.mark.parametrize("java_version", ("1.8.0_452", "17.0.16", "21.0.8", "26"))
 def test_runtime_rejects_an_incompatible_active_jvm(java_version: str) -> None:
     scyjava = _ScyJava(started=True, java_version=java_version)
     imagej = _ImageJ(scyjava)
 
     with pytest.raises(
         ImageJRuntimeUnavailableError,
-        match=rf"requires Java 21; the active JVM is Java {java_version}",
+        match=rf"requires Java 11; the active JVM is Java {java_version}",
     ):
         FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="headless")
 
@@ -157,7 +157,7 @@ def test_runtime_reports_an_unparseable_active_java_version() -> None:
 
 
 def test_runtime_wraps_imagej_initialization_failure() -> None:
-    scyjava = _ScyJava(started=True, java_version="21")
+    scyjava = _ScyJava(started=True, java_version="11")
     calls = 0
 
     def fail_initialization(endpoint: str, *, mode: str) -> None:
@@ -169,7 +169,7 @@ def test_runtime_wraps_imagej_initialization_failure() -> None:
 
     with pytest.raises(
         ImageJRuntimeUnavailableError,
-        match="Could not initialize sc.fiji:fiji with managed Java 21",
+        match="Could not initialize sc.fiji:fiji:2.17.0 with managed Java 11",
     ) as exc_info:
         FIJI_IMAGEJ_RUNTIME.initialize(imagej, scyjava, mode="headless")
 

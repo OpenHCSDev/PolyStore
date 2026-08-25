@@ -120,9 +120,9 @@ def _java_major_version(version: str) -> int:
 
 
 FIJI_IMAGEJ_RUNTIME = ImageJRuntimePolicy(
-    endpoint="sc.fiji:fiji",
+    endpoint="sc.fiji:fiji:2.17.0",
     java_fetch="always",
-    java_vendor="zulu-jre",
-    java_version="21",
+    java_vendor="zulu",
+    java_version="11",
     initialization_retry_delays_seconds=(1.0, 2.0),
 )

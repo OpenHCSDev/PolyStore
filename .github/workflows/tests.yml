@@ -54,3 +54,34 @@ jobs:
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+
+  imagej-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache the declared JDK and ImageJ artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/cjdk
+            ~/.jgo
+            ~/.m2/repository
+          key: ${{ runner.os }}-polystore-imagej-${{ hashFiles('src/polystore/imagej_runtime.py') }}
+
+      - name: Install the Bio-Formats integration
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[bioformats,dev]"
+
+      - name: Resolve and initialize the declared Fiji runtime
+        env:
+          POLYSTORE_LIVE_IMAGEJ_TEST: "1"
+        run: python -m pytest tests/integration/test_imagej_runtime_live.py --no-cov -v
