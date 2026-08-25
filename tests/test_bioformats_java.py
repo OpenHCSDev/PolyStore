@@ -23,6 +23,7 @@ class _Gateway:
 class _Runtime:
     def __init__(self) -> None:
         self.gateways: list[_Gateway] = []
+        self.shutdown_gateways: list[_Gateway | None] = []
 
     def initialize(self, imagej_module, scyjava_module, *, mode: str) -> _Gateway:
         assert imagej_module == "imagej"
@@ -32,17 +33,27 @@ class _Runtime:
         self.gateways.append(gateway)
         return gateway
 
+    def shutdown(self, gateway: _Gateway | None, scyjava_module) -> None:
+        self.shutdown_gateways.append(gateway)
+        if gateway is not None:
+            gateway.dispose()
+        scyjava_module.shutdown_jvm()
+
 
 class _ScyJava:
     def __init__(self, *, failing_import: str | None = None) -> None:
         self.failing_import = failing_import
         self.imports: list[str] = []
+        self.shutdown_count = 0
 
     def jimport(self, name: str) -> object:
         self.imports.append(name)
         if name == self.failing_import:
             raise RuntimeError(f"could not import {name}")
         return object()
+
+    def shutdown_jvm(self) -> None:
+        self.shutdown_count += 1
 
 
 def test_bioformats_context_disposes_and_can_reinitialize(monkeypatch) -> None:
@@ -98,8 +109,11 @@ def test_dispose_instance_does_not_create_process_context(monkeypatch) -> None:
     assert BioFormatsJavaContext._instance is None
 
 
-def test_test_runtime_cleanup_disposes_process_context(monkeypatch) -> None:
-    context = BioFormatsJavaContext("imagej", _ScyJava())
+def test_test_runtime_cleanup_stops_process_context(monkeypatch) -> None:
+    runtime = _Runtime()
+    scyjava = _ScyJava()
+    monkeypatch.setattr(bioformats_java, "FIJI_IMAGEJ_RUNTIME", runtime)
+    context = BioFormatsJavaContext("imagej", scyjava)
     gateway = _Gateway()
     context.ij = gateway
     monkeypatch.setattr(BioFormatsJavaContext, "_instance", context)
@@ -108,3 +122,6 @@ def test_test_runtime_cleanup_disposes_process_context(monkeypatch) -> None:
 
     assert gateway.dispose_count == 1
     assert context.ij is None
+    assert runtime.shutdown_gateways == [gateway]
+    assert scyjava.shutdown_count == 1
+    assert BioFormatsJavaContext._instance is None

@@ -41,4 +41,6 @@ any JVM starts. This keeps the endpoint and Java compatibility requirement in
 one package-owned declaration. The Fiji declaration also owns a bounded retry
 schedule for transient artifact-resolution failures. Retries stop once a JVM
 has started, because a partially initialized process cannot safely change its
-Java runtime.
+Java runtime. Process owners must close the gateway through the policy's
+``shutdown`` method so the JVM is destroyed while the Python runtime is still
+valid, rather than during interpreter finalization.

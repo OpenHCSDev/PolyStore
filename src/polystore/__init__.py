@@ -40,7 +40,6 @@ from .filemanager import FileManager
 from .formats import DEFAULT_IMAGE_EXTENSIONS, FileFormat
 from .imagej_runtime import (
     FIJI_IMAGEJ_RUNTIME,
-    ImageJJvmTeardown,
     ImageJRuntimePolicy,
     ImageJRuntimeUnavailableError,
 )
@@ -97,7 +96,6 @@ __all__ = [
     "Backend",
     "MemoryType",
     "FileFormat",
-    "ImageJJvmTeardown",
     "ImageJRuntimePolicy",
     "ImageJRuntimeUnavailableError",
     "FIJI_IMAGEJ_RUNTIME",

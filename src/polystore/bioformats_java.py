@@ -93,16 +93,29 @@ class BioFormatsJavaContext:
             self.FormatTools = format_tools
 
     def dispose(self) -> None:
-        """Dispose the owned ImageJ gateway before interpreter shutdown."""
+        """Dispose the current ImageJ gateway while keeping the JVM reusable."""
 
         with self._lifecycle_lock:
-            gateway = self.ij
-            self.ij = None
-            self.ImageReader = None
-            self.MetadataTools = None
-            self.FormatTools = None
+            gateway = self._detach_gateway()
             if gateway is not None:
                 gateway.dispose()
+
+    def shutdown(self) -> None:
+        """Stop the process-owned ImageJ context and JVM exactly once."""
+
+        with self._lifecycle_lock:
+            gateway = self._detach_gateway()
+            FIJI_IMAGEJ_RUNTIME.shutdown(gateway, self.scyjava)
+
+    def _detach_gateway(self) -> Any | None:
+        """Clear and return the currently owned ImageJ gateway."""
+
+        gateway = self.ij
+        self.ij = None
+        self.ImageReader = None
+        self.MetadataTools = None
+        self.FormatTools = None
+        return gateway
 
     @classmethod
     def dispose_instance(cls) -> None:
@@ -112,6 +125,16 @@ class BioFormatsJavaContext:
             context = cls._instance
         if context is not None:
             context.dispose()
+
+    @classmethod
+    def shutdown_instance(cls) -> None:
+        """Stop and release the initialized process-wide context without creating it."""
+
+        with cls._lock:
+            context = cls._instance
+            cls._instance = None
+        if context is not None:
+            context.shutdown()
 
     def open_reader(self, source_path: str | Path) -> BioFormatsOpenedReader:
         self.ensure_initialized()
@@ -136,7 +159,7 @@ class BioFormatsJavaContext:
             reader.close()
 
 
-register_cleanup_callback(BioFormatsJavaContext.dispose_instance)
+register_cleanup_callback(BioFormatsJavaContext.shutdown_instance)
 
 
 def java_int(value: Any) -> int | None:

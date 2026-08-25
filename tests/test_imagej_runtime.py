@@ -6,7 +6,6 @@ import pytest
 
 from polystore.imagej_runtime import (
     FIJI_IMAGEJ_RUNTIME,
-    ImageJJvmTeardown,
     ImageJRuntimePolicy,
     ImageJRuntimeUnavailableError,
 )
@@ -25,6 +24,7 @@ class _ScyJava:
     def __init__(self, *, started: bool, java_version: str) -> None:
         self._started = started
         self.constraints: list[dict[str, str]] = []
+        self.shutdown_count = 0
         self.config = SimpleNamespace(
             set_java_constraints=lambda **constraints: self.constraints.append(constraints)
         )
@@ -37,12 +37,27 @@ class _ScyJava:
         assert name == "java.lang.System"
         return self._system
 
+    def shutdown_jvm(self) -> None:
+        self.shutdown_count += 1
+        self._started = False
+
+
+class _Gateway:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.dispose_count = 0
+        self.events = events
+
+    def dispose(self) -> None:
+        self.dispose_count += 1
+        if self.events is not None:
+            self.events.append("gateway_disposed")
+
 
 class _ImageJ:
     def __init__(self, scyjava: _ScyJava) -> None:
         self._scyjava = scyjava
         self.calls: list[tuple[str, str]] = []
-        self.gateway = object()
+        self.gateway = _Gateway()
 
     def init(self, endpoint: str, *, mode: str) -> object:
         self.calls.append((endpoint, mode))
@@ -53,7 +68,7 @@ class _ImageJ:
 def test_fiji_runtime_selects_managed_java_before_initialization(monkeypatch) -> None:
     import jpype.config
 
-    monkeypatch.setattr(jpype.config, "destroy_jvm", True)
+    monkeypatch.setattr(jpype.config, "destroy_jvm", False)
     scyjava = _ScyJava(started=False, java_version="21.0.8")
     imagej = _ImageJ(scyjava)
 
@@ -62,7 +77,43 @@ def test_fiji_runtime_selects_managed_java_before_initialization(monkeypatch) ->
     assert gateway is imagej.gateway
     assert scyjava.constraints == [{"fetch": "always", "vendor": "zulu-jre", "version": "21"}]
     assert imagej.calls == [("sc.fiji:fiji", "headless")]
-    assert jpype.config.destroy_jvm is False
+    assert jpype.config.destroy_jvm is True
+
+
+def test_fiji_runtime_shuts_down_gateway_before_jvm(monkeypatch) -> None:
+    import jpype.config
+
+    events: list[str] = []
+    gateway = _Gateway(events)
+    scyjava = _ScyJava(started=True, java_version="21")
+    original_shutdown = scyjava.shutdown_jvm
+
+    def record_shutdown() -> None:
+        events.append("jvm_shutdown")
+        original_shutdown()
+
+    scyjava.shutdown_jvm = record_shutdown
+    monkeypatch.setattr(jpype.config, "destroy_jvm", False)
+
+    FIJI_IMAGEJ_RUNTIME.shutdown(gateway, scyjava)
+
+    assert events == ["gateway_disposed", "jvm_shutdown"]
+    assert gateway.dispose_count == 1
+    assert scyjava.shutdown_count == 1
+    assert jpype.config.destroy_jvm is True
+
+
+def test_fiji_runtime_stops_jvm_after_gateway_disposal_failure() -> None:
+    class _FailingGateway:
+        def dispose(self) -> None:
+            raise RuntimeError("gateway disposal failed")
+
+    scyjava = _ScyJava(started=True, java_version="21")
+
+    with pytest.raises(RuntimeError, match="gateway disposal failed"):
+        FIJI_IMAGEJ_RUNTIME.shutdown(_FailingGateway(), scyjava)
+
+    assert scyjava.shutdown_count == 1
 
 
 def test_runtime_accepts_compatible_active_java_without_reconfiguration() -> None:
@@ -95,7 +146,6 @@ def test_runtime_reports_an_unparseable_active_java_version() -> None:
         java_fetch="always",
         java_vendor="example-jre",
         java_version="21",
-        jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
     )
     scyjava = _ScyJava(started=True, java_version="unknown")
 
@@ -138,7 +188,6 @@ def test_runtime_retries_initialization_only_before_jvm_start(monkeypatch) -> No
         java_fetch="always",
         java_vendor="example-jre",
         java_version="21",
-        jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
         initialization_retry_delays_seconds=(0.1, 0.2),
     )
     scyjava = _ScyJava(started=False, java_version="21")
@@ -169,7 +218,6 @@ def test_runtime_preserves_final_failure_after_retry_schedule() -> None:
         java_fetch="always",
         java_vendor="example-jre",
         java_version="21",
-        jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
         initialization_retry_delays_seconds=(0.0, 0.0),
     )
     scyjava = _ScyJava(started=False, java_version="21")
