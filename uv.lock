@@ -2768,7 +2768,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.2.5"
+version = "0.2.9"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
