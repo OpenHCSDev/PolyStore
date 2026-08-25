@@ -6,6 +6,7 @@ import pytest
 
 from polystore.imagej_runtime import (
     FIJI_IMAGEJ_RUNTIME,
+    ImageJJvmTeardown,
     ImageJRuntimePolicy,
     ImageJRuntimeUnavailableError,
 )
@@ -49,7 +50,10 @@ class _ImageJ:
         return self.gateway
 
 
-def test_fiji_runtime_selects_managed_java_before_initialization() -> None:
+def test_fiji_runtime_selects_managed_java_before_initialization(monkeypatch) -> None:
+    import jpype.config
+
+    monkeypatch.setattr(jpype.config, "destroy_jvm", True)
     scyjava = _ScyJava(started=False, java_version="21.0.8")
     imagej = _ImageJ(scyjava)
 
@@ -58,6 +62,7 @@ def test_fiji_runtime_selects_managed_java_before_initialization() -> None:
     assert gateway is imagej.gateway
     assert scyjava.constraints == [{"fetch": "always", "vendor": "zulu-jre", "version": "21"}]
     assert imagej.calls == [("sc.fiji:fiji", "headless")]
+    assert jpype.config.destroy_jvm is False
 
 
 def test_runtime_accepts_compatible_active_java_without_reconfiguration() -> None:
@@ -90,6 +95,7 @@ def test_runtime_reports_an_unparseable_active_java_version() -> None:
         java_fetch="always",
         java_vendor="example-jre",
         java_version="21",
+        jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
     )
     scyjava = _ScyJava(started=True, java_version="unknown")
 
@@ -132,6 +138,7 @@ def test_runtime_retries_initialization_only_before_jvm_start(monkeypatch) -> No
         java_fetch="always",
         java_vendor="example-jre",
         java_version="21",
+        jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
         initialization_retry_delays_seconds=(0.1, 0.2),
     )
     scyjava = _ScyJava(started=False, java_version="21")
@@ -162,6 +169,7 @@ def test_runtime_preserves_final_failure_after_retry_schedule() -> None:
         java_fetch="always",
         java_vendor="example-jre",
         java_version="21",
+        jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
         initialization_retry_delays_seconds=(0.0, 0.0),
     )
     scyjava = _ScyJava(started=False, java_version="21")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,20 @@ logger = logging.getLogger(__name__)
 
 class ImageJRuntimeUnavailableError(RuntimeError):
     """Raised when an ImageJ distribution cannot use its declared Java runtime."""
+
+
+class ImageJJvmTeardown(Enum):
+    """JPype teardown behavior owned by an ImageJ process runtime."""
+
+    PROCESS_EXIT = False
+    DESTROY_JVM = True
+
+    def configure(self) -> None:
+        """Apply this teardown behavior before the process starts its JVM."""
+
+        import jpype.config
+
+        jpype.config.destroy_jvm = self.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +37,7 @@ class ImageJRuntimePolicy:
     java_fetch: str
     java_vendor: str
     java_version: str
+    jvm_teardown: ImageJJvmTeardown
     initialization_retry_delays_seconds: tuple[float, ...] = ()
 
     @property
@@ -66,6 +82,7 @@ class ImageJRuntimePolicy:
     def configure_java(self, scyjava_module: Any) -> None:
         """Select managed Java before startup or validate the active JVM."""
 
+        self.jvm_teardown.configure()
         if scyjava_module.jvm_started():
             self.require_compatible_active_java(scyjava_module)
             return
@@ -105,5 +122,6 @@ FIJI_IMAGEJ_RUNTIME = ImageJRuntimePolicy(
     java_fetch="always",
     java_vendor="zulu-jre",
     java_version="21",
+    jvm_teardown=ImageJJvmTeardown.PROCESS_EXIT,
     initialization_retry_delays_seconds=(1.0, 2.0),
 )
