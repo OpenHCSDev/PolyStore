@@ -12,7 +12,7 @@ import pytest
 
 from polystore import FileManager
 from polystore.exceptions import StorageResolutionError
-from polystore.omero_local import OMEROLocalBackend, PlateStructure
+from polystore.omero_local import ImageStructure, OMEROLocalBackend, WellStructure
 from polystore.roi import ROI, PointShape
 
 
@@ -74,58 +74,35 @@ def test_omero_backend_qualifies_relative_listed_addresses() -> None:
     )
 
 
-def test_omero_backend_projects_save_context_from_base_plate_metadata() -> None:
+def test_omero_well_structure_rejects_duplicate_site_identity() -> None:
+    well = WellStructure()
+    image = ImageStructure(
+        image_id=17,
+        sizeZ=1,
+        sizeC=1,
+        sizeT=1,
+        sizeY=32,
+        sizeX=32,
+    )
+    well.add_site(9, image)
+
+    with pytest.raises(ValueError, match="Duplicate OMERO site identity: 9"):
+        well.add_site(9, image)
+
+
+def test_omero_backend_projects_save_context_without_application_metadata() -> None:
     backend = object.__new__(OMEROLocalBackend)
-    backend._plate_metadata = {
-        7: PlateStructure(
-            plate_id=7,
-            parser_name="ImageXpressFilenameParser",
-            microscope_type="ImageXpress",
-            wells={},
-            all_well_ids=set(),
-            max_sites=0,
-            max_z=0,
-            max_c=0,
-            max_t=0,
-        )
-    }
 
     assert backend.contextual_save_kwargs(images_dir="/omero/plate_7_outputs/images") == {
         "images_dir": "/omero/plate_7_outputs/images",
-        "parser_name": "ImageXpressFilenameParser",
-        "microscope_type": "ImageXpress",
     }
 
 
-def test_omero_backend_loads_base_plate_metadata_for_save_context(monkeypatch) -> None:
+def test_omero_backend_rejects_save_context_without_an_omero_plate() -> None:
     backend = object.__new__(OMEROLocalBackend)
-    backend._plate_metadata = {}
-    loaded_plate_ids = []
 
-    def load_plate_structure(plate_id: int) -> None:
-        loaded_plate_ids.append(plate_id)
-        backend._plate_metadata[plate_id] = PlateStructure(
-            plate_id=plate_id,
-            parser_name="OperaPhenixFilenameParser",
-            microscope_type="OperaPhenix",
-            wells={},
-            all_well_ids=set(),
-            max_sites=0,
-            max_z=0,
-            max_c=0,
-            max_t=0,
-        )
-
-    monkeypatch.setattr(backend, "_load_plate_structure", load_plate_structure)
-
-    assert backend.contextual_save_kwargs(
-        images_dir="/omero/plate_11_outputs/checkpoints_step0"
-    ) == {
-        "images_dir": "/omero/plate_11_outputs/checkpoints_step0",
-        "parser_name": "OperaPhenixFilenameParser",
-        "microscope_type": "OperaPhenix",
-    }
-    assert loaded_plate_ids == [11]
+    with pytest.raises(ValueError, match="Not an OMERO path"):
+        backend.contextual_save_kwargs(images_dir="/tmp/images")
 
 
 def test_omero_backend_parses_virtual_paths_independently_of_host_separators() -> None:
@@ -184,8 +161,6 @@ def test_omero_batch_preserves_image_batching_before_artifact_saves(
     plane = np.zeros((4, 5), dtype=np.uint16)
     kwargs = {
         "images_dir": "/omero/plate_7_outputs/images",
-        "parser_name": "ImageXpressFilenameParser",
-        "microscope_type": "ImageXpress",
     }
 
     backend.save_batch(

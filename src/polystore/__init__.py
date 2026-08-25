@@ -68,6 +68,12 @@ from .metadata_writer import (
     get_subdirectory_name,
     resolve_subdirectory_path,
 )
+from .omero_address import (
+    OMEROPlaneAddress,
+    OMEROPlaneAxis,
+    OMEROPlaneCoordinates,
+    OMEROWellAddress,
+)
 from .roi import (
     ROI,
     EllipseShape,
@@ -154,6 +160,10 @@ __all__ = [
     "get_metadata_path",
     "get_subdirectory_name",
     "resolve_subdirectory_path",
+    "OMEROPlaneAddress",
+    "OMEROPlaneAxis",
+    "OMEROPlaneCoordinates",
+    "OMEROWellAddress",
     "detect_legacy_format",
     "migrate_legacy_metadata",
     "migrate_plate_metadata",

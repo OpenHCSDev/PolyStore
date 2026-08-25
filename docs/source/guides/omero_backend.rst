@@ -19,8 +19,10 @@ Virtual source model
 
 Paths use the form ``/omero/plate_<id>/...``. The backend queries the plate once
 to build a lightweight well/site/channel/Z/time structure and generates virtual
-image filenames. Plate annotations under the configured namespace identify the
-filename parser and microscope type expected by the source projection.
+image filenames. ``OMEROPlaneAddress`` owns that filename grammar and
+``OMEROWellAddress`` owns conversion between OMERO row/column coordinates and
+labels such as ``A01`` or ``AA01``. Reading a plate does not require annotations
+from a host application.
 
 The live Ice gateway is not pickled. The backend records connection parameters
 and worker processes reconnect when needed; deployments must provide the worker
@@ -33,10 +35,10 @@ The backend's ``save()`` surface supports image materialization and writes for
 ROIs, tables, JSON/CSV/text annotations, and provenance. Generic artifact
 materializers obtain backend-owned arguments through the released
 ``DataSink.contextual_save_kwargs()`` hook. For OMERO, the image workspace
-identifies a base plate; ``OMEROLocalBackend`` loads that plate's authoritative
-``PlateStructure`` when needed and projects ``images_dir``, ``parser_name``, and
-``microscope_type`` for ``save_batch()``. Callers do not inspect OMERO metadata
-or reconstruct those arguments themselves.
+identifies a base plate and ``OMEROLocalBackend`` projects the virtual
+``images_dir`` required to link related artifacts. Image batches are parsed
+through ``OMEROPlaneAddress``; callers do not provide a parser registry or copy
+the address grammar.
 
 ``OMEROTextFormat`` is the declaration authority for supported text extensions,
 MIME types, and optional table parsing. CSV, JSON, and plain-text members carry
@@ -56,14 +58,14 @@ normalizes separators through ``PurePosixPath`` before extracting the base plate
 and derived output name, so a Windows host cannot rewrite virtual identity into
 host-path syntax.
 
-Current limitation
-------------------
+Application boundary
+--------------------
 
-The present parser-loading path imports the OpenHCS ``FilenameParser`` registry.
-That is a transitional host coupling, so ``OMEROLocalBackend`` is not yet a
-standalone generic PolyStore extension despite living in this package. Do not
-copy that dependency into other backends. The owning fix is to inject a nominal
-parser/source projection ABC at construction time.
+PolyStore owns OMERO address, storage, and persistence semantics. Applications
+may project the nominal ``OMEROPlaneAxis`` values exposed by an
+``OMEROPlaneAddress`` into their own axis declarations, but the backend never
+imports those declarations. This keeps ``OMEROLocalBackend`` usable as a
+standalone PolyStore extension.
 
 OMERO deployment and application workflows belong to ``omero_openhcs``;
 OpenHCS pipeline/source integration is documented in the OpenHCS integration
