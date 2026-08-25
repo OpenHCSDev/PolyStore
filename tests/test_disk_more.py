@@ -4,7 +4,7 @@ These tests are designed to be small but exercise many code paths in
 `src/polystore/disk.py` such as the format registry, numpy handling,
 symlink overwrite logic, deletion branches, and recursive listing order.
 """
-import os
+
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +12,7 @@ import pytest
 from scipy.io import savemat
 
 from polystore.disk import DiskBackend, FileFormatRegistry
+from polystore.formats import FileFormat
 
 
 def test_numpy_save_load(tmp_path: Path):
@@ -23,6 +24,41 @@ def test_numpy_save_load(tmp_path: Path):
     disk.save(arr, out)
     loaded = disk.load(out)
     assert np.array_equal(arr, loaded)
+
+
+def test_torch_codec_loads_its_declared_runtime_at_io_boundary(
+    monkeypatch,
+    tmp_path: Path,
+):
+    calls = []
+    payload = object()
+    path = tmp_path / "payload.pt"
+
+    class TorchModule:
+        @staticmethod
+        def save(data, output_path, **kwargs):
+            calls.append(("save", data, output_path, kwargs))
+
+        @staticmethod
+        def load(input_path, **kwargs):
+            calls.append(("load", input_path, kwargs))
+            return payload
+
+    def load_dependency(file_format):
+        assert file_format is FileFormat.TORCH
+        return TorchModule
+
+    monkeypatch.setattr(FileFormat, "load_dependency", load_dependency)
+    disk = DiskBackend()
+
+    disk.save(payload, path, pickle_protocol=4)
+    loaded = disk.load(path, map_location="cpu")
+
+    assert loaded is payload
+    assert calls == [
+        ("save", payload, path, {"pickle_protocol": 4}),
+        ("load", path, {"map_location": "cpu"}),
+    ]
 
 
 def test_matlab_numeric_array_save_load(tmp_path: Path):
@@ -56,10 +92,10 @@ def test_file_format_registry_api(tmp_path: Path):
     def reader(path):
         return path.read_text()
 
-    registry.register('.foo', writer, reader)
-    assert registry.is_registered('.foo')
-    assert registry.get_reader('.foo') is reader
-    assert registry.get_writer('.foo') is writer
+    registry.register(".foo", writer, reader)
+    assert registry.is_registered(".foo")
+    assert registry.get_reader(".foo") is reader
+    assert registry.get_writer(".foo") is writer
 
 
 def test_symlink_overwrite_behavior(tmp_path: Path):
@@ -123,5 +159,6 @@ def test_list_files_breadth_first_order(tmp_path: Path):
     str_files = [str(f) for f in files]
     assert any(s.endswith("rootfile.txt") for s in str_files)
     assert any(s.endswith("deep.txt") for s in str_files)
-    assert str_files.index(next(s for s in str_files if s.endswith("rootfile.txt"))) < \
-        str_files.index(next(s for s in str_files if s.endswith("deep.txt")))
+    assert str_files.index(
+        next(s for s in str_files if s.endswith("rootfile.txt"))
+    ) < str_files.index(next(s for s in str_files if s.endswith("deep.txt")))

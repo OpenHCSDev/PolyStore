@@ -8,7 +8,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import polystore.disk as disk_module
 from polystore.disk import DiskBackend, DiskStorageBackend
 from polystore.formats import DEFAULT_IMAGE_EXTENSIONS, FileFormat, get_format_from_extension
 
@@ -57,7 +56,14 @@ def test_png_writer_uses_lossless_compression_level_one(monkeypatch, tmp_path: P
     def record_imwrite(path, data, **kwargs):
         calls.append((path, np.asarray(data), kwargs))
 
-    monkeypatch.setattr(disk_module.imageio, "imwrite", record_imwrite)
+    class ImageIOModule:
+        imwrite = staticmethod(record_imwrite)
+
+    def load_dependency(file_format):
+        assert file_format is FileFormat.PNG
+        return ImageIOModule
+
+    monkeypatch.setattr(FileFormat, "load_dependency", load_dependency)
     source = np.arange(12, dtype=np.uint8).reshape(3, 4)
     path = tmp_path / "pixels.png"
 
@@ -70,8 +76,6 @@ def test_png_writer_uses_lossless_compression_level_one(monkeypatch, tmp_path: P
 
 
 def test_generic_raster_writer_has_no_format_dispatch():
-    tree = ast.parse(
-        textwrap.dedent(inspect.getsource(DiskStorageBackend._image_writer))
-    )
+    tree = ast.parse(textwrap.dedent(inspect.getsource(DiskStorageBackend._image_writer)))
 
     assert not any(isinstance(node, ast.If) for node in ast.walk(tree))

@@ -68,3 +68,41 @@ def test_root_disk_exports_load_and_cache_the_declared_classes():
         "backend_cached": True,
         "storage_cached": True,
     }
+
+
+def test_disk_backend_initialization_does_not_load_optional_array_runtimes():
+    loaded = _fresh_python(
+        "\n".join(
+            (
+                "import json",
+                "import sys",
+                "from polystore.disk import DiskStorageBackend",
+                "backend = DiskStorageBackend()",
+                "frameworks = ('tensorflow', 'torch', 'cupy', 'jax')",
+                "extensions = ('.pt', '.pth', '.jax', '.cupy', '.tf')",
+                "print(json.dumps({",
+                "    'loaded': {name: name in sys.modules for name in frameworks},",
+                "    'registered': {",
+                "        extension: backend.format_registry.is_registered(extension)",
+                "        for extension in extensions",
+                "    },",
+                "}))",
+            )
+        )
+    )
+
+    assert loaded == {
+        "loaded": {
+            "tensorflow": False,
+            "torch": False,
+            "cupy": False,
+            "jax": False,
+        },
+        "registered": {
+            ".pt": True,
+            ".pth": True,
+            ".jax": True,
+            ".cupy": True,
+            ".tf": True,
+        },
+    }

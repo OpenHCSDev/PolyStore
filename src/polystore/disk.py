@@ -6,7 +6,6 @@ This module provides a concrete implementation of the storage backend interfaces
 for local disk storage. It strictly enforces VFS boundaries and doctrinal clauses.
 """
 
-import importlib
 import logging
 import os
 import shutil
@@ -25,35 +24,6 @@ from .formats import FileFormat
 
 logger = logging.getLogger(__name__)
 DISK_TEXT_ENCODING = "utf-8"
-
-
-def optional_import(module_name):
-    try:
-        return importlib.import_module(module_name)
-    except ImportError:
-        return None
-
-
-# Optional dependencies at module level (not instance level to avoid pickle issues)
-# Skip GPU libraries in subprocess runner mode
-if os.getenv("POLYSTORE_SUBPROCESS_NO_GPU") == "1":
-    torch = None
-    jax = None
-    jnp = None
-    cupy = None
-    tf = None
-    logger.info("Subprocess runner mode - skipping GPU library imports in disk backend")
-else:
-    from .lazy_imports import get_cupy, get_jax, get_jnp, get_tf, get_torch
-
-    torch = get_torch()
-    jax = get_jax()
-    jnp = get_jnp()
-    cupy = get_cupy()
-    tf = get_tf()
-tifffile = optional_import("tifffile")
-imageio = optional_import("imageio.v3")
-scipy_io = optional_import("scipy.io")
 
 
 class FileFormatRegistry:
@@ -87,7 +57,7 @@ class FileFormatRegistry:
 
 @dataclass(frozen=True, slots=True)
 class DiskFileFormatRegistration:
-    """One disk file format registration with explicit dependency availability."""
+    """One disk file format registration."""
 
     file_format: FileFormat
     writer: Callable
@@ -134,9 +104,9 @@ class DiskStorageBackend(StorageBackend):
 
         Uses enum-driven registration to eliminate boilerplate.
         Complex formats (CSV, JSON, TIFF, ROI.ZIP, TEXT) use custom handlers.
-        Simple formats (NumPy, Torch, CuPy, JAX, TensorFlow) use library save/load directly.
+        Optional format runtimes load only when their reader or writer is used.
         """
-        format_handlers = self._available_format_registrations()
+        format_handlers = self._disk_format_registrations()
 
         # Register all available formats
         for registration in format_handlers:
@@ -148,94 +118,93 @@ class DiskStorageBackend(StorageBackend):
                     registration.reader,
                 )
 
-    def _available_format_registrations(self) -> list[DiskFileFormatRegistration]:
-        registrations = [
+    def _disk_format_registrations(self) -> tuple[DiskFileFormatRegistration, ...]:
+        """Declare disk codecs without importing their optional runtimes."""
+        return (
             DiskFileFormatRegistration(FileFormat.NUMPY, np.save, np.load),
+            DiskFileFormatRegistration(FileFormat.TORCH, self._torch_writer, self._torch_reader),
+            DiskFileFormatRegistration(FileFormat.JAX, self._jax_writer, self._jax_reader),
+            DiskFileFormatRegistration(FileFormat.CUPY, self._cupy_writer, self._cupy_reader),
+            DiskFileFormatRegistration(
+                FileFormat.TENSORFLOW,
+                self._tensorflow_writer,
+                self._tensorflow_reader,
+            ),
             DiskFileFormatRegistration(FileFormat.TEXT, self._text_writer, self._text_reader),
             DiskFileFormatRegistration(FileFormat.JSON, self._json_writer, self._json_reader),
             DiskFileFormatRegistration(FileFormat.CSV, self._csv_writer, self._csv_reader),
             DiskFileFormatRegistration(FileFormat.ROI, self._roi_zip_writer, self._roi_zip_reader),
-        ]
-        if torch is not None:
-            registrations.append(
-                DiskFileFormatRegistration(FileFormat.TORCH, torch.save, torch.load)
-            )
-        if jax is not None and jnp is not None:
-            registrations.append(
-                DiskFileFormatRegistration(FileFormat.JAX, self._jax_writer, self._jax_reader)
-            )
-        if cupy is not None:
-            registrations.append(
-                DiskFileFormatRegistration(FileFormat.CUPY, self._cupy_writer, self._cupy_reader)
-            )
-        if tf is not None:
-            registrations.append(
-                DiskFileFormatRegistration(
-                    FileFormat.TENSORFLOW,
-                    self._tensorflow_writer,
-                    self._tensorflow_reader,
-                )
-            )
-        if tifffile is not None:
-            registrations.append(
-                DiskFileFormatRegistration(FileFormat.TIFF, self._tiff_writer, self._tiff_reader)
-            )
-        if imageio is not None:
-            registrations.append(
-                DiskFileFormatRegistration(
-                    FileFormat.RASTER_IMAGE,
-                    self._image_writer,
-                    self._image_reader,
-                )
-            )
-            registrations.append(
-                DiskFileFormatRegistration(
-                    FileFormat.PNG,
-                    self._png_writer,
-                    self._image_reader,
-                )
-            )
-        if scipy_io is not None:
-            registrations.append(
-                DiskFileFormatRegistration(
-                    FileFormat.MATLAB,
-                    self._matlab_writer,
-                    self._matlab_reader,
-                )
-            )
-        return registrations
+            DiskFileFormatRegistration(FileFormat.TIFF, self._tiff_writer, self._tiff_reader),
+            DiskFileFormatRegistration(
+                FileFormat.RASTER_IMAGE,
+                self._image_writer,
+                self._image_reader,
+            ),
+            DiskFileFormatRegistration(
+                FileFormat.PNG,
+                self._png_writer,
+                self._image_reader,
+            ),
+            DiskFileFormatRegistration(
+                FileFormat.MATLAB,
+                self._matlab_writer,
+                self._matlab_reader,
+            ),
+        )
 
     # Format-specific writer/reader functions (pickleable)
     # Only needed for formats that require special handling beyond library save/load
 
+    def _torch_writer(self, path, data, **kwargs):
+        torch = FileFormat.TORCH.load_dependency()
+        torch.save(data, path, **kwargs)
+
+    def _torch_reader(self, path, **kwargs):
+        torch = FileFormat.TORCH.load_dependency()
+        return torch.load(path, **kwargs)
+
     def _jax_writer(self, path, data, **kwargs):
         """JAX arrays must be moved to CPU before saving."""
-        np.save(path, jax.device_get(data))
+        jax = FileFormat.JAX.load_dependency()
+        with path.open("wb") as stream:
+            np.save(stream, jax.device_get(data), **kwargs)
 
-    def _jax_reader(self, path):
-        """Load NumPy array and convert to JAX."""
-        return jnp.array(np.load(path))
+    def _jax_reader(self, path, **kwargs):
+        """Load a NumPy payload and convert it to JAX."""
+        jax = FileFormat.JAX.load_dependency()
+        with path.open("rb") as stream:
+            return jax.numpy.array(np.load(stream, **kwargs))
 
     def _cupy_writer(self, path, data, **kwargs):
         """CuPy has its own save format."""
-        cupy.save(path, data)
+        cupy = FileFormat.CUPY.load_dependency()
+        with path.open("wb") as stream:
+            cupy.save(stream, data, **kwargs)
 
-    def _cupy_reader(self, path):
+    def _cupy_reader(self, path, **kwargs):
         """Load CuPy array from disk."""
-        return cupy.load(path)
+        cupy = FileFormat.CUPY.load_dependency()
+        with path.open("rb") as stream:
+            return cupy.load(stream, **kwargs)
 
     def _tensorflow_writer(self, path, data, **kwargs):
         """TensorFlow uses tensor serialization."""
+        del kwargs
+        tf = FileFormat.TENSORFLOW.load_dependency()
         tf.io.write_file(path.as_posix(), tf.io.serialize_tensor(data))
 
-    def _tensorflow_reader(self, path):
+    def _tensorflow_reader(self, path, **kwargs):
         """Load and deserialize TensorFlow tensor."""
+        del kwargs
+        tf = FileFormat.TENSORFLOW.load_dependency()
         return tf.io.parse_tensor(tf.io.read_file(path.as_posix()), out_type=tf.dtypes.float32)
 
     def _tiff_writer(self, path, data, **kwargs):
+        tifffile = FileFormat.TIFF.load_dependency()
         tifffile.imwrite(path, storage_numpy_array(data))
 
     def _tiff_reader(self, path):
+        tifffile = FileFormat.TIFF.load_dependency()
         # For symlinks, try multiple approaches to handle filesystem issues
         path_obj = Path(path)
 
@@ -257,19 +226,23 @@ class DiskStorageBackend(StorageBackend):
 
     def _image_writer(self, path, data, **kwargs):
         """Write standard raster images using imageio."""
+        imageio = FileFormat.RASTER_IMAGE.load_dependency()
         imageio.imwrite(path, storage_numpy_array(data))
 
     def _image_reader(self, path):
         """Read standard raster images using imageio."""
+        imageio = FileFormat.RASTER_IMAGE.load_dependency()
         return imageio.imread(path)
 
     def _png_writer(self, path, data, **kwargs):
         """Write lossless PNG images with reduced compression work."""
+        imageio = FileFormat.PNG.load_dependency()
         imageio.imwrite(path, storage_numpy_array(data), compress_level=1)
 
     def _matlab_writer(self, path, data, **kwargs):
         """Write one numeric array to a MATLAB matrix file."""
         del kwargs
+        scipy_io = FileFormat.MATLAB.load_dependency()
         array = storage_numpy_array(data)
         if not np.issubdtype(array.dtype, np.number):
             raise TypeError("MATLAB pixel payloads must be numeric arrays.")
@@ -278,6 +251,7 @@ class DiskStorageBackend(StorageBackend):
     def _matlab_reader(self, path, **kwargs):
         """Read the sole public numeric array from a MATLAB matrix file."""
         del kwargs
+        scipy_io = FileFormat.MATLAB.load_dependency()
         payload = scipy_io.loadmat(path)
         numeric_arrays = tuple(
             np.asarray(value)
