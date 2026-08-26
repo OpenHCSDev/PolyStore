@@ -13,39 +13,41 @@ jobs:
   build-and-publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: pypi
       url: https://pypi.org/p/polystore
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install build
+          python -m pip install build "twine>=7,<8" ".[dev]"
+
+      - name: Test release candidate
+        run: python -m pytest -q
       
       - name: Build package
         run: python -m build
       
       - name: Check distribution
-        run: |
-          pip install twine
-          twine check dist/*
+        run: python -m twine check dist/*
       
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: dist/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
