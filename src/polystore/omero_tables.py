@@ -122,6 +122,35 @@ class OMEROTableService:
 
         return bool(connection.c.sf.sharedResources().areTablesEnabled())
 
+    @staticmethod
+    def _resources_have_repository(resources: Any) -> bool:
+        """Return whether shared resources declare one managed repository."""
+
+        descriptions = resources.repositories().descriptions
+        if not descriptions:
+            return False
+        identifier = descriptions[0].getId()
+        return identifier is not None and identifier.getValue() is not None
+
+    def wait_until_repository_available(self, connection: Any) -> Any:
+        """Return shared resources after OMERO declares a managed repository."""
+
+        resources = connection.c.sf.sharedResources()
+        retry_delays = iter(self.readiness_retry_delays_seconds)
+        while not self._resources_have_repository(resources):
+            retry_delay = next(retry_delays, None)
+            if retry_delay is None:
+                raise OMEROTableServiceUnavailableError(
+                    "OMERO did not declare a managed table repository."
+                )
+            logger.info(
+                "Waiting %.1f seconds for an OMERO table repository.",
+                retry_delay,
+            )
+            time.sleep(retry_delay)
+
+        return resources
+
     def wait_until_available(self, connection: Any) -> Any:
         """Return shared resources after the declared table capability is ready."""
 

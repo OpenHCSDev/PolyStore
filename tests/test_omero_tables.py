@@ -155,6 +155,52 @@ def test_table_service_exposes_declared_readiness_wait(monkeypatch) -> None:
     assert observed_delays == [0.1]
 
 
+@pytest.mark.parametrize("readiness", [False, True])
+def test_table_service_projects_declared_availability(readiness: bool) -> None:
+    resources = _Resources([readiness])
+
+    assert OMEROTableService.is_available(_connection(resources)) is readiness
+
+
+def test_table_service_waits_for_a_managed_repository_declaration(monkeypatch) -> None:
+    observed_delays: list[float] = []
+    monkeypatch.setattr("polystore.omero_tables.time.sleep", observed_delays.append)
+    resources = _Resources([True], repository_id=13)
+    declared_repositories = resources.repositories()
+    repository_readiness = iter((False, False, True))
+
+    def repositories():
+        if next(repository_readiness, True):
+            return declared_repositories
+        return SimpleNamespace(descriptions=[])
+
+    resources.repositories = repositories
+
+    ready_resources = OMEROTableService(
+        readiness_retry_delays_seconds=(0.1, 0.2),
+    ).wait_until_repository_available(_connection(resources))
+
+    assert ready_resources is resources
+    assert observed_delays == [0.1, 0.2]
+
+
+@pytest.mark.parametrize(
+    "resources",
+    (
+        _Resources([True], has_repository=False),
+        _Resources([True], has_managed_identifier=False),
+        _Resources([True], repository_id=None),
+    ),
+)
+def test_table_service_rejects_an_incomplete_managed_repository(resources) -> None:
+
+    with pytest.raises(
+        OMEROTableServiceUnavailableError,
+        match="did not declare a managed table repository",
+    ):
+        OMEROTableService().wait_until_repository_available(_connection(resources))
+
+
 def test_table_service_fails_before_create_when_capability_stays_unavailable() -> None:
     resources = _Resources([False])
 
