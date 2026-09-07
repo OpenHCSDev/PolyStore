@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
-
-import zarr
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
 
 from .base import PicklableBackend, ReadOnlyBackend
 from .constants import Backend
 from .exceptions import StorageResolutionError
+
+if TYPE_CHECKING:
+    import zarr
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,17 @@ class OmeZarrArrayRef:
             sort_keys=True,
             separators=(",", ":"),
         )
+
+    def open_group(self) -> zarr.Group:
+        """Open the addressed store read-only at the storage execution boundary."""
+        if not self.store_path.is_dir():
+            raise FileNotFoundError(f"OME-Zarr store is absent: {self.store_path}")
+        import zarr
+
+        try:
+            return zarr.open_group(str(self.store_path), mode="r")
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"OME-Zarr group is absent: {self.store_path}") from exc
 
     @classmethod
     def from_backend_address(cls, backend_address: str) -> "OmeZarrArrayRef":
@@ -88,12 +100,7 @@ class OmeZarrStorageBackend(ReadOnlyBackend, PicklableBackend):
     def load(self, file_path: Union[str, Path], **kwargs: Any) -> Any:
         del kwargs
         ref = OmeZarrArrayRef.from_backend_address(str(file_path))
-        if not ref.store_path.is_dir():
-            raise FileNotFoundError(f"OME-Zarr store is absent: {ref.store_path}")
-        try:
-            root = zarr.open_group(str(ref.store_path), mode="r")
-        except FileNotFoundError as exc:
-            raise FileNotFoundError(f"OME-Zarr group is absent: {ref.store_path}") from exc
+        root = ref.open_group()
         if ref.array_path not in root:
             raise FileNotFoundError(
                 f"OME-Zarr array {ref.array_path!r} is absent from {ref.store_path}."
@@ -123,10 +130,7 @@ class OmeZarrStorageBackend(ReadOnlyBackend, PicklableBackend):
     def exists(self, path: Union[str, Path]) -> bool:
         try:
             ref = OmeZarrArrayRef.from_backend_address(str(path))
-            return ref.store_path.is_dir() and ref.array_path in zarr.open_group(
-                str(ref.store_path),
-                mode="r",
-            )
+            return ref.array_path in ref.open_group()
         except (
             TypeError,
             ValueError,

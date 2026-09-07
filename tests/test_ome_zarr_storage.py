@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +15,37 @@ from polystore.base import BackendBase
 from polystore.constants import Backend
 from polystore.exceptions import StorageResolutionError
 from polystore.ome_zarr_storage import OmeZarrArrayRef, OmeZarrStorageBackend
+
+
+def test_address_and_backend_declarations_do_not_import_zarr(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import builtins
+import sys
+from pathlib import Path
+
+original_import = builtins.__import__
+def declaration_import(name, *args, **kwargs):
+    assert name != 'zarr' and not name.startswith('zarr.'), 'Eager Zarr runtime import'
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = declaration_import
+from polystore.ome_zarr_storage import OmeZarrArrayRef, OmeZarrStorageBackend
+
+ref = OmeZarrArrayRef(Path('missing.zarr'), '0')
+assert OmeZarrArrayRef.from_backend_address(ref.to_backend_address()) == ref
+assert not OmeZarrStorageBackend().exists(ref.to_backend_address())
+assert not {'zarr', 'cupy', 'scipy.linalg', 'scipy.ndimage', 'scipy.special', 'skimage'}.intersection(sys.modules)
+""",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _write_array(
