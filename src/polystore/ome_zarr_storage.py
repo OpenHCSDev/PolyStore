@@ -50,9 +50,7 @@ class OmeZarrArrayRef:
         if not isinstance(payload, dict):
             raise TypeError("OME-Zarr backend address must encode an object.")
         if set(payload) != {"array_path", "store_path"}:
-            raise ValueError(
-                "OME-Zarr backend address fields must be array_path and store_path."
-            )
+            raise ValueError("OME-Zarr backend address fields must be array_path and store_path.")
         if not isinstance(payload["array_path"], str) or not isinstance(
             payload["store_path"],
             str,
@@ -81,9 +79,7 @@ class OmeZarrStorageBackend(ReadOnlyBackend, PicklableBackend):
         """Return the physical NGFF store owned by an opaque array address."""
 
         del base_path
-        return OmeZarrArrayRef.from_backend_address(
-            str(backend_address)
-        ).store_path
+        return OmeZarrArrayRef.from_backend_address(str(backend_address)).store_path
 
     def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
         if params is not None:
@@ -96,10 +92,8 @@ class OmeZarrStorageBackend(ReadOnlyBackend, PicklableBackend):
             raise FileNotFoundError(f"OME-Zarr store is absent: {ref.store_path}")
         try:
             root = zarr.open_group(str(ref.store_path), mode="r")
-        except zarr.errors.GroupNotFoundError as exc:
-            raise FileNotFoundError(
-                f"OME-Zarr group is absent: {ref.store_path}"
-            ) from exc
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"OME-Zarr group is absent: {ref.store_path}") from exc
         if ref.array_path not in root:
             raise FileNotFoundError(
                 f"OME-Zarr array {ref.array_path!r} is absent from {ref.store_path}."
@@ -137,7 +131,6 @@ class OmeZarrStorageBackend(ReadOnlyBackend, PicklableBackend):
             TypeError,
             ValueError,
             FileNotFoundError,
-            zarr.errors.GroupNotFoundError,
         ):
             return False
 

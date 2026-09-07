@@ -15,9 +15,12 @@ from polystore.exceptions import StorageResolutionError
 from polystore.ome_zarr_storage import OmeZarrArrayRef, OmeZarrStorageBackend
 
 
-def _write_array(store_path: Path, array_path: str, data: np.ndarray) -> None:
-    root = zarr.open_group(str(store_path), mode="w")
-    root.create_dataset(array_path, data=data)
+def _write_array(
+    store_path: Path, array_path: str, data: np.ndarray, *, zarr_format: int = 2
+) -> None:
+    root = zarr.open_group(str(store_path), mode="w", zarr_format=zarr_format)
+    array = root.create_array(array_path, shape=data.shape, dtype=data.dtype)
+    array[:] = data
 
 
 def test_backend_uses_nominal_backend_identity_and_registry() -> None:
@@ -53,10 +56,11 @@ def test_array_reference_rejects_malformed_addresses(
         OmeZarrArrayRef.from_backend_address(address)
 
 
-def test_backend_load_exists_and_projects_physical_source(tmp_path: Path) -> None:
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_backend_load_exists_and_projects_physical_source(tmp_path: Path, zarr_format: int) -> None:
     store_path = tmp_path / "plate.zarr"
     pixels = np.arange(12, dtype=np.uint16).reshape(3, 4)
-    _write_array(store_path, "A/01/0", pixels)
+    _write_array(store_path, "A/01/0", pixels, zarr_format=zarr_format)
     ref = OmeZarrArrayRef(store_path, "A/01/0")
     address = ref.to_backend_address()
     backend = OmeZarrStorageBackend()

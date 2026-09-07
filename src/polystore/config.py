@@ -5,9 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from numcodecs import Blosc, LZ4, Zlib, Zstd
+from numcodecs.abc import Codec
 
 
 class ZarrCompressor(Enum):
@@ -34,7 +36,7 @@ class ZarrCompressorFactory(ABC, metaclass=AutoRegisterMeta):
         self,
         compression_level: int,
         shuffle: bool = True,
-    ) -> Any | None:
+    ) -> Codec | None:
         """Create the codec for this compressor variant."""
 
 
@@ -60,10 +62,8 @@ class BloscZarrCompressorFactory(ZarrCompressorFactory):
         self,
         compression_level: int,
         shuffle: bool = True,
-    ) -> Any:
-        import zarr
-
-        return zarr.Blosc(
+    ) -> Blosc:
+        return Blosc(
             cname="lz4",
             clevel=compression_level,
             shuffle=shuffle,
@@ -79,10 +79,8 @@ class ZlibZarrCompressorFactory(ZarrCompressorFactory):
         self,
         compression_level: int,
         shuffle: bool = True,
-    ) -> Any:
-        import zarr
-
-        return zarr.Zlib(level=compression_level)
+    ) -> Zlib:
+        return Zlib(level=compression_level)
 
 
 class Lz4ZarrCompressorFactory(ZarrCompressorFactory):
@@ -94,10 +92,8 @@ class Lz4ZarrCompressorFactory(ZarrCompressorFactory):
         self,
         compression_level: int,
         shuffle: bool = True,
-    ) -> Any:
-        import zarr
-
-        return zarr.LZ4(acceleration=compression_level)
+    ) -> LZ4:
+        return LZ4(acceleration=compression_level)
 
 
 class ZstdZarrCompressorFactory(ZarrCompressorFactory):
@@ -109,10 +105,8 @@ class ZstdZarrCompressorFactory(ZarrCompressorFactory):
         self,
         compression_level: int,
         shuffle: bool = True,
-    ) -> Any:
-        import zarr
-
-        return zarr.Zstd(level=compression_level)
+    ) -> Zstd:
+        return Zstd(level=compression_level)
 
 
 class ZarrChunkStrategy(Enum):

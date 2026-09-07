@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 import zarr
 
+from polystore import FileManager
 from polystore import zarr as zarr_module
 from polystore.config import (
     ZarrChunkStrategy,
@@ -30,6 +31,7 @@ from polystore.config import (
     ZarrCompressorFactory,
     ZarrConfig,
 )
+from polystore.disk import DiskBackend
 from polystore.exceptions import StorageResolutionError
 from polystore.zarr import ZarrStorageBackend
 from polystore.zarr_batch import (
@@ -181,9 +183,10 @@ class TestZarrArrayOperations:
         loaded_4d = zarr_backend.load(path_4d)
         np.testing.assert_array_equal(loaded_4d, data_4d)
 
-    @pytest.mark.skip(reason="Overwrite behavior needs investigation - may require delete first")
-    def test_overwrite_existing_array(self, zarr_backend, temp_zarr_dir):
-        """Test overwriting an existing zarr array."""
+    def test_save_rejects_overwrite_without_modifying_existing_array(
+        self, zarr_backend, temp_zarr_dir
+    ):
+        """A rejected write preserves the original shape and pixels."""
         path = Path(temp_zarr_dir) / "overwrite.zarr"
 
         # Save initial data
@@ -192,19 +195,28 @@ class TestZarrArrayOperations:
 
         # Overwrite with new data
         data2 = np.zeros((20, 20), dtype=np.float32)
-        zarr_backend.save(data2, path)
+        with pytest.raises(FileExistsError):
+            zarr_backend.save(data2, path)
 
         # Load and verify
         loaded = zarr_backend.load(path)
-        assert loaded.shape == (20, 20)
-        np.testing.assert_array_equal(loaded, data2)
+        assert loaded.shape == (10, 10)
+        np.testing.assert_array_equal(loaded, data1)
 
 
 class TestZarrBatchOperations:
     """Test batch save/load operations."""
 
-    def test_batch_save_and_load(self, zarr_backend, temp_zarr_dir):
+    @pytest.mark.parametrize(
+        ("strategy", "expected_chunks"),
+        [
+            (ZarrChunkStrategy.WELL, (2, 2, 1, 3, 4)),
+            (ZarrChunkStrategy.FILE, (1, 1, 1, 3, 4)),
+        ],
+    )
+    def test_batch_save_and_load(self, temp_zarr_dir, strategy, expected_chunks):
         """Declared axes preserve timepoints and non-flat item ordering."""
+        zarr_backend = ZarrStorageBackend(ZarrConfig(chunk_strategy=strategy))
         output_paths = [
             Path(temp_zarr_dir) / "images" / name
             for name in (
@@ -243,10 +255,16 @@ class TestZarrBatchOperations:
         root = zarr.open_group(str(output_paths[0].parent), mode="r")
         image_group = root["A/01/0"]
         array = image_group["0"]
+        assert root.metadata.zarr_format == 2
+        assert array.metadata.zarr_format == 2
+        assert root.attrs["plate"]["version"] == "0.4"
+        assert root["A/01"].attrs["well"]["version"] == "0.4"
+        assert image_group.attrs["multiscales"][0]["version"] == "0.4"
+        assert "ome" not in root.attrs
+        assert "ome" not in root["A/01"].attrs
         assert array.shape == (2, 2, 1, 3, 4)
-        assert [
-            axis["name"] for axis in image_group.attrs["multiscales"][0]["axes"]
-        ] == [
+        assert array.chunks == expected_chunks
+        assert [axis["name"] for axis in image_group.attrs["multiscales"][0]["axes"]] == [
             "t",
             "c",
             "z",
@@ -254,9 +272,7 @@ class TestZarrBatchOperations:
             "x",
         ]
         requested_order = (2, 0, 3, 1)
-        loaded = zarr_backend.load_batch(
-            [output_paths[index] for index in requested_order]
-        )
+        loaded = zarr_backend.load_batch([output_paths[index] for index in requested_order])
         for loaded_item, expected_index in zip(loaded, requested_order, strict=True):
             np.testing.assert_array_equal(loaded_item, data[expected_index])
 
@@ -278,6 +294,33 @@ class TestZarrBatchOperations:
                 row="A",
                 col="01",
             )
+
+    @pytest.mark.parametrize("bad_shape", [(2, 2, 2), (3, 4)])
+    def test_invalid_batch_preserves_existing_well(self, zarr_backend, tmp_path, bad_shape):
+        paths = save_hcs_image_axis_batch(
+            zarr_backend,
+            tmp_path / "images",
+            axis_name="field",
+            values=("1", "2"),
+            row="A",
+            col="01",
+        )
+        before = zarr_backend.load_batch(paths)
+        layout = ZarrBatchLayout(
+            axes=(ZarrBatchAxis("c", "channel", ("1", "2")),),
+            item_coordinates=((0,), (1,)),
+        )
+        with pytest.raises(ValueError, match="image-plane shape|two-dimensional"):
+            zarr_backend.save_batch(
+                [np.ones((2, 3)), np.ones(bad_shape)],
+                paths,
+                chunk_name="A01",
+                batch_layout=layout,
+                row="A",
+                col="01",
+            )
+        for expected, actual in zip(before, zarr_backend.load_batch(paths), strict=True):
+            np.testing.assert_array_equal(actual, expected)
 
     def test_image_axis_creates_one_hcs_image_per_value(
         self,
@@ -316,12 +359,8 @@ class TestZarrBatchOperations:
 
         root = zarr.open_group(str(output_paths[0].parent), mode="r")
         assert set(root["A/01"].group_keys()) == {"0", "1"}
-        assert root["A/01/0/0"].attrs["polystore_image_coordinate"] == {
-            "field": "3"
-        }
-        assert root["A/01/1/0"].attrs["polystore_image_coordinate"] == {
-            "field": "7"
-        }
+        assert root["A/01/0/0"].attrs["polystore_image_coordinate"] == {"field": "3"}
+        assert root["A/01/1/0"].attrs["polystore_image_coordinate"] == {"field": "7"}
         loaded = zarr_backend.load_batch(output_paths)
         for loaded_item, expected in zip(loaded, data, strict=True):
             np.testing.assert_array_equal(loaded_item, expected)
@@ -354,22 +393,19 @@ class TestZarrBatchOperations:
 
         root = zarr.open_group(str(store_path), mode="a")
         auxiliary = root["B/02"].create_group("auxiliary")
-        auxiliary_array = auxiliary.create_dataset(
+        auxiliary_array = auxiliary.create_array(
             "0",
-            data=np.zeros((2, 3), dtype=np.uint16),
+            shape=(2, 3),
+            dtype=np.uint16,
         )
         auxiliary_array.attrs["polystore_output_paths"] = ["undeclared.tif"]
         auxiliary_array.attrs[ATTR_FILENAME_MAP] = {"undeclared.tif": []}
 
-        assert set(
-            zarr_backend.list_files(store_path, recursive=recursive)
-        ) == set(field_paths + scene_paths)
-        assert zarr_backend.list_files(store_path, pattern="*_7.tif") == [
-            field_paths[1]
-        ]
-        assert zarr_backend.list_files(store_path, extensions={".png"}) == [
-            scene_paths[2]
-        ]
+        assert set(zarr_backend.list_files(store_path, recursive=recursive)) == set(
+            field_paths + scene_paths
+        )
+        assert zarr_backend.list_files(store_path, pattern="*_7.tif") == [field_paths[1]]
+        assert zarr_backend.list_files(store_path, extensions={".png"}) == [scene_paths[2]]
         with pytest.raises(KeyError, match="undeclared.tif"):
             zarr_backend.load_batch([store_path / "undeclared.tif"])
 
@@ -392,15 +428,32 @@ class TestZarrBatchOperations:
         well_group = root["A/01"]
         plate_metadata = root.attrs["plate"]
         del root.attrs["plate"]
-        root.attrs["ome"] = {
-            **root.attrs["ome"],
-            "plate": plate_metadata,
-        }
+        root.attrs["ome"] = {"version": "0.5", "plate": plate_metadata}
+        well_group.attrs["ome"] = {"version": "0.5", "well": well_group.attrs["well"]}
         del well_group.attrs["well"]
         assert set(zarr_backend.list_files(store_path)) == set(output_paths)
 
         well_group.attrs["ome"] = {"version": "0.5"}
         assert zarr_backend.list_files(store_path) == [output_paths[0]]
+
+    def test_historical_conflicting_nested_metadata_preserves_top_level_authority(
+        self, zarr_backend, temp_zarr_dir
+    ):
+        """Old PolyStore stores emitted valid 0.4 plus stale nested 0.5 metadata."""
+        store_path = Path(temp_zarr_dir) / "images"
+        paths = save_hcs_image_axis_batch(
+            zarr_backend, store_path, axis_name="field", values=("3", "7"), row="A", col="01"
+        )
+        root = zarr.open_group(str(store_path), mode="a")
+        root.attrs["ome"] = {"version": "0.4"}
+        root["A/01"].attrs["ome"] = {
+            "version": "0.5",
+            "well": {"version": "0.5", "images": [{"path": "missing", "acquisition": 0}]},
+        }
+
+        assert set(zarr_backend.list_files(store_path)) == set(paths)
+        for index, loaded in enumerate(zarr_backend.load_batch(paths)):
+            np.testing.assert_array_equal(loaded, np.full((2, 3), index, dtype=np.uint16))
 
     def test_list_files_rejects_missing_declared_image_group(
         self,
@@ -424,27 +477,26 @@ class TestZarrBatchOperations:
 
 
 class TestZarrPassthrough:
-    """Test passthrough of non-array files to disk backend.
+    """Non-array outputs remain ordinary files beside Zarr data."""
 
-    Note: Passthrough is designed to work via FileManager routing, not direct backend calls.
-    The decorator checks file extensions and delegates to disk backend when appropriate.
-    Direct backend testing of passthrough is complex due to zarr's group structure.
-    """
-
-    @pytest.mark.skip(reason="Passthrough works via FileManager, not direct backend calls")
-    def test_json_passthrough(self, zarr_backend, temp_zarr_dir):
-        """JSON passthrough should be tested at FileManager level."""
-        pass
-
-    @pytest.mark.skip(reason="Passthrough works via FileManager, not direct backend calls")
-    def test_csv_passthrough(self, zarr_backend, temp_zarr_dir):
-        """CSV passthrough should be tested at FileManager level."""
-        pass
-
-    @pytest.mark.skip(reason="Passthrough works via FileManager, not direct backend calls")
-    def test_txt_passthrough(self, zarr_backend, temp_zarr_dir):
-        """TXT passthrough should be tested at FileManager level."""
-        pass
+    @pytest.mark.parametrize(
+        ("suffix", "payload"),
+        [
+            (".json", {"count": 3, "sample": "A01"}),
+            (".csv", [{"count": "3", "sample": "A01"}]),
+            (".txt", "Three objects in sample A01.\n"),
+        ],
+    )
+    def test_file_manager_writes_text_outputs_as_regular_files(
+        self, zarr_backend, tmp_path, suffix, payload
+    ):
+        disk = DiskBackend()
+        manager = FileManager({"disk": disk, "zarr": zarr_backend})
+        path = tmp_path / "outputs" / f"results{suffix}"
+        manager.save(payload, path, backend="zarr")
+        assert path.is_file()
+        assert disk.load(path) == payload
+        assert zarr_backend.exists(path)
 
 
 class TestZarrDirectoryOperations:
@@ -467,40 +519,130 @@ class TestZarrDirectoryOperations:
         zarr_backend.save(data, path)
         assert zarr_backend.exists(path)
 
-    @pytest.mark.skip(reason="Directory operations are HCS/plate-specific in zarr backend")
     def test_ensure_directory(self, zarr_backend, temp_zarr_dir):
-        """Test ensure_directory - works differently in zarr (creates groups)."""
-        pass
+        """Store creation belongs to writes; ensuring a path is a documented no-op."""
+        path = Path(temp_zarr_dir) / "images"
+        assert zarr_backend.ensure_directory(path) == path
 
-    @pytest.mark.skip(reason="Directory operations are HCS/plate-specific in zarr backend")
     def test_exists_for_directory(self, zarr_backend, temp_zarr_dir):
-        """Test exists() for directories."""
-        pass
+        path = Path(temp_zarr_dir) / "images"
+        assert not zarr_backend.exists(path)
+        assert not path.exists()
+        zarr_backend.save(np.zeros((2, 3)), path / "image.tif")
+        assert zarr_backend.exists(path)
 
-    @pytest.mark.skip(reason="is_file/is_dir semantics differ in zarr group structure")
     def test_is_file_for_zarr(self, zarr_backend, temp_zarr_dir):
-        """Test is_file() for zarr arrays."""
-        pass
+        path = Path(temp_zarr_dir) / "image.tif"
+        zarr_backend.save(np.zeros((2, 3)), path)
+        assert zarr_backend.is_file(path)
 
-    @pytest.mark.skip(reason="is_file/is_dir semantics differ in zarr group structure")
     def test_is_dir(self, zarr_backend, temp_zarr_dir):
-        """Test is_dir() for directories."""
-        pass
+        path = Path(temp_zarr_dir) / "images"
+        zarr_backend.save(np.zeros((2, 3)), path / "image.tif")
+        assert zarr_backend.is_dir(path)
 
-    @pytest.mark.skip(reason="list_files is HCS-specific - needs plate context")
     def test_list_files(self, zarr_backend, temp_zarr_dir):
-        """Test list_files() - HCS-specific in zarr backend."""
-        pass
+        path = Path(temp_zarr_dir) / "images"
+        paths = save_hcs_image_axis_batch(
+            zarr_backend, path, axis_name="field", values=("3", "7"), row="A", col="01"
+        )
+        assert set(zarr_backend.list_files(path)) == set(paths)
 
-    @pytest.mark.skip(reason="list_files is HCS-specific - needs plate context")
     def test_list_files_with_extension_filter(self, zarr_backend, temp_zarr_dir):
-        """Test list_files with extension filter."""
-        pass
+        path = Path(temp_zarr_dir) / "images"
+        paths = save_hcs_image_axis_batch(
+            zarr_backend,
+            path,
+            axis_name="field",
+            values=("3", "7"),
+            row="A",
+            col="01",
+            suffixes=(".tif", ".png"),
+        )
+        assert zarr_backend.list_files(path, extensions={".png"}) == [paths[1]]
 
-    @pytest.mark.skip(reason="list_dir is HCS-specific - needs plate context")
     def test_list_dir(self, zarr_backend, temp_zarr_dir):
-        """Test list_dir() - HCS-specific in zarr backend."""
-        pass
+        path = Path(temp_zarr_dir) / "images"
+        zarr_backend.save(np.zeros((2, 3)), path / "image.tif")
+        root = zarr.open_group(str(path), mode="a")
+        root.create_group("nested")
+        assert set(zarr_backend.list_dir(path)) == {"image.tif", "nested"}
+
+    @pytest.mark.parametrize("operation", [ZarrStorageBackend.copy, ZarrStorageBackend.move])
+    @pytest.mark.parametrize("same_store", [False, True])
+    def test_transfer_preserves_pixels_metadata_and_chunks(
+        self, zarr_backend, tmp_path, operation, same_store
+    ):
+        source = tmp_path / "source" / "image.tif"
+        destination = (source.parent if same_store else tmp_path / "destination") / "copy.tif"
+        pixels = np.arange(60, dtype=np.uint16).reshape(3, 4, 5)
+        zarr_backend.save(pixels, source, chunks=(1, 2, 5))
+        source_array = zarr.open_array(str(source), mode="a")
+        source_array.attrs["experiment"] = {"name": "transfer", "axes": ["z", "y", "x"]}
+        original_attrs = source_array.attrs.asdict()
+
+        operation(zarr_backend, source, destination)
+
+        np.testing.assert_array_equal(zarr_backend.load(destination), pixels)
+        copied = zarr.open_array(str(destination), mode="r")
+        assert copied.metadata.zarr_format == 2
+        assert copied.chunks == (1, 2, 5)
+        assert copied.attrs.asdict() == original_attrs
+        assert zarr_backend.exists(source) is (operation is ZarrStorageBackend.copy)
+
+    @pytest.mark.parametrize("operation", [ZarrStorageBackend.copy, ZarrStorageBackend.move])
+    def test_transfer_never_overwrites_destination(self, zarr_backend, tmp_path, operation):
+        source, destination = tmp_path / "source.tif", tmp_path / "destination.tif"
+        zarr_backend.save(np.ones((2, 3)), source)
+        zarr_backend.save(np.zeros((4, 5)), destination)
+        with pytest.raises(FileExistsError):
+            operation(zarr_backend, source, destination)
+        np.testing.assert_array_equal(zarr_backend.load(source), np.ones((2, 3)))
+        np.testing.assert_array_equal(zarr_backend.load(destination), np.zeros((4, 5)))
+
+    def test_delete_array_and_empty_group_preserves_siblings(self, zarr_backend, tmp_path):
+        first, second = tmp_path / "first.tif", tmp_path / "second.tif"
+        zarr_backend.save(np.ones((2, 3)), first)
+        zarr_backend.save(np.zeros((2, 3)), second)
+        zarr_backend.delete(first)
+        assert not zarr_backend.exists(first)
+        assert zarr_backend.exists(second)
+
+        root = zarr.open_group(str(tmp_path), mode="a")
+        root.create_group("empty")
+        zarr_backend.delete(tmp_path / "empty")
+        assert "empty" not in root
+        with pytest.raises(IsADirectoryError):
+            zarr_backend.delete(tmp_path)
+        assert zarr_backend.exists(second)
+
+    def test_logical_symlink_load_and_overwrite_contract(self, zarr_backend, tmp_path):
+        source, link = tmp_path / "source.tif", tmp_path / "link.tif"
+        pixels = np.arange(6, dtype=np.uint16).reshape(2, 3)
+        zarr_backend.save(pixels, source)
+        zarr_backend.create_symlink(source, link)
+        assert zarr_backend.is_symlink(link)
+        assert zarr_backend.is_file(link)
+        np.testing.assert_array_equal(zarr_backend.load(link), pixels)
+        with pytest.raises(FileExistsError):
+            zarr_backend.create_symlink(source, link)
+        zarr_backend.create_symlink(source, link, overwrite=True)
+        np.testing.assert_array_equal(zarr_backend.load(link), pixels)
+
+    def test_logical_symlink_cycle_raises_resolution_error(self, zarr_backend, tmp_path):
+        source, link = tmp_path / "source.tif", tmp_path / "link.tif"
+        zarr_backend.save(np.ones((2, 3)), source)
+        zarr_backend.create_symlink(source, link)
+        zarr_backend.create_symlink(link, source, overwrite=True)
+        with pytest.raises(StorageResolutionError, match="cycle"):
+            zarr_backend.load(link)
+
+    def test_missing_read_does_not_create_store(self, zarr_backend, tmp_path):
+        path = tmp_path / "missing" / "image.tif"
+        assert not zarr_backend.exists(path)
+        with pytest.raises(FileNotFoundError):
+            zarr_backend.load(path)
+        assert not path.parent.exists()
 
 
 class TestZarrErrorHandling:
@@ -588,3 +730,18 @@ class TestZarrConfigIntegration:
         backend = ZarrStorageBackend(ZarrConfig(chunk_strategy=strategy))
 
         assert backend._calculate_chunks((2, 3, 4, 10, 20)) == expected
+
+    @pytest.mark.parametrize("compressor", tuple(ZarrCompressor))
+    @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.int32, np.float16, np.float64])
+    def test_every_codec_round_trips_with_explicit_chunks(self, tmp_path, compressor, dtype):
+        backend = ZarrStorageBackend(ZarrConfig(compressor=compressor))
+        pixels = np.arange(120, dtype=dtype).reshape(2, 3, 4, 5)
+        path = tmp_path / "image.tif"
+        backend.save(pixels, path, chunks=(1, 1, 2, 5))
+        array = zarr.open_array(str(path), mode="r")
+
+        assert array.metadata.zarr_format == 2
+        assert array.chunks == (1, 1, 2, 5)
+        assert array.dtype == dtype
+        assert array.metadata.compressor == backend.compressor
+        np.testing.assert_array_equal(backend.load(path), pixels)

@@ -1,0 +1,4 @@
+# Test boundary, not runtime dependency declarations. The ordinary OS/Python
+# matrix resolves the latest compatible packages; this job guards the floor.
+zarr==3.0.10
+ome-zarr==0.12.2

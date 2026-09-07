@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.2.9"
+version = "0.2.10"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,17 +42,15 @@ dependencies = [
     "portalocker>=2.8.0",  # Cross-platform file locking
     "metaclass-registry>=0.1.5",
     "imageio>=2.37.0",
-    "zarr>=2.18.0,<3.0",  # Required for ZarrStorageBackend
-    "ome-zarr>=0.11.0",   # Required for OME-ZARR HCS compliance
+    "zarr>=3.0.10",  # Reads Zarr 2 and 3 stores; output format is backend-owned
+    "numcodecs>=0.14.0",
+    "ome-zarr>=0.12.2",   # Required for OME-ZARR HCS compliance
     "zmqruntime>=0.1.22",
     "platformdirs>=4.0.0",
 ]
 
 [project.optional-dependencies]
-zarr = [
-    "zarr>=2.18.0,<3.0",
-    "ome-zarr>=0.11.0",
-]
+zarr = []  # Retained extra name; Zarr support is included in the base package.
 
 torch = [
     "torch>=2.0.0",
@@ -86,8 +84,6 @@ bioformats = [
 ]
 
 all = [
-    "zarr>=2.18.0,<3.0",
-    "ome-zarr>=0.11.0",
     "torch>=2.0.0",
     "jax>=0.4.0",
     "tensorflow>=2.12.0",
@@ -117,10 +113,6 @@ docs = [
 ]
 
 gpu = [
-    # Zarr
-    "zarr>=2.18.0,<3.0",
-    "ome-zarr>=0.11.0",
-
     # PyTorch
     "torch>=2.6.0,<2.8.0",
     "torchvision>=0.21.0,<0.23.0",

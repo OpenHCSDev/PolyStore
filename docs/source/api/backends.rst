@@ -71,6 +71,24 @@ its enum values through strings or lookup tables.
        )
    )
 
+Zarr storage formats
+--------------------
+
+PolyStore uses the Zarr 3 Python API to read both Zarr 2 and Zarr 3 stores.
+``ZarrStorageBackend.output_format`` owns the output policy through upstream
+``ome_zarr.format.FormatV04``: new arrays and HCS batches retain Zarr 2 / NGFF
+0.4 encoding, slash-separated chunk keys and Numcodecs compression. An HCS
+image contains one full-resolution array; writing a batch does not generate
+additional pyramid levels.
+
+``OmeZarrLocation`` in ``polystore.ome_zarr_metadata`` extends upstream
+``ZarrLocation`` with shared dataset discovery and metadata projection. It
+reads namespaced NGFF metadata and preserves top-level declarations in older
+PolyStore outputs that contain both forms. Applications consume this projection
+rather than inspect format-specific filenames or repeat metadata precedence.
+``OmeZarrStorageBackend`` reads the array identified by ``OmeZarrArrayRef``
+without converting the store's format.
+
 Zarr batch layout
 -----------------
 
