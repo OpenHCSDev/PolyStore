@@ -13,6 +13,7 @@ Directory operations are limited - zarr stores data in hierarchical groups, not 
 """
 
 import shutil
+import json
 import tempfile
 from dataclasses import fields
 from inspect import getdoc
@@ -46,6 +47,44 @@ from polystore.zarr_batch import (
 def zarr_backend():
     """Create a ZarrStorageBackend instance with default config."""
     return ZarrStorageBackend()
+
+
+def test_zarr_declared_passthrough_support_batch_save_and_native_readback(tmp_path):
+    backend = ZarrStorageBackend()
+    paths = [tmp_path / "positions1.json", tmp_path / "positions2.json"]
+    values = ["[[0.25,-2.5],[4.75,3.0]]", "[[1.0,2.0]]"]
+    assert backend.supports_arbitrary_files is False
+    assert not backend.supports_file_path(tmp_path / "unknown.custom")
+    for value, path in zip(values, paths, strict=True):
+        assert backend.supports_file_path(path)
+        assert backend.accepts_payload(value, path)
+    backend.save_batch(values, paths)  # Arbitrary artifacts need no array layout.
+    for value, path in zip(values, paths, strict=True):
+        assert path.read_text() == value
+        assert backend.load(path) == json.loads(value)
+        assert backend.physical_source_path(path, base_path=tmp_path) == path
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_zarr_mixed_passthrough_array_batch_rejects_before_any_writes(tmp_path, reverse):
+    backend = ZarrStorageBackend()
+    paths = [tmp_path / "positions.json", tmp_path / "plate.zarr" / "array.tif"]
+    values = ["[[0.25,-2.5]]", np.zeros((2, 3), dtype=np.uint16)]
+    if reverse:
+        paths.reverse()
+        values.reverse()
+    with pytest.raises(ValueError, match="cannot mix"):
+        backend.save_batch(values, paths)
+    assert not (tmp_path / "positions.json").exists()
+    assert not (tmp_path / "plate.zarr").exists()
+
+
+def test_zarr_passthrough_invalid_lengths_reject_before_write(tmp_path):
+    backend = ZarrStorageBackend()
+    path = tmp_path / "positions.json"
+    with pytest.raises(ValueError, match="equal lengths"):
+        backend.save_batch(["[]", "[]"], [path])
+    assert not path.exists()
 
 
 @pytest.fixture
@@ -442,13 +481,21 @@ class TestZarrBatchOperations:
         """Old PolyStore stores emitted valid 0.4 plus stale nested 0.5 metadata."""
         store_path = Path(temp_zarr_dir) / "images"
         paths = save_hcs_image_axis_batch(
-            zarr_backend, store_path, axis_name="field", values=("3", "7"), row="A", col="01"
+            zarr_backend,
+            store_path,
+            axis_name="field",
+            values=("3", "7"),
+            row="A",
+            col="01",
         )
         root = zarr.open_group(str(store_path), mode="a")
         root.attrs["ome"] = {"version": "0.4"}
         root["A/01"].attrs["ome"] = {
             "version": "0.5",
-            "well": {"version": "0.5", "images": [{"path": "missing", "acquisition": 0}]},
+            "well": {
+                "version": "0.5",
+                "images": [{"path": "missing", "acquisition": 0}],
+            },
         }
 
         assert set(zarr_backend.list_files(store_path)) == set(paths)

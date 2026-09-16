@@ -7,6 +7,7 @@ independent of specific implementations. It establishes the contract
 that all storage backends must fulfill.
 """
 
+import hashlib
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -54,9 +55,7 @@ class ImageSamplingRequest:
             not isinstance(value, int) or isinstance(value, bool) or value <= 0
             for value in shape_yx
         ):
-            raise ValueError(
-                "ImageSamplingRequest.shape_yx must contain two positive integers."
-            )
+            raise ValueError("ImageSamplingRequest.shape_yx must contain two positive integers.")
         resolution_index = self.resolution_index
         if resolution_index is not None and (
             not isinstance(resolution_index, int)
@@ -64,17 +63,14 @@ class ImageSamplingRequest:
             or resolution_index < 0
         ):
             raise ValueError(
-                "ImageSamplingRequest.resolution_index must be a nonnegative integer "
-                "or None."
+                "ImageSamplingRequest.resolution_index must be a nonnegative integer " "or None."
             )
         if (
             not isinstance(self.max_auto_resolution_size, int)
             or isinstance(self.max_auto_resolution_size, bool)
             or self.max_auto_resolution_size <= 0
         ):
-            raise ValueError(
-                "ImageSamplingRequest.max_auto_resolution_size must be positive."
-            )
+            raise ValueError("ImageSamplingRequest.max_auto_resolution_size must be positive.")
         object.__setattr__(self, "origin_yx", origin_yx)
         object.__setattr__(self, "shape_yx", shape_yx)
 
@@ -91,9 +87,7 @@ class ImageSamplingResult:
     selected_resolution_index: int = 0
     resolution_count: int = 1
     downsample_yx: tuple[float, float] = (1.0, 1.0)
-    statistics_scope: ImageSamplingStatisticsScope = (
-        ImageSamplingStatisticsScope.SOURCE_RESOLUTION
-    )
+    statistics_scope: ImageSamplingStatisticsScope = ImageSamplingStatisticsScope.SOURCE_RESOLUTION
 
 
 class PicklableBackend(ABC):
@@ -167,16 +161,18 @@ class BackendBase(metaclass=AutoRegisterMeta):
     Defines the registry and common interface for backend discovery.
     Concrete backends should inherit from StorageBackend, ReadOnlyBackend, or DataSink.
     """
-    __registry_key__ = '_backend_type'
+
+    __registry_key__ = "_backend_type"
 
     # Enable automatic discovery of backends in polystore package
     from metaclass_registry import LazyDiscoveryDict, RegistryConfig
+
     __registry_config__ = RegistryConfig(
         registry_dict=LazyDiscoveryDict(),
-        key_attribute='_backend_type',
+        key_attribute="_backend_type",
         skip_if_no_key=True,
-        registry_name='backend',
-        discovery_package='polystore',
+        registry_name="backend",
+        discovery_package="polystore",
         discovery_recursive=False,  # All backends are in polystore/*.py (flat structure)
     )
 
@@ -250,6 +246,13 @@ class DataSink(BackendBase):
     Inherits from BackendBase for automatic registration.
     """
 
+    def image_serialization_preserves_values(
+        self, authored_dtype: np.dtype, stored_dtype: np.dtype
+    ) -> bool:
+        """Declare exact serialization preservation; unsupported sinks prove none."""
+        del authored_dtype, stored_dtype
+        return False
+
     def contextual_save_kwargs(
         self,
         *,
@@ -287,7 +290,9 @@ class DataSink(BackendBase):
         pass
 
     @abstractmethod
-    def save_batch(self, data_list: List[Any], identifiers: List[Union[str, Path]], **kwargs) -> None:
+    def save_batch(
+        self, data_list: List[Any], identifiers: List[Union[str, Path]], **kwargs
+    ) -> None:
         """
         Send multiple data objects to the destination in a single operation.
 
@@ -314,6 +319,8 @@ class DataSource(BackendBase):
     This is the read-only counterpart to DataSink.
     """
 
+    VERIFIED_RESOURCE_MAX_BYTES = 8 * 1024 * 1024
+
     def resolve_address(
         self,
         backend_address: Union[str, Path],
@@ -323,6 +330,13 @@ class DataSource(BackendBase):
         """Resolve one backend-owned address for loading."""
         del base_path
         return backend_address
+
+    def source_image_dtype(self, backend_address: Union[str, Path], *, base_path: Path) -> np.dtype:
+        """Read a native array header; this alone does not prove value preservation."""
+        del backend_address, base_path
+        raise StorageResolutionError(
+            f"{type(self).__name__} does not declare native image header metadata."
+        )
 
     def source_path(
         self,
@@ -344,6 +358,38 @@ class DataSource(BackendBase):
 
         return self.source_path(backend_address, base_path=base_path)
 
+    def read_verified_source_bytes(
+        self,
+        backend_address: Union[str, Path],
+        *,
+        base_path: Path,
+        expected_sha256: str,
+        max_bytes: int = VERIFIED_RESOURCE_MAX_BYTES,
+    ) -> bytes:
+        """Read bounded physical resource bytes, verifying their exact identity.
+
+        This deliberately does not decode a format or load array pixels. Opaque
+        sources without a physical file refuse through their existing path hook.
+        """
+        if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+            raise ValueError("Verified resource max_bytes must be a positive integer.")
+        if (
+            not isinstance(expected_sha256, str)
+            or len(expected_sha256) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in expected_sha256)
+        ):
+            raise ValueError("Verified resource requires a hexadecimal SHA256 identity.")
+        physical_path = self.physical_source_path(backend_address, base_path=base_path)
+        if physical_path is None:
+            raise StorageResolutionError("Opaque source has no physical byte resource.")
+        with Path(physical_path).open("rb") as resource:
+            data = resource.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError("Verified resource exceeds the declared byte bound.")
+        if hashlib.sha256(data).hexdigest() != expected_sha256.lower():
+            raise ValueError("Verified resource SHA256 does not match its declaration.")
+        return data
+
     def sample(
         self,
         file_path: Union[str, Path],
@@ -358,8 +404,7 @@ class DataSource(BackendBase):
 
         if request.resolution_index not in (None, 0):
             raise ValueError(
-                "This data source exposes one resolution; resolution_index must "
-                "be 0 or None."
+                "This data source exposes one resolution; resolution_index must " "be 0 or None."
             )
         array = np.asarray(self.load(file_path))
         if array.ndim < 2:
@@ -413,9 +458,14 @@ class DataSource(BackendBase):
         pass
 
     @abstractmethod
-    def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
-                  extensions: Optional[Set[str]] = None, recursive: bool = False,
-                  **kwargs) -> List[str]:
+    def list_files(
+        self,
+        directory: Union[str, Path],
+        pattern: Optional[str] = None,
+        extensions: Optional[Set[str]] = None,
+        recursive: bool = False,
+        **kwargs,
+    ) -> List[str]:
         """
         List files in a directory.
 
@@ -502,9 +552,14 @@ class VirtualBackend(DataSink):
         pass
 
     @abstractmethod
-    def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
-                  extensions: Optional[Set[str]] = None, recursive: bool = False,
-                  **kwargs) -> List[str]:
+    def list_files(
+        self,
+        directory: Union[str, Path],
+        pattern: Optional[str] = None,
+        extensions: Optional[Set[str]] = None,
+        recursive: bool = False,
+        **kwargs,
+    ) -> List[str]:
         """
         Generate virtual file listing.
 
@@ -576,6 +631,7 @@ class StorageBackend(DataSource, DataSink):
 
     Concrete implementations are automatically registered via AutoRegisterMeta.
     """
+
     # Inherits load(), load_batch(), list_files(), etc. from DataSource
     # Inherits save() and save_batch() from DataSink
 
@@ -728,8 +784,9 @@ def get_backend(backend_type: str) -> DataSink:
         backend_type = backend_type.value
     backend_key = str(backend_type).lower()
     if backend_key not in storage_registry:
-        raise KeyError(f"Backend '{backend_type}' not found. "
-                      f"Available: {list(storage_registry.keys())}")
+        raise KeyError(
+            f"Backend '{backend_type}' not found. " f"Available: {list(storage_registry.keys())}"
+        )
 
     return storage_registry[backend_key]
 

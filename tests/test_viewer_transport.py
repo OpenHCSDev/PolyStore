@@ -50,9 +50,7 @@ class MicroscopeHandlerFixture(ViewerMicroscopeHandlerABC):
     metadata_handler = MetadataHandlerFixture()
 
 
-EMPTY_SOURCE_METADATA = BatchViewerStreamSourceMetadata(
-    {"well": "A01", "site": 1, "channel": 1}
-)
+EMPTY_SOURCE_METADATA = BatchViewerStreamSourceMetadata({"well": "A01", "site": 1, "channel": 1})
 
 
 def stream_source(
@@ -124,8 +122,8 @@ def test_viewer_stream_kwargs_declares_explicit_backend_request() -> None:
         ),
     )
     assert stream_kwargs.source.metadata.metadata_by_index == (
-                {"well": "A01", "site": 1},
-                {"well": "A01", "site": 2},
+        {"well": "A01", "site": 1},
+        {"well": "A01", "site": 2},
     )
     default_config = ZMQConfig(default_port=9001)
     assert stream_kwargs.transport_config.resolve(default_config) is default_config
@@ -138,9 +136,7 @@ def test_viewer_stream_source_metadata_is_abstract_boundary() -> None:
 
 def test_viewer_stream_backend_rejects_flat_kwargs() -> None:
     with pytest.raises(ValueError, match="stream_request"):
-        ViewerStreamBackendKwargs.from_kwargs(
-            {"display_config": DisplayConfigFixture()}
-        )
+        ViewerStreamBackendKwargs.from_kwargs({"display_config": DisplayConfigFixture()})
 
 
 def test_viewer_stream_kwargs_preserves_explicit_transport_config() -> None:
@@ -159,3 +155,28 @@ def test_viewer_stream_backend_rejects_non_request_payload() -> None:
         ViewerStreamBackendKwargs.from_kwargs(
             {ViewerStreamKwarg.STREAM_REQUEST.value: DisplayConfigFixture()}
         )
+
+
+def test_viewer_stream_producer_reindexes_exact_batch_subset() -> None:
+    identities = tuple(
+        StreamProducerIdentity(
+            origin="pipeline",
+            output_kind="artifact",
+            output_key=f"output_{index}",
+            projection_key=f"projection_{index}",
+        )
+        for index in range(3)
+    )
+    producer = ViewerStreamProducer.from_identities(identities)
+    assert producer.for_indices((2, 0), 3).identities == (
+        identities[2],
+        identities[0],
+    )
+    with pytest.raises(ValueError, match="complete item domain"):
+        producer.for_indices((0,), 4)
+    with pytest.raises(ValueError, match="unique"):
+        producer.for_indices((0, 0), 3)
+    with pytest.raises(TypeError, match="exact integers"):
+        producer.for_indices((False,), 3)
+    with pytest.raises(IndexError, match="outside"):
+        producer.for_indices((3,), 3)

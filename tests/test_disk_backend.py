@@ -5,12 +5,16 @@ ensure_directory idempotence, and symlink creation.
 """
 
 from pathlib import Path
+import hashlib
 
 import numpy as np
 import tifffile
+import pytest
 
 from polystore import disk as disk_module
 from polystore.disk import DiskBackend
+from polystore import FileManager
+from polystore.exceptions import StorageResolutionError
 
 
 def test_text_json_csv_save_load(tmp_path: Path):
@@ -37,6 +41,37 @@ def test_text_json_csv_save_load(tmp_path: Path):
     loaded = disk.load(c)
     assert isinstance(loaded, list)
     assert loaded[0]["a"] == "1"
+
+
+def test_verified_source_resource_reads_exact_bounded_bytes(tmp_path):
+    path = tmp_path / "receipt.json"
+    data = b'{"value": 1}\r\n'
+    path.write_bytes(data)
+    manager = FileManager({"disk": DiskBackend()})
+    options = dict(base_path=tmp_path, expected_sha256=hashlib.sha256(data).hexdigest())
+    assert manager.read_verified_source_bytes(path, "disk", max_bytes=len(data), **options) == data
+    with pytest.raises(ValueError, match="byte bound"):
+        manager.read_verified_source_bytes(path, "disk", max_bytes=len(data) - 1, **options)
+    with pytest.raises(ValueError, match="SHA256 does not match"):
+        manager.read_verified_source_bytes(
+            path, "disk", base_path=tmp_path, expected_sha256="0" * 64
+        )
+    for bound in (True, 0, -1, 1.5):
+        with pytest.raises(ValueError, match="positive integer"):
+            manager.read_verified_source_bytes(path, "disk", max_bytes=bound, **options)
+
+
+def test_verified_source_resource_opaque_source_refuses(tmp_path):
+    class OpaqueDisk(DiskBackend):
+        _backend_type = None
+
+        def physical_source_path(self, backend_address, *, base_path):
+            return None
+
+    with pytest.raises(StorageResolutionError, match="Opaque source"):
+        OpaqueDisk().read_verified_source_bytes(
+            "opaque", base_path=tmp_path, expected_sha256="0" * 64
+        )
 
 
 def test_preformatted_text_is_written_as_exact_utf8_bytes(

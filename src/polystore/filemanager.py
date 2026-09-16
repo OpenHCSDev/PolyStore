@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
 from typing import Any
+import numpy as np
 
 from .base import (
     BackendBase,
@@ -207,6 +208,43 @@ class FileManager:
             base_path=Path(base_path),
         )
 
+    def source_image_dtype(
+        self, backend_address: str | Path, backend: str, *, base_path: str | Path
+    ) -> np.dtype:
+        """Read an image dtype through its nominal source owner without pixels."""
+        source = self._get_backend(backend)
+        if not isinstance(source, DataSource):
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
+        return source.source_image_dtype(backend_address, base_path=Path(base_path))
+
+    def read_verified_source_bytes(
+        self,
+        backend_address: str | Path,
+        backend: str,
+        *,
+        base_path: str | Path,
+        expected_sha256: str,
+        max_bytes: int = DataSource.VERIFIED_RESOURCE_MAX_BYTES,
+    ) -> bytes:
+        """Delegate bounded, hash-verified physical bytes to their source owner."""
+        source = self._get_backend(backend)
+        if not isinstance(source, DataSource):
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
+        return source.read_verified_source_bytes(
+            backend_address,
+            base_path=Path(base_path),
+            expected_sha256=expected_sha256,
+            max_bytes=max_bytes,
+        )
+
+    def image_serialization_preserves_values(
+        self, backend: str, authored_dtype: np.dtype, stored_dtype: np.dtype
+    ) -> bool:
+        sink = self._get_backend(backend)
+        if not isinstance(sink, DataSink):
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSink.")
+        return sink.image_serialization_preserves_values(authored_dtype, stored_dtype)
+
     def load(self, file_path: str | Path, backend: str, **kwargs) -> Any:
         """
         Load data from a file using the specified backend.
@@ -355,14 +393,19 @@ class FileManager:
             raise
         except Exception as e:
             logger.error(
-                f"Unexpected error during batch load with backend {backend}: {e}", exc_info=True
+                f"Unexpected error during batch load with backend {backend}: {e}",
+                exc_info=True,
             )
             raise StorageResolutionError(
                 f"Failed to load batch of {len(file_paths)} files using backend '{backend}'"
             ) from e
 
     def save_batch(
-        self, data_list: list[Any], output_paths: list[str | Path], backend: str, **kwargs
+        self,
+        data_list: list[Any],
+        output_paths: list[str | Path],
+        backend: str,
+        **kwargs,
     ) -> None:
         """
         Save multiple data objects using the specified backend.
@@ -384,7 +427,8 @@ class FileManager:
             raise
         except Exception as e:
             logger.error(
-                f"Unexpected error during batch save with backend {backend}: {e}", exc_info=True
+                f"Unexpected error during batch save with backend {backend}: {e}",
+                exc_info=True,
             )
             raise StorageResolutionError(
                 f"Failed to save batch of {len(data_list)} files using backend '{backend}'"
@@ -842,7 +886,8 @@ class FileManager:
                     # Check if destination is a symlink
                     if backend_instance.is_symlink(dest_path):
                         logger.debug(
-                            "Destination is a symlink, removing before move: %s", dest_path
+                            "Destination is a symlink, removing before move: %s",
+                            dest_path,
                         )
                         backend_instance.delete(dest_path)
                     else:

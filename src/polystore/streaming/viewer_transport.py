@@ -304,6 +304,34 @@ class ViewerStreamProducer:
             )
         return self.identities[index]
 
+    def for_indices(
+        self,
+        indices: Sequence[int],
+        total_item_count: int,
+    ) -> "ViewerStreamProducer":
+        """Return producer identities aligned to one exact batch subset."""
+        if type(total_item_count) is not int or total_item_count <= 0:
+            raise ValueError("Viewer stream total item count must be a positive integer.")
+        normalized = tuple(indices)
+        if not normalized:
+            raise ValueError("Viewer stream producer subset cannot be empty.")
+        if any(type(index) is not int for index in normalized):
+            raise TypeError("Viewer stream producer indices must be exact integers.")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Viewer stream producer indices must be unique.")
+        if any(index < 0 or index >= total_item_count for index in normalized):
+            raise IndexError("Viewer stream producer index is outside the item domain.")
+        if len(self.identities) not in (1, total_item_count):
+            raise ValueError(
+                "Viewer stream producer identities must be singleton or cover "
+                "the complete item domain."
+            )
+        if len(self.identities) == 1:
+            return self
+        return ViewerStreamProducer.from_identities(
+            tuple(self.identities[index] for index in normalized)
+        )
+
     def batch_item_payload(
         self,
         item_source: "ViewerStreamBatchItemSource",

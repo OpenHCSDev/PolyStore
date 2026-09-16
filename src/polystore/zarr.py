@@ -90,12 +90,73 @@ def _plate_image_arrays(root: zarr.Group) -> Iterator[zarr.Array]:
             yield OmeZarrLocation(root.store.root / well_group.path / image_path).base_array
 
 
+def _mapped_array_matches(root: zarr.Group, file_paths: Sequence[str | Path]):
+    """Share exact filename-to-native-array selection between headers and pixels."""
+    claimed = set()
+    for field_array in _plate_image_arrays(root):
+        filename_map = _get_attr(field_array.attrs, ATTR_FILENAME_MAP)
+        if filename_map is None:
+            continue
+        matches = tuple(
+            (index, filename_map[Path(path).name])
+            for index, path in enumerate(file_paths)
+            if Path(path).name in filename_map
+        )
+        indexes = {index for index, _coordinates in matches}
+        if claimed & indexes:
+            raise StorageResolutionError("Zarr filename mapping selects multiple native arrays.")
+        claimed.update(indexes)
+        if matches:
+            yield field_array, matches
+
+
 class ZarrStorageBackend(StorageBackend, PicklableBackend):
     """Zarr storage backend with automatic registration."""
 
     _backend_type = Backend.ZARR.value
     output_format = FormatV04()
     supports_arbitrary_files = False  # Class attribute: zarr only handles array data
+
+    @staticmethod
+    def _is_disk_passthrough_path(path: str | Path) -> bool:
+        return str(path).endswith(DISK_PASSTHROUGH_EXTENSIONS)
+
+    def supports_file_path(self, path: str | Path) -> bool:
+        return self._is_disk_passthrough_path(path) or super().supports_file_path(path)
+
+    def resolve_address(self, backend_address: str | Path, *, base_path: Path) -> Path:
+        path = Path(backend_address)
+        return path if path.is_absolute() else base_path / path
+
+    def physical_source_path(self, backend_address: str | Path, *, base_path: Path) -> Path | None:
+        address = self.resolve_address(backend_address, base_path=base_path)
+        if self._is_disk_passthrough_path(address):
+            from .backend_registry import get_backend_instance
+
+            return get_backend_instance(Backend.DISK.value).physical_source_path(
+                address, base_path=base_path
+            )
+        return None
+
+    def source_image_dtype(self, backend_address: str | Path, *, base_path: Path) -> np.dtype:
+        address = self.resolve_address(backend_address, base_path=base_path)
+        store, key = self._split_store_and_key(address)
+        location = OmeZarrLocation(store, mode="r")
+        if "plate" not in location.root_attrs:
+            return self._resolve_symlink(location.group, key)[1].dtype
+        matches = tuple(_mapped_array_matches(location.group, [address]))
+        if len(matches) != 1:
+            raise StorageResolutionError(
+                f"Zarr image header has no exact filename mapping: {address}."
+            )
+        return matches[0][0].dtype
+
+    def image_serialization_preserves_values(
+        self, authored_dtype: np.dtype, stored_dtype: np.dtype
+    ) -> bool:
+        """Raw array assignment is exact only without batch dtype conversion."""
+        return np.dtype(authored_dtype) == np.dtype(stored_dtype)
+
     """
     Zarr storage backend implementation with configurable compression.
 
@@ -213,7 +274,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             StorageResolutionError: If creation fails
         """
         output_path_text = str(output_path)
-        if output_path_text.endswith(DISK_PASSTHROUGH_EXTENSIONS):
+        if self._is_disk_passthrough_path(output_path):
             from .backend_registry import get_backend_instance
 
             disk_backend = get_backend_instance(Backend.DISK.value)
@@ -278,17 +339,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         root = zarr.open_group(store=store, mode="r")
 
         results = [None] * len(file_paths)
-        for field_array in _plate_image_arrays(root):
-            filename_map = _get_attr(field_array.attrs, ATTR_FILENAME_MAP)
-            if filename_map is None:
-                continue
-            matches = tuple(
-                (index, filename_map[Path(path).name])
-                for index, path in enumerate(file_paths)
-                if Path(path).name in filename_map
-            )
-            if not matches:
-                continue
+        for field_array, matches in _mapped_array_matches(root, file_paths):
             all_well_data = field_array[:]
             for file_pos, coordinates in matches:
                 results[file_pos] = all_well_data[
@@ -321,6 +372,24 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             **kwargs: Must include ``chunk_name``, ``batch_layout``, ``row``,
                 and ``col``.
         """
+
+        if len(data_list) != len(output_paths):
+            raise ValueError(
+                "Zarr batch data and output paths must have equal lengths: "
+                f"got {len(data_list)} and {len(output_paths)}"
+            )
+        if not data_list:
+            return
+        passthrough_paths = tuple(self._is_disk_passthrough_path(path) for path in output_paths)
+        if any(passthrough_paths):
+            if not all(passthrough_paths):
+                raise ValueError(
+                    "One Zarr batch cannot mix array addresses and disk-passthrough "
+                    "files; submit separate batches before storage."
+                )
+            for data, path in zip(data_list, output_paths, strict=True):
+                self.save(data, path, **kwargs)
+            return
 
         # Keep Dask and writer imports on the storage execution boundary.
         from ome_zarr.writer import write_multiscales_metadata, write_well_metadata
@@ -553,7 +622,11 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
 
         # Add acquisition metadata for HCS compliance
         acquisitions = [
-            {"id": 0, "name": "default_acquisition", "maximumfieldcount": maximum_field_count}
+            {
+                "id": 0,
+                "name": "default_acquisition",
+                "maximumfieldcount": maximum_field_count,
+            }
         ]
 
         # Write complete HCS plate metadata
@@ -585,6 +658,10 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         Raises:
             FileNotFoundError: If file not found in zarr store
         """
+        if self._is_disk_passthrough_path(file_path):
+            from .backend_registry import get_backend_instance
+
+            return get_backend_instance(Backend.DISK.value).load(file_path, **kwargs)
         store, key = self._split_store_and_key(file_path)
         location = OmeZarrLocation(store, mode="r")
         group = location.group
@@ -711,7 +788,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             raise StorageResolutionError(f"Failed to recursively delete Zarr path: {path}") from e
 
     def exists(self, path: str | Path) -> bool:
-        if str(path).endswith(DISK_PASSTHROUGH_EXTENSIONS):
+        if self._is_disk_passthrough_path(path):
             from .backend_registry import get_backend_instance
 
             disk_backend = get_backend_instance(Backend.DISK.value)
@@ -936,14 +1013,29 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                     }
 
                 if isinstance(obj, zarr.Array):
-                    return {"type": "file", "key": key, "store": repr(store), "exists": True}
+                    return {
+                        "type": "file",
+                        "key": key,
+                        "store": repr(store),
+                        "exists": True,
+                    }
 
                 elif isinstance(obj, zarr.Group):
-                    return {"type": "directory", "key": key, "store": repr(store), "exists": True}
+                    return {
+                        "type": "directory",
+                        "key": key,
+                        "store": repr(store),
+                        "exists": True,
+                    }
 
                 raise StorageResolutionError(f"Unknown object type at: {key}")
             else:
-                return {"type": "missing", "key": key, "store": repr(store), "exists": False}
+                return {
+                    "type": "missing",
+                    "key": key,
+                    "store": repr(store),
+                    "exists": False,
+                }
 
         except Exception as e:
             raise StorageResolutionError(f"Failed to stat Zarr key {key}") from e

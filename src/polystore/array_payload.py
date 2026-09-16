@@ -3,13 +3,15 @@
 from typing import Any
 
 import numpy as np
-from arraybridge import convert_memory, detect_memory_type
+from arraybridge import ArrayPayload, convert_memory, detect_memory_type
 from arraybridge.types import MemoryType
 
 
 def storage_numpy_array(data: Any) -> np.ndarray:
     """Return one supported array payload as a host NumPy array."""
 
+    if isinstance(data, ArrayPayload):
+        data = data.array_payload_data()
     if isinstance(data, np.ndarray):
         return data
     source_type = detect_memory_type(data)

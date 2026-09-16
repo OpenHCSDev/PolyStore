@@ -2,7 +2,14 @@
 
 import pytest
 
-from polystore.atomic import FileLockTimeoutError, file_lock
+from polystore.atomic import FileLockTimeoutError, LockConfig, file_lock
+
+
+@pytest.mark.parametrize("filename", ("metadata.json", "metadata", "a.b.c"))
+def test_lock_config_owns_atomic_transaction_lock_path(tmp_path, filename):
+    path = tmp_path / filename
+    config = LockConfig(LOCK_SUFFIX=".guard")
+    assert config.lock_path(path) == tmp_path / f"{filename}.guard"
 
 
 def test_file_lock_preserves_body_exception(tmp_path) -> None:

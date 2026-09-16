@@ -33,6 +33,11 @@ class LockConfig:
     TEMP_PREFIX: str = ".tmp"
     JSON_INDENT: int = 2
 
+    def lock_path(self, file_path: str | Path) -> Path:
+        """Derive the lock owned by one atomic file transaction."""
+        path = Path(file_path)
+        return path.with_suffix(f"{path.suffix}{self.LOCK_SUFFIX}")
+
 
 LOCK_CONFIG = LockConfig()
 
@@ -155,7 +160,7 @@ def atomic_update_json(
 ) -> None:
     """Atomically update JSON file using read-modify-write with file locking."""
     file_path = Path(file_path)
-    lock_path = file_path.with_suffix(f"{file_path.suffix}{LOCK_CONFIG.LOCK_SUFFIX}")
+    lock_path = LOCK_CONFIG.lock_path(file_path)
 
     with file_lock(lock_path, timeout=lock_timeout):
         current_data = _read_json_or_default(file_path, default_data)
