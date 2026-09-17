@@ -45,7 +45,7 @@ dependencies = [
     "zarr>=3.0.10",  # Reads Zarr 2 and 3 stores; output format is backend-owned
     "numcodecs>=0.14.0",
     "ome-zarr>=0.12.2",   # Required for OME-ZARR HCS compliance
-    "zmqruntime>=0.1.22",
+    "zmqruntime>=0.2.21",
     "platformdirs>=4.0.0",
 ]
 

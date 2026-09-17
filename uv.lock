@@ -3041,7 +3041,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0.0" },
     { name = "torchvision", marker = "extra == 'gpu'", specifier = ">=0.21.0,<0.23.0" },
     { name = "zarr", specifier = ">=3.0.10" },
-    { name = "zmqruntime", specifier = ">=0.1.22" },
+    { name = "zmqruntime", specifier = ">=0.2.21" },
 ]
 provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "bioformats", "all", "dev", "docs", "gpu"]
 
@@ -4988,17 +4988,18 @@ wheels = [
 
 [[package]]
 name = "zmqruntime"
-version = "0.2.16"
+version = "0.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "metaclass-registry" },
     { name = "numpy" },
+    { name = "portalocker" },
     { name = "psutil" },
     { name = "python-introspect" },
     { name = "pyzmq" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/5f/3ce5e009b40ee9220a227391197a63c09d94a22b817846b722eaf550cd19/zmqruntime-0.2.16.tar.gz", hash = "sha256:9c409a47deb65d7c1dd84ead2a61d138fd7d8391cf4d30187d7eb82aaf3444ae", size = 106569, upload-time = "2026-08-24T03:16:47.095Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/34/b62f243dc8a22d02fbdc3c06a7b7dc36360194c0c17a7300fa65c997e778/zmqruntime-0.2.21.tar.gz", hash = "sha256:4f4846da21a866453268b0d3fecb22601fbeb9576260aad8996173ee6924b0e8", size = 111158, upload-time = "2026-09-17T20:03:20.838Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/c4/be6be5fa557760fd96767aea4ffcc9218a69414c7812f1a9bb80a69f0925/zmqruntime-0.2.16-py3-none-any.whl", hash = "sha256:d6b8fc1d992aebd2952c62234b472f1c48841a23863ede5b18be809a2534c5af", size = 81107, upload-time = "2026-08-24T03:16:45.638Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/80/d53854167476cdb97a921643edc35cb4351b20ba308cb6f25bc5a43f41ce/zmqruntime-0.2.21-py3-none-any.whl", hash = "sha256:4f67232aed1d3d395ad2fd1b5b593d55f881e760c02dfa65ed4fb32cd6aa8ee0", size = 83207, upload-time = "2026-09-17T20:03:19.538Z" },
 ]
