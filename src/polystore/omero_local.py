@@ -666,10 +666,21 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         images_dir = Path(images_dir)
         plate_name, base_id, is_derived = self._parse_omero_path(images_dir)
 
+        # Query OMERO for the actual plate ID by name. A mid-pipeline derived
+        # artifact can materialize before the output plate exists; the
+        # annotation is then created unlinked instead of failing the save.
+        images_dir = Path(images_dir)
+        plate_name, base_id, is_derived = self._parse_omero_path(images_dir)
+
         # Query OMERO for the actual plate ID by name
         plate_id = self._find_plate_by_name(plate_name, **kwargs)
-        if not plate_id:
-            raise ValueError(f"Plate '{plate_name}' not found in OMERO (images dir: {images_dir})")
+        if plate_id is None:
+            logger.warning(
+                "Plate '%s' not found in OMERO (images dir: %s); "
+                "FileAnnotation will be created unlinked.",
+                plate_name,
+                images_dir,
+            )
 
         # Create FileAnnotation
         import tempfile
@@ -692,7 +703,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
             )
 
             # Attach to plate
-            plate = conn.getObject("Plate", plate_id)
+            plate = conn.getObject("Plate", plate_id) if plate_id is not None else None
             if plate is not None:
                 plate.linkAnnotation(file_ann)
                 logger.info(f"Attached {output_path.name} as FileAnnotation to plate {plate_id}")
