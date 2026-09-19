@@ -7,7 +7,7 @@ attribute access instead of at import time, so declaration-only consumers
 """
 
 _LAZY_EXPORTS: dict[str, str] = {
-    "FilePath": ".viewer_transport",
+    "FilePath": "._streaming_backend",
     "RoiStreamPayload": "._streaming_backend",
     "StreamablePayload": "._streaming_backend",
     "StreamingBackend": "._streaming_backend",
