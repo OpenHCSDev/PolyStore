@@ -1,43 +1,41 @@
 """
 Streaming package for polystore.
 
-This package contains:
-- StreamingBackend base class
-- receivers subpackage with batch processors for Fiji and Napari
+Package-root imports stay lightweight: submodule exports load on first
+attribute access instead of at import time, so declaration-only consumers
+(viewer transport contracts) do not pay the NumPy/zmq streaming cost.
 """
 
-# Import StreamingBackend from the _streaming_backend module
-# This allows both:
-#   from polystore.streaming import StreamingBackend
-#   from polystore.streaming.receivers import FijiBatchProcessor
-from polystore.streaming._streaming_backend import (
-    FilePath,
-    RoiStreamPayload,
-    StreamablePayload,
-    StreamingBackend,
-    StreamingBatchItemPreparationAuthority,
-    StreamingBatchMessageBuilder,
-    StreamingBatchMessageRequest,
-    StreamingBuiltBatch,
-    StreamingComponentNamesRequest,
-    StreamingItemPreparationRequest,
-    StreamingPreparedBatchItems,
-    StreamingSharedMemoryAuthority,
-    ViewerDisplayPayloadExtra,
-)
+_LAZY_EXPORTS: dict[str, str] = {
+    "FilePath": ".viewer_transport",
+    "RoiStreamPayload": "._streaming_backend",
+    "StreamablePayload": "._streaming_backend",
+    "StreamingBackend": "._streaming_backend",
+    "StreamingBatchItemPreparationAuthority": "._streaming_backend",
+    "StreamingBatchMessageBuilder": "._streaming_backend",
+    "StreamingBatchMessageRequest": "._streaming_backend",
+    "StreamingBuiltBatch": "._streaming_backend",
+    "StreamingComponentNamesRequest": "._streaming_backend",
+    "StreamingItemPreparationRequest": "._streaming_backend",
+    "StreamingPreparedBatchItems": "._streaming_backend",
+    "StreamingSharedMemoryAuthority": "._streaming_backend",
+    "ViewerDisplayPayloadExtra": "._streaming_backend",
+}
 
-__all__ = [
-    "FilePath",
-    "RoiStreamPayload",
-    "StreamablePayload",
-    "StreamingBatchItemPreparationAuthority",
-    "StreamingBatchMessageBuilder",
-    "StreamingBatchMessageRequest",
-    "StreamingBuiltBatch",
-    "StreamingPreparedBatchItems",
-    "StreamingBackend",
-    "StreamingComponentNamesRequest",
-    "StreamingItemPreparationRequest",
-    "StreamingSharedMemoryAuthority",
-    "ViewerDisplayPayloadExtra",
-]
+__all__ = list(_LAZY_EXPORTS)
+
+
+def __getattr__(name: str):
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    import importlib
+
+    value = getattr(importlib.import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))

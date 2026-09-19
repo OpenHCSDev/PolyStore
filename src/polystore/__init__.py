@@ -1,183 +1,103 @@
 """
 Polystore package exports.
+
+Package-root imports stay lightweight: submodule exports load on first
+attribute access instead of at import time. Declaration-only consumers
+(configuration modules, DTO layers) therefore do not pay the heavy
+backend/streaming/ROI import cost.
 """
 
 from importlib.metadata import version as _distribution_version
-from typing import TYPE_CHECKING
 
 __version__ = _distribution_version("polystore")
 
-from .atomic import (
-    FileLockError,
-    FileLockTimeoutError,
-    atomic_update_json,
-    atomic_write_json,
-    file_lock,
-)
-from .backend_registry import (
-    STORAGE_BACKENDS,
-    cleanup_all_backends,
-    cleanup_backend_connections,
-    get_backend_instance,
-    register_cleanup_callback,
-)
-from .base import (
-    BackendBase,
-    DataSink,
-    DataSource,
-    ImageSamplingRequest,
-    ImageSamplingResult,
-    ImageSamplingStatisticsScope,
-    ReadOnlyBackend,
-    StorageBackend,
-    ensure_storage_registry,
-    get_backend,
-    reset_memory_backend,
-    storage_registry,
-)
-from .constants import Backend, MemoryType
-from .filemanager import FileManager
-from .formats import DEFAULT_IMAGE_EXTENSIONS, FileFormat
-from .imagej_distribution import (
-    FIJI_IMAGEJ_DISTRIBUTION,
-    FijiArchiveDistribution,
-    FijiBundleAsset,
-    ImageJArchiveDownloadPolicy,
-    ImageJDistributionABC,
-    ImageJDistributionUnavailableError,
-    ImageJRuntimeArchive,
-    ImageJRuntimeLaunch,
-    ImageJRuntimeOverlay,
-)
-from .imagej_runtime import (
-    FIJI_IMAGEJ_RUNTIME,
-    ImageJRuntimePolicy,
-    ImageJRuntimeUnavailableError,
-)
-from .memory import MemoryBackend, MemoryStorageBackend
-from .metadata_migration import (
-    detect_legacy_format,
-    migrate_legacy_metadata,
-    migrate_plate_metadata,
-)
-from .metadata_writer import (
-    METADATA_CONFIG,
-    AtomicMetadataWriter,
-    MetadataWriteError,
-    get_metadata_path,
-    get_subdirectory_name,
-    resolve_subdirectory_path,
-)
-from .omero_address import (
-    OMEROAddressComponent,
-    OMEROPlaneAddress,
-    OMEROPlaneFilenameTemplate,
-    OMEROWellAddress,
-)
-from .roi import (
-    ROI,
-    EllipseShape,
-    MaskShape,
-    PointShape,
-    PolygonShape,
-    PolylineShape,
-    extract_rois_from_labeled_mask,
-    load_rois_from_json,
-    load_rois_from_zip,
-    materialize_rois,
-)
-from .streaming import StreamingBackend
-from .streaming_constants import NapariShapeType, StreamingDataType
-from .virtual_workspace import SourcePixelRef
+_LAZY_EXPORTS: dict[str, str] = {
+    "FileLockError": ".atomic",
+    "FileLockTimeoutError": ".atomic",
+    "atomic_update_json": ".atomic",
+    "atomic_write_json": ".atomic",
+    "file_lock": ".atomic",
+    "STORAGE_BACKENDS": ".backend_registry",
+    "cleanup_all_backends": ".backend_registry",
+    "cleanup_backend_connections": ".backend_registry",
+    "get_backend_instance": ".backend_registry",
+    "register_cleanup_callback": ".backend_registry",
+    "BackendBase": ".base",
+    "DataSink": ".base",
+    "DataSource": ".base",
+    "ImageSamplingRequest": ".base",
+    "ImageSamplingResult": ".base",
+    "ImageSamplingStatisticsScope": ".base",
+    "ReadOnlyBackend": ".base",
+    "StorageBackend": ".base",
+    "ensure_storage_registry": ".base",
+    "get_backend": ".base",
+    "reset_memory_backend": ".base",
+    "storage_registry": ".base",
+    "Backend": ".constants",
+    "MemoryType": ".constants",
+    "FileManager": ".filemanager",
+    "DEFAULT_IMAGE_EXTENSIONS": ".formats",
+    "FileFormat": ".formats",
+    "FIJI_IMAGEJ_DISTRIBUTION": ".imagej_distribution",
+    "FijiArchiveDistribution": ".imagej_distribution",
+    "FijiBundleAsset": ".imagej_distribution",
+    "ImageJArchiveDownloadPolicy": ".imagej_distribution",
+    "ImageJDistributionABC": ".imagej_distribution",
+    "ImageJDistributionUnavailableError": ".imagej_distribution",
+    "ImageJRuntimeArchive": ".imagej_distribution",
+    "ImageJRuntimeLaunch": ".imagej_distribution",
+    "ImageJRuntimeOverlay": ".imagej_distribution",
+    "FIJI_IMAGEJ_RUNTIME": ".imagej_runtime",
+    "ImageJRuntimePolicy": ".imagej_runtime",
+    "ImageJRuntimeUnavailableError": ".imagej_runtime",
+    "MemoryBackend": ".memory",
+    "MemoryStorageBackend": ".memory",
+    "detect_legacy_format": ".metadata_migration",
+    "migrate_legacy_metadata": ".metadata_migration",
+    "migrate_plate_metadata": ".metadata_migration",
+    "METADATA_CONFIG": ".metadata_writer",
+    "AtomicMetadataWriter": ".metadata_writer",
+    "MetadataWriteError": ".metadata_writer",
+    "get_metadata_path": ".metadata_writer",
+    "get_subdirectory_name": ".metadata_writer",
+    "resolve_subdirectory_path": ".metadata_writer",
+    "OMEROAddressComponent": ".omero_address",
+    "OMEROPlaneAddress": ".omero_address",
+    "OMEROPlaneFilenameTemplate": ".omero_address",
+    "OMEROWellAddress": ".omero_address",
+    "ROI": ".roi",
+    "EllipseShape": ".roi",
+    "MaskShape": ".roi",
+    "PointShape": ".roi",
+    "PolygonShape": ".roi",
+    "PolylineShape": ".roi",
+    "extract_rois_from_labeled_mask": ".roi",
+    "load_rois_from_json": ".roi",
+    "load_rois_from_zip": ".roi",
+    "materialize_rois": ".roi",
+    "StreamingBackend": ".streaming",
+    "NapariShapeType": ".streaming_constants",
+    "StreamingDataType": ".streaming_constants",
+    "SourcePixelRef": ".virtual_workspace",
+    "DiskBackend": ".disk",
+    "DiskStorageBackend": ".disk",
+}
 
-if TYPE_CHECKING:
-    from .disk import DiskBackend, DiskStorageBackend
+__all__ = list(_LAZY_EXPORTS)
 
 
 def __getattr__(name: str):
-    """Load disk implementations only when their public exports are requested."""
-
-    if name not in {"DiskBackend", "DiskStorageBackend"}:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    from .disk import DiskBackend, DiskStorageBackend
+    import importlib
 
-    globals().update(
-        DiskBackend=DiskBackend,
-        DiskStorageBackend=DiskStorageBackend,
-    )
-    return globals()[name]
+    value = getattr(importlib.import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
 
 
-__all__ = [
-    "Backend",
-    "MemoryType",
-    "FileFormat",
-    "ImageJRuntimePolicy",
-    "ImageJRuntimeUnavailableError",
-    "FIJI_IMAGEJ_RUNTIME",
-    "ImageJArchiveDownloadPolicy",
-    "ImageJDistributionABC",
-    "ImageJDistributionUnavailableError",
-    "ImageJRuntimeArchive",
-    "ImageJRuntimeLaunch",
-    "ImageJRuntimeOverlay",
-    "FijiArchiveDistribution",
-    "FijiBundleAsset",
-    "FIJI_IMAGEJ_DISTRIBUTION",
-    "DEFAULT_IMAGE_EXTENSIONS",
-    "BackendBase",
-    "DataSink",
-    "DataSource",
-    "ImageSamplingRequest",
-    "ImageSamplingResult",
-    "ImageSamplingStatisticsScope",
-    "ReadOnlyBackend",
-    "StorageBackend",
-    "StreamingBackend",
-    "storage_registry",
-    "reset_memory_backend",
-    "ensure_storage_registry",
-    "get_backend",
-    "get_backend_instance",
-    "cleanup_backend_connections",
-    "cleanup_all_backends",
-    "register_cleanup_callback",
-    "STORAGE_BACKENDS",
-    "DiskStorageBackend",
-    "DiskBackend",
-    "MemoryStorageBackend",
-    "MemoryBackend",
-    "FileManager",
-    "file_lock",
-    "atomic_write_json",
-    "atomic_update_json",
-    "FileLockError",
-    "FileLockTimeoutError",
-    "AtomicMetadataWriter",
-    "MetadataWriteError",
-    "METADATA_CONFIG",
-    "get_metadata_path",
-    "get_subdirectory_name",
-    "resolve_subdirectory_path",
-    "OMEROAddressComponent",
-    "OMEROPlaneAddress",
-    "OMEROPlaneFilenameTemplate",
-    "OMEROWellAddress",
-    "detect_legacy_format",
-    "migrate_legacy_metadata",
-    "migrate_plate_metadata",
-    "ROI",
-    "PolygonShape",
-    "PolylineShape",
-    "MaskShape",
-    "PointShape",
-    "EllipseShape",
-    "extract_rois_from_labeled_mask",
-    "load_rois_from_json",
-    "load_rois_from_zip",
-    "materialize_rois",
-    "StreamingDataType",
-    "NapariShapeType",
-    "SourcePixelRef",
-]
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
