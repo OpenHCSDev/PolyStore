@@ -10,7 +10,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
-import numpy as np
+from typing import TYPE_CHECKING
 
 from .base import (
     BackendBase,
@@ -23,6 +23,9 @@ from .base import (
 from .constants import Backend
 from .exceptions import StorageResolutionError
 from .metadata_writer import get_metadata_path
+
+if TYPE_CHECKING:
+    import numpy as np
 
 logger = logging.getLogger(__name__)
 

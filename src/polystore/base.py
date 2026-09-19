@@ -7,6 +7,9 @@ independent of specific implementations. It establishes the contract
 that all storage backends must fulfill.
 """
 
+from __future__ import annotations
+
+
 import hashlib
 import logging
 import threading
@@ -14,13 +17,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
-import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from .constants import Backend
 from .exceptions import StorageResolutionError
+
+if TYPE_CHECKING:
+    import numpy as np
 
 logger = logging.getLogger(__name__)
 

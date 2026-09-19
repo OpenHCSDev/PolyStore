@@ -5,12 +5,14 @@ This module contains the directory-related methods of the FileManager class,
 including directory listing, existence checking, mkdir, symlink, and mirror operations.
 """
 
+from __future__ import annotations
+
+
 import logging
 from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from .base import (
     BackendBase,
@@ -20,6 +22,10 @@ from .base import (
     ImageSamplingResult,
     PicklableBackend,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+
 from .exceptions import StorageResolutionError
 from .formats import DEFAULT_IMAGE_EXTENSIONS
 from .virtual_workspace import SourcePixelRef
