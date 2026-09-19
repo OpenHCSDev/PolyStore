@@ -411,6 +411,8 @@ class DataSource(BackendBase):
             raise ValueError(
                 "This data source exposes one resolution; resolution_index must " "be 0 or None."
             )
+        import numpy as np
+
         array = np.asarray(self.load(file_path))
         if array.ndim < 2:
             raise ValueError(
