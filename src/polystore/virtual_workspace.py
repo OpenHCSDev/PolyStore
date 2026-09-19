@@ -143,6 +143,8 @@ class SourcePixelRef:
     def project_source_axes(self, payload: Any) -> Any:
         """Select the declared leading source axes from a backend payload."""
 
+        import numpy as np
+
         projected = payload
         for index in self.source_axis_indices:
             shape = np.shape(projected)
