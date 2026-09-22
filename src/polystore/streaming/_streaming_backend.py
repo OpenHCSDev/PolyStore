@@ -814,44 +814,71 @@ class StreamingBackend(DataSink):
         self.save_batch([data], [file_path], **kwargs)
 
     def cleanup(self) -> None:
-        """
-        Clean up shared memory and ZeroMQ resources (common for all streaming backends).
-        """
-        logger.info(f"🔥 CLEANUP: Starting cleanup for {self.VIEWER_TYPE}")
+        """Clean up owned shared-memory and ZeroMQ resources."""
 
-        # Clean up shared memory blocks
-        logger.info(
-            f"🔥 CLEANUP: About to clean {len(self._shared_memory_blocks)} shared memory blocks"
-        )
-        for shm_name, shm in self._shared_memory_blocks.items():
+        self._cleanup_resources(logger)
+
+    def _cleanup_resources(self, cleanup_logger: logging.Logger | None) -> None:
+        """Release resources with optional diagnostics.
+
+        The destructor supplies no logger because module globals may already
+        have been cleared by interpreter shutdown. Explicit cleanup retains
+        diagnostics and follows this same resource-ownership path.
+        """
+
+        def info(message: str) -> None:
+            if cleanup_logger is not None:
+                cleanup_logger.info(message)
+
+        def warning(message: str) -> None:
+            if cleanup_logger is not None:
+                cleanup_logger.warning(message)
+
+        info(f"🔥 CLEANUP: Starting cleanup for {self.VIEWER_TYPE}")
+
+        # Relinquish collection ownership before closing resources so cleanup is
+        # idempotent even when invoked again during object finalization.
+        shared_memory_blocks = self._shared_memory_blocks
+        self._shared_memory_blocks = {}
+        info(f"🔥 CLEANUP: About to clean {len(shared_memory_blocks)} shared memory blocks")
+        for shm_name, shm in shared_memory_blocks.items():
             try:
                 shm.close()
                 shm.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to cleanup shared memory {shm_name}: {e}")
-        self._shared_memory_blocks.clear()
-        logger.info("🔥 CLEANUP: Shared memory cleanup complete")
+            except Exception as error:
+                warning(f"Failed to cleanup shared memory {shm_name}: {error}")
+        info("🔥 CLEANUP: Shared memory cleanup complete")
 
-        # Close publishers
-        logger.info(f"🔥 CLEANUP: About to close {len(self._publishers)} publishers")
-        for key, publisher in self._publishers.items():
+        publishers = self._publishers
+        self._publishers = {}
+        info(f"🔥 CLEANUP: About to close {len(publishers)} publishers")
+        for key, publisher in publishers.items():
             try:
-                logger.info(f"🔥 CLEANUP: Closing publisher {key}")
+                info(f"🔥 CLEANUP: Closing publisher {key}")
                 publisher.close()
-                logger.info(f"🔥 CLEANUP: Publisher {key} closed")
-            except Exception as e:
-                logger.warning(f"Failed to close publisher {key}: {e}")
-        self._publishers.clear()
-        logger.info("🔥 CLEANUP: Publishers cleanup complete")
+                info(f"🔥 CLEANUP: Publisher {key} closed")
+            except Exception as error:
+                warning(f"Failed to close publisher {key}: {error}")
+        info("🔥 CLEANUP: Publishers cleanup complete")
 
-        # Terminate context
-        if self._context:
+        context = self._context
+        self._context = None
+        if context:
             try:
-                logger.info("🔥 CLEANUP: About to terminate ZMQ context")
-                self._context.term()
-                logger.info("🔥 CLEANUP: ZMQ context terminated")
-            except Exception as e:
-                logger.warning(f"Failed to terminate ZMQ context: {e}")
-            self._context = None
+                info("🔥 CLEANUP: About to terminate ZMQ context")
+                context.term()
+                info("🔥 CLEANUP: ZMQ context terminated")
+            except Exception as error:
+                warning(f"Failed to terminate ZMQ context: {error}")
 
-        logger.info(f"🔥 CLEANUP: {self.VIEWER_TYPE} streaming backend cleaned up")
+        info(f"🔥 CLEANUP: {self.VIEWER_TYPE} streaming backend cleaned up")
+
+    def __del__(self) -> None:
+        """Release resources without relying on interpreter-shutdown globals."""
+
+        if not all(
+            hasattr(self, attribute)
+            for attribute in ("_shared_memory_blocks", "_publishers", "_context")
+        ):
+            return
+        self._cleanup_resources(None)

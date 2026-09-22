@@ -87,9 +87,3 @@ class NapariStreamingBackend(StreamingBackend):
             item_payload=item_data,
             streaming_data_type=request.streaming_data_type,
         )
-
-    # cleanup() now inherited from ABC
-
-    def __del__(self):
-        """Cleanup on deletion."""
-        self.cleanup()

@@ -177,11 +177,3 @@ class FijiStreamingBackend(StreamingBackend):
             item_payload=item_data,
             streaming_data_type=output_streaming_data_type,
         )
-
-    # cleanup() now inherited from ABC
-
-    def __del__(self):
-        """Cleanup on deletion."""
-        logger.info("🔥 FIJI __del__ called, about to call cleanup()")
-        self.cleanup()
-        logger.info("🔥 FIJI __del__ cleanup() returned")
