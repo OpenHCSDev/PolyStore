@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
-from numcodecs import Blosc, LZ4, Zlib, Zstd
+from numcodecs import LZ4, Blosc, Zlib, Zstd
 from numcodecs.abc import Codec
+
+from .formats import FileFormat
 
 
 class ZarrCompressor(Enum):
@@ -114,6 +118,77 @@ class ZarrChunkStrategy(Enum):
 
     WELL = "well"
     FILE = "file"
+
+
+class TiffCompression(Enum):
+    """Lossless compression choices for disk-backed TIFF output."""
+
+    NONE = ("none", None)
+    DEFLATE = ("deflate", "zlib")
+
+    def __new__(cls, value: str, tifffile_codec: str | None):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.tifffile_codec = tifffile_codec
+        return member
+
+
+@dataclass(frozen=True)
+class TiffConfig:
+    """TIFF writer settings; defaults preserve the uncompressed file contract."""
+
+    compression: TiffCompression = TiffCompression.NONE
+    compression_level: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.compression, TiffCompression):
+            raise TypeError("compression must be a TiffCompression value")
+        if isinstance(self.compression_level, bool) or not isinstance(
+            self.compression_level, int
+        ) or not 1 <= self.compression_level <= 9:
+            raise ValueError("compression_level must be an integer from 1 to 9")
+
+    def tifffile_write_kwargs(self) -> dict[str, object]:
+        """Return only codec options accepted by tifffile.imwrite."""
+
+        codec = self.compression.tifffile_codec
+        if codec is None:
+            return {}
+        return {
+            "compression": codec,
+            "compressionargs": {"level": self.compression_level},
+        }
+
+    def applies_to_path(self, path: str | Path) -> bool:
+        """Whether this configured codec applies to this disk output path."""
+
+        return (
+            self.compression is not TiffCompression.NONE
+            and Path(path).suffix.lower() in FileFormat.TIFF.extensions
+        )
+
+
+def tiff_write_batches(
+    paths: Sequence[str | Path],
+    config: TiffConfig | None,
+) -> tuple[tuple[tuple[int, ...], TiffConfig | None], ...]:
+    """Partition consecutive writes by their exact TIFF codec requirement."""
+
+    if not paths:
+        return ()
+    if config is None or config.compression is TiffCompression.NONE:
+        return ((tuple(range(len(paths))), None),)
+    batches: list[tuple[tuple[int, ...], TiffConfig | None]] = []
+    start = 0
+    active = config.applies_to_path(paths[0])
+    for index, path in enumerate(paths[1:], start=1):
+        applies = config.applies_to_path(path)
+        if applies != active:
+            batches.append((tuple(range(start, index)), config if active else None))
+            start = index
+            active = applies
+    batches.append((tuple(range(start, len(paths))), config if active else None))
+    return tuple(batches)
 
 
 @dataclass(frozen=True)

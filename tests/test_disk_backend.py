@@ -4,16 +4,17 @@ Keep tests small and focused — these hit CSV/JSON/TEXT handlers, listing,
 ensure_directory idempotence, and symlink creation.
 """
 
-from pathlib import Path
 import hashlib
+from pathlib import Path
 
 import numpy as np
-import tifffile
 import pytest
+import tifffile
 
-from polystore import disk as disk_module
-from polystore.disk import DiskBackend
 from polystore import FileManager
+from polystore import disk as disk_module
+from polystore.config import TiffCompression, TiffConfig, tiff_write_batches
+from polystore.disk import DiskBackend
 from polystore.exceptions import StorageResolutionError
 
 
@@ -107,6 +108,47 @@ def test_tiff_save_normalizes_external_array_payload(tmp_path, monkeypatch) -> N
     DiskBackend().save(source, path)
 
     np.testing.assert_array_equal(tifffile.imread(path), expected)
+
+
+def test_tiff_deflate_is_lossless_and_opt_in(tmp_path: Path) -> None:
+    pixels = np.zeros((2, 256, 256), dtype=np.int32)
+    pixels[0, 20:40, 30:50] = 70001
+    raw_path = tmp_path / "raw.tif"
+    compressed_path = tmp_path / "compressed.tif"
+    backend = DiskBackend()
+
+    backend.save(pixels, raw_path)
+    backend.save(
+        pixels,
+        compressed_path,
+        tiff_config=TiffConfig(
+            compression=TiffCompression.DEFLATE,
+            compression_level=3,
+        ),
+    )
+
+    with (
+        tifffile.TiffFile(raw_path) as raw,
+        tifffile.TiffFile(compressed_path) as compressed,
+    ):
+        assert raw.pages[0].compression.value == 1
+        assert compressed.pages[0].compression.value != 1
+    assert compressed_path.stat().st_size < raw_path.stat().st_size
+    np.testing.assert_array_equal(tifffile.imread(compressed_path), pixels)
+
+
+def test_tiff_write_batches_preserve_order_and_exclude_other_formats() -> None:
+    config = TiffConfig(compression=TiffCompression.DEFLATE)
+    assert tiff_write_batches(("a.csv", "b.tif", "c.tiff", "d.npy"), config) == (
+        ((0,), None),
+        ((1, 2), config),
+        ((3,), None),
+    )
+    assert tiff_write_batches(("a.csv", "b.tif"), TiffConfig()) == (
+        ((0, 1), None),
+    )
+    with pytest.raises(ValueError, match="compression_level"):
+        TiffConfig(compression_level=10)
 
 
 def test_list_files_recursive_and_extension_filter(tmp_path: Path):
