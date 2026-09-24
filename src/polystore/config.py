@@ -135,7 +135,14 @@ class TiffCompression(Enum):
 
 @dataclass(frozen=True)
 class TiffConfig:
-    """TIFF writer settings; defaults preserve the uncompressed file contract."""
+    """TIFF writer settings; defaults preserve the uncompressed file contract.
+
+    Args:
+        compression: Lossless disk-TIFF codec. ``NONE`` preserves the existing
+            uncompressed output; ``DEFLATE`` compresses TIFF pixels exactly.
+        compression_level: Deflate level from 1 to 9. Ignored when compression
+            is ``NONE``.
+    """
 
     compression: TiffCompression = TiffCompression.NONE
     compression_level: int = 1
