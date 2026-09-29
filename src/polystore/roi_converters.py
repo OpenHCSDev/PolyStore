@@ -6,12 +6,14 @@ Provides a single source of truth for converting ROI objects to:
 - ImageJ ROI bytes
 """
 
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Tuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -28,6 +30,9 @@ from .roi import (
     ShapeTypeRegistryBase,
 )
 from .streaming_constants import StreamingDataType
+
+if TYPE_CHECKING:
+    from roifile import ImagejRoi, ROI_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -496,7 +501,46 @@ class ImageJROIShapeConverter(
     ABC,
     metaclass=AutoRegisterMeta,
 ):
-    """Registered projection from ROI shape objects into ImageJ ROI records."""
+    """Registered geometry codec for ROI shapes and native ImageJ records."""
+
+    @classmethod
+    def for_imagej_roi(cls, imagej_roi: ImagejRoi) -> ImageJROIShapeConverter:
+        """Resolve native geometry from the existing codec declarations."""
+        from roifile import ROI_SUBTYPE
+
+        if imagej_roi.subtype != ROI_SUBTYPE.UNDEFINED or imagej_roi.composite:
+            raise UnsupportedImageJROIShapeError(
+                f"Unsupported ImageJ ROI subtype or composite: {imagej_roi.subtype!r}."
+            )
+        matches = tuple(
+            converter
+            for converter in cls.__registry__.values()
+            if imagej_roi.roitype in converter.imagej_roi_types()
+        )
+        if len(matches) != 1:
+            raise UnsupportedImageJROIShapeError(
+                f"ImageJ ROI type {imagej_roi.roitype!r} has {len(matches)} geometry codecs."
+            )
+        return matches[0]()
+
+    @classmethod
+    @abstractmethod
+    def imagej_roi_types(cls) -> tuple[ROI_TYPE, ...]:
+        """Native kinds whose geometry this declaration decodes."""
+
+    @staticmethod
+    def coordinates_yx(imagej_roi: ImagejRoi) -> np.ndarray:
+        """Validate a native coordinate list once and project XY to YX."""
+        coordinates = imagej_roi.coordinates()
+        if coordinates.ndim != 2 or coordinates.shape[1] != 2 or not len(coordinates):
+            raise ValueError("ImageJ ROI must contain a nonempty Nx2 coordinate array.")
+        if not np.isfinite(coordinates).all():
+            raise ValueError("ImageJ ROI coordinates must be finite.")
+        return coordinates[:, [1, 0]]
+
+    @abstractmethod
+    def roi_shapes(self, imagej_roi: ImagejRoi) -> tuple[ROIShape, ...]:
+        """Decode every native geometry into its nominal ROI shape."""
 
     @abstractmethod
     def imagej_roi(self, shape: ROIShape, name: str) -> Any:
@@ -505,6 +549,15 @@ class ImageJROIShapeConverter(
 
 class PolygonImageJROIShapeConverter(ImageJROIShapeConverter):
     shape_type = ShapeType.POLYGON
+
+    @classmethod
+    def imagej_roi_types(cls) -> tuple[ROI_TYPE, ...]:
+        from roifile import ROI_TYPE
+
+        return (ROI_TYPE.POLYGON, ROI_TYPE.FREEHAND, ROI_TYPE.TRACED)
+
+    def roi_shapes(self, imagej_roi: ImagejRoi) -> tuple[PolygonShape, ...]:
+        return (PolygonShape(self.coordinates_yx(imagej_roi)),)
 
     def imagej_roi(self, shape: PolygonShape, name: str) -> Any:
         from roifile import ImagejRoi
@@ -516,6 +569,15 @@ class PolygonImageJROIShapeConverter(ImageJROIShapeConverter):
 
 class PolylineImageJROIShapeConverter(ImageJROIShapeConverter):
     shape_type = ShapeType.POLYLINE
+
+    @classmethod
+    def imagej_roi_types(cls) -> tuple[ROI_TYPE, ...]:
+        from roifile import ROI_TYPE
+
+        return (ROI_TYPE.POLYLINE,)
+
+    def roi_shapes(self, imagej_roi: ImagejRoi) -> tuple[PolylineShape, ...]:
+        return (PolylineShape(self.coordinates_yx(imagej_roi)),)
 
     def imagej_roi(self, shape: PolylineShape, name: str) -> Any:
         from roifile import ImagejRoi, ROI_TYPE
@@ -529,34 +591,79 @@ class PolylineImageJROIShapeConverter(ImageJROIShapeConverter):
 class EllipseImageJROIShapeConverter(ImageJROIShapeConverter):
     shape_type = ShapeType.ELLIPSE
 
+    @classmethod
+    def imagej_roi_types(cls) -> tuple[ROI_TYPE, ...]:
+        from roifile import ROI_TYPE
+
+        return (ROI_TYPE.OVAL,)
+
+    def roi_shapes(self, imagej_roi: ImagejRoi) -> tuple[EllipseShape, ...]:
+        if imagej_roi.subpixelrect:
+            left, top = imagej_roi.xd, imagej_roi.yd
+            width, height = imagej_roi.widthd, imagej_roi.heightd
+        else:
+            left, top = imagej_roi.left, imagej_roi.top
+            width = imagej_roi.right - left
+            height = imagej_roi.bottom - top
+        if not np.isfinite((left, top, width, height)).all() or width <= 0 or height <= 0:
+            raise ValueError("ImageJ oval must have finite bounds and positive dimensions.")
+        return (EllipseShape(top + height / 2, left + width / 2, height / 2, width / 2),)
+
     def imagej_roi(self, shape: EllipseShape, name: str) -> Any:
-        from roifile import ImagejRoi, ROI_TYPE
+        from roifile import ImagejRoi, ROI_OPTIONS, ROI_TYPE
 
         left = shape.center_x - shape.radius_x
         top = shape.center_y - shape.radius_y
         width = 2 * shape.radius_x
         height = 2 * shape.radius_y
-        imagej_roi = ImagejRoi.frompoints(
-            np.array([[left, top], [left + width, top + height]])
+        imagej_roi = ImagejRoi(
+            roitype=ROI_TYPE.OVAL,
+            options=ROI_OPTIONS.SUB_PIXEL_RESOLUTION,
+            left=int(np.floor(left)),
+            top=int(np.floor(top)),
+            right=int(np.ceil(left + width)),
+            bottom=int(np.ceil(top + height)),
+            xd=left,
+            yd=top,
+            widthd=width,
+            heightd=height,
+            name=name,
         )
-        imagej_roi.roitype = ROI_TYPE.OVAL
-        imagej_roi.name = name
         return imagej_roi
 
 
 class PointImageJROIShapeConverter(ImageJROIShapeConverter):
     shape_type = ShapeType.POINT
 
+    @classmethod
+    def imagej_roi_types(cls) -> tuple[ROI_TYPE, ...]:
+        from roifile import ROI_TYPE
+
+        return (ROI_TYPE.POINT,)
+
+    def roi_shapes(self, imagej_roi: ImagejRoi) -> tuple[PointShape, ...]:
+        return tuple(PointShape(float(y), float(x)) for y, x in self.coordinates_yx(imagej_roi))
+
     def imagej_roi(self, shape: PointShape, name: str) -> Any:
-        from roifile import ImagejRoi
+        from roifile import ImagejRoi, ROI_TYPE
 
         imagej_roi = ImagejRoi.frompoints(np.array([[shape.x, shape.y]]))
+        imagej_roi.roitype = ROI_TYPE.POINT
         imagej_roi.name = name
         return imagej_roi
 
 
 class MaskImageJROIShapeConverter(ImageJROIShapeConverter):
     shape_type = ShapeType.MASK
+
+    @classmethod
+    def imagej_roi_types(cls) -> tuple[ROI_TYPE, ...]:
+        return ()
+
+    def roi_shapes(self, imagej_roi: ImagejRoi) -> tuple[ROIShape, ...]:
+        raise UnsupportedImageJROIShapeError(
+            "MaskShape cannot be represented in ImageJ .roi format."
+        )
 
     def imagej_roi(self, shape: MaskShape, name: str) -> Any:
         raise UnsupportedImageJROIShapeError(
