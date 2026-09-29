@@ -14,12 +14,12 @@ import time
 import urllib.request
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, ClassVar
 
 from platformdirs import user_cache_path
 
@@ -354,6 +354,8 @@ class ImageJRuntimeOverlay(ImageJRuntimeArchive):
 class FijiArchiveDistribution(ImageJDistributionABC):
     """Checksummed Fiji application bundle from one immutable official archive."""
 
+    cache_root_environment_key: ClassVar[str] = "POLYSTORE_IMAGEJ_CACHE_ROOT"
+
     release_id: str
     imagej_version: str
     archive_base_url: str
@@ -361,6 +363,27 @@ class FijiArchiveDistribution(ImageJDistributionABC):
     cache_root: Path | None = None
     lock_timeout_seconds: float = 1800.0
     download_policy: ImageJArchiveDownloadPolicy = ImageJArchiveDownloadPolicy()
+
+    @classmethod
+    def cache_root_from_environment(
+        cls, environment: Mapping[str, str] | None = None
+    ) -> Path | None:
+        """Decode the bundle-only root at process configuration, not each use.
+
+        This does not redirect XDG caches, logs, preferences or other runtime
+        artifacts. Unset retains platformdirs policy; invalid explicit settings
+        fail instead of silently creating another per-run bundle.
+        """
+        values = os.environ if environment is None else environment
+        declared = values.get(cls.cache_root_environment_key)
+        if declared is None:
+            return None
+        root = Path(declared).expanduser()
+        if not declared.strip() or not root.is_absolute():
+            raise ImageJDistributionUnavailableError(
+                f"{cls.cache_root_environment_key} must be an absolute bundle-cache path."
+            )
+        return root.resolve(strict=False)
 
     @property
     def label(self) -> str:
@@ -494,6 +517,7 @@ FIJI_IMAGEJ_DISTRIBUTION = FijiArchiveDistribution(
     release_id="20260718-0417",
     imagej_version="2.18.0",
     archive_base_url=("https://downloads.imagej.net/fiji/archive/latest/20260718-0417"),
+    cache_root=FijiArchiveDistribution.cache_root_from_environment(),
     runtime_overlays=(
         ImageJRuntimeOverlay(
             label="PyImageJ 1.7.0 Fiji bridge overlay",
