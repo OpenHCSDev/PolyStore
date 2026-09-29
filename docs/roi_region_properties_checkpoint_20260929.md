@@ -7,6 +7,62 @@ Isolated checkout: `/home/ts/wt/openhcs-input-preparation-20260929/external/Poly
 Fetched/merged base: `origin/main` at `f94bbbe8631a4c78f7ceaec72fb99671b58c9a18`.
 Only open PR at orientation: Dependabot #10; no overlapping feature PR.
 
+## Bundle-only cache entrypoint follow-through: OpenHCS224
+
+Issue https://github.com/OpenHCSDev/openhcs/issues/224, Lovelace implementation,
+existing paired drafts16/206. Parent owns disk recovery/integration. Reported
+fresh H001/H002 inspection duplicates roughly859 MiB bundles under per-run XDG
+cache and blocks cold MCP before disk-guard shutdown. Preserve uncertain queued
+reads; no worker replay/restart, biological receipts, coaching or frozen changes.
+
+Source `5e656f8c20b0949139fe1273c31390931ea7ef6d`, paired application
+`101a6a4b0ec80a8ce970478399fb9527ef2f5b51`. Constructor cache_root had no canonical
+application projection. Existing FijiArchiveDistribution now declares
+**POLYSTORE_IMAGEJ_CACHE_ROOT** at imagej_distribution.py:357, decodes it through
+cache_root_from_environment:368 and projects it into existing cache_root on the
+canonical constructor at:520. Set an absolute reviewed root before import/start;
+unset keeps platformdirs, invalid explicit values fail. No XDG/full-cache
+redirect, caller symlink/monkeypatch, root relocation, second distribution/runtime
+or environment/default registry. Immutable release/digest/overlays, verification,
+locking/staging and runtime policy unchanged. OpenHCS child projection derives
+this key and its inspection declaration consumes existing worker/progress with
+truthful optional effects. ROI and Java probe implementations remain unchanged.
+
+**28 passes in5.07s / peak driver RSS267.4 MiB**:17 existing distribution cases,
+six new cache-root cases and five application projection/progress cases. Child
+tests test_imagej_cache_environment.py plus imagej_cache_process_fixture.py use
+two fresh Python imports, real canonical root/runtime, tiny ZIP SHA verification
+and production cache lock/staging/discovery. Only host/artifact response is
+controlled; no overlays/JVM. Separate run logs/XDG roots survive; one bundle path,
+verified download counts[1,0], no temporary residue. Actual in-process FastMCP
+binding keeps discovery responsive during controlled held worker I/O; existing
+helper emits progress and preserves identical terminal errors. Not a real
+859 MiB/cold Java/continuous installed protocol journey or timing claim.
+
+Retain first10 passes/1 failure4.91s/280.1 MiB: registry correctly rejected
+missing mutating metadata; correct declaration, not validator/tests. Two unused
+asyncio-option warnings with disabled plugins. New tests/helper/touched source
+pass Ruff; six files parse, both diffs pass whitespace. Parent environment file
+has preexisting S110/BLE001 unrelated to this change. Recorded interpreter,
+explicit assigned src paths, imports verified, OpenHCS before pytest,
+plugins/conftests disabled,45s shell bound. Guard10.6 GiB available/swap11.9 GiB
+historical warning, final10.2 GiB, explicit8 GiB admission. Not continuous fleet
+peak-RAM evidence. Owned316 KiB disposable fixtures removed by normal non-force
+removal after rejected force-style command; exact validated path only.
+
+BOUND-2/6: existing field/distribution is sole authority. MEMB-2/3: process
+projection derives one owner key, no copied default/registry. IMPL-13: retain
+existing runtime/lifetime/materialization mechanisms, not another store. Changed
+roots need configuration, no caller edits/copies. Current NRA/archive catalog
+read; focused source/AST/contract scope, no full scan/native proof.
+
+Original141-pass/26-failure receipt and **not-run** after-change ROI profile remain
+open. Real cold stdio/progress-token/queued reads/Java/installed acceptance await
+finite handoff. Recorded gitlink staysf94bbbe until validated paired adoption;
+frozen installation lacks this new projection. No MCP process/listen, GUI/JVM,
+remote bundle download, environment creation, shared lock takeover, merge/install
+or skill/source changes outside isolated owner checkout. No closure/readiness.
+
 ## Independent PR206 review: dependency-owned Java probe
 
 Latest owner explicitly extended this existing paired PR to correct the Java
