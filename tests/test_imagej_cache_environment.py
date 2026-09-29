@@ -20,6 +20,33 @@ from polystore.imagej_distribution import (
 )
 
 
+def test_declaration_import_defers_process_configuration(tmp_path):
+    environment = dict(os.environ)
+    environment.pop(FijiArchiveDistribution.cache_root_environment_key, None)
+    environment.pop(ImageJArchiveDownloadPolicy.allow_download_environment_key, None)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    child = subprocess.run(
+        [sys.executable, "-c", '''
+import os
+import sys
+from pathlib import Path
+import polystore.imagej_distribution as declarations
+assert "FIJI_IMAGEJ_DISTRIBUTION" not in declarations.__dict__
+os.environ[declarations.FijiArchiveDistribution.cache_root_environment_key] = sys.argv[1]
+os.environ[declarations.ImageJArchiveDownloadPolicy.allow_download_environment_key] = "false"
+from polystore.imagej_distribution import FIJI_IMAGEJ_DISTRIBUTION
+from polystore.imagej_runtime import FIJI_IMAGEJ_RUNTIME
+assert FIJI_IMAGEJ_DISTRIBUTION.cache_root == Path(sys.argv[1])
+assert not FIJI_IMAGEJ_DISTRIBUTION.download_policy.allow_download
+assert FIJI_IMAGEJ_RUNTIME.distribution is FIJI_IMAGEJ_DISTRIBUTION
+assert declarations.FIJI_IMAGEJ_DISTRIBUTION is FIJI_IMAGEJ_DISTRIBUTION
+''', str(tmp_path / "shared")],
+        env=environment, capture_output=True, text=True, timeout=10,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
+    assert not (tmp_path / "shared").exists()
+
+
 @pytest.mark.parametrize("value, allowed", ((None, True), ("true", True), (" FALSE ", False)))
 def test_download_policy_decodes_permission_without_copying_retry_defaults(value, allowed):
     environment = {} if value is None else {
