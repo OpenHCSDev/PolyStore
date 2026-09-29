@@ -7,6 +7,55 @@ Isolated checkout: `/home/ts/wt/openhcs-input-preparation-20260929/external/Poly
 Fetched/merged base: `origin/main` at `f94bbbe8631a4c78f7ceaec72fb99671b58c9a18`.
 Only open PR at orientation: Dependabot #10; no overlapping feature PR.
 
+## Independent PR206 review: dependency-owned Java probe
+
+Latest owner explicitly extended this existing paired PR to correct the Java
+lifecycle finding in
+https://github.com/OpenHCSDev/openhcs/pull/206#issuecomment-5897315214.
+No overlapping feature PR found: only this draft16 and Dependabot10 are open.
+Source commit `0aa057bc3b4241d77f5f3905e10e31efe2ee87e4`, paired OpenHCS
+`32a2b27e22220b28f4a75db1977973aa61384a10`.
+
+IMPL-13 / BOUND-2: existing `BioFormatsJavaContext.is_single_file` at
+`src/polystore/bioformats_java.py:158` now owns the decoder's capability. Existing
+`declares_path:153` and this operation share `_probe_reader:168`, which initializes,
+constructs and unconditionally closes a metadata-free Java reader. Neither probe
+calls setId/OME metadata initialization. Delete the OpenHCS helper that imitated
+this lifecycle; its adapter now invokes this public context operation. OpenHCS
+still owns path-selection/compound-entrypoint policy. No alternate context,
+extractor, cache, registry or filename/companion roster. ROI source remains the
+already-reviewed in-place RegionProperties implementation unchanged.
+
+Light check: **28 passed in 0.50s**, peak Python RSS **72.8 MiB**. Eleven child
+cases (four existing context checks, six new true/false/failure/retry cases, one
+AST ownership guard) plus seventeen parent binding-path behavior/guard cases.
+Probe tests use controlled external responses but actual context initialization
+and lifetime; zero JVM/ImageJ/MCP/GUI processes. A new probe reuses one lifetime
+instead of reconstructing construction/cleanup in consumers. AST guard prevents
+the two public operations from bypassing `_probe_reader`; parent guard prevents
+its adapter from constructing Java readers or reauthoring binding policy.
+New tests and touched child source pass Ruff; both diffs pass whitespace checks.
+Current archive SKILL plus complete implementation/boundaries/membership chapters
+read; scope source/AST/contract evidence, not full NRA/native proof.
+
+Recorded interpreter/explicit worktree and all required submodule src paths.
+Actual imports verified before testing. Bootstrap OpenHCS first, disable plugin
+autoload, `pytest.main` with `-q --tb=short --noconftest --import-mode=importlib
+-p no:cacheprovider -o addopts=` on the child Java context and parent path-admission
+files; shell bound45s. Two unused asyncio config warnings with plugins disabled.
+Initial26-case check passed before adding ownership guards (0.23s/67.1 MiB).
+Guard reports11.4 GiB available/historical swap11.9 GiB, explicit8 GiB admission;
+final11.2 GiB available. No continuous peak-RAM claim. Tiny owned92 KiB scratch
+at the recorded path removed after results retained. No validation-lock takeover,
+frozen installation/source/skill change, merge/install or blind-data inspection.
+
+Original **141 passed / 26 failed** remains unresolved by these narrow passes;
+the profile **did not run**. Separate-context preservation/affected source-control
+rerun, bounded ROI after-profile and real Java/installed acceptance remain gated
+on the next finite runtime handoff. Parent recorded gitlink stays `f94bbbe`;
+integration now requires this paired public capability too. Coordinator owns
+validated adoption/installation, not this worker. No closure/readiness claim.
+
 ## Owned change and deletion
 
 `TwoDimensionalLabeledMaskROIExtractor.extract` stays the only 2D behavior
