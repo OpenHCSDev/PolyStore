@@ -7,6 +7,12 @@ import pytest
 import numpy as np
 from pathlib import Path
 
+from polystore.imagej_distribution import FijiArchiveDistribution, ImageJArchiveDownloadPolicy
+
+FijiArchiveDistribution.configure_process_environment(
+    default_download_policy=ImageJArchiveDownloadPolicy(allow_download=False)
+)
+
 from polystore import FileManager
 from polystore.disk import DiskBackend
 from polystore.memory import MemoryBackend
