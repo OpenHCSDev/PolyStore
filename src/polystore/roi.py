@@ -253,14 +253,12 @@ class TwoDimensionalLabeledMaskROIExtractor(LabeledMaskROIExtractor):
     def extract(self, request: LabeledMaskROIExtractionRequest) -> List[ROI]:
         from skimage import measure
         from skimage.measure import regionprops
-        from scipy.ndimage import find_objects
 
         labeled_mask = request.labeled_mask
         if not np.issubdtype(labeled_mask.dtype, np.integer):
             labeled_mask = labeled_mask.astype(np.int32)
 
         regions = regionprops(labeled_mask)
-        slices = find_objects(labeled_mask)
         origin_y, origin_x = request.spatial_origin_yx or (0, 0)
 
         rois = []
@@ -293,20 +291,15 @@ class TwoDimensionalLabeledMaskROIExtractor(LabeledMaskROIExtractor):
 
             shapes = []
             if request.extract_contours:
-                label_idx = region.label - 1
-                if label_idx < len(slices) and slices[label_idx] is not None:
-                    slice_y, slice_x = slices[label_idx]
-                    cropped_mask = labeled_mask[slice_y, slice_x]
-                    binary_mask = (cropped_mask == region.label).astype(np.uint8)
-                    padded_mask = np.pad(binary_mask, pad_width=1, mode="constant", constant_values=0)
-                    contours = measure.find_contours(padded_mask, level=0.5)
-                    offset_y = slice_y.start
-                    offset_x = slice_x.start
-                    padding_offset = np.array([offset_y + origin_y, offset_x + origin_x]) - 1
-                    for contour in contours:
-                        if len(contour) >= 3:
-                            contour_full = contour + padding_offset
-                            shapes.append(PolygonShape(coordinates=contour_full))
+                # regionprops already scanned the labels and cached this crop
+                # while computing area/perimeter. Preserve its unfilled image,
+                # including disconnected pieces and holes, for contour tracing.
+                padded_mask = np.pad(region.image, pad_width=1, mode="constant")
+                contours = measure.find_contours(padded_mask, level=0.5)
+                padding_offset = np.array([min_y + origin_y, min_x + origin_x]) - 1
+                for contour in contours:
+                    if len(contour) >= 3:
+                        shapes.append(PolygonShape(coordinates=contour + padding_offset))
             else:
                 binary_mask = labeled_mask == region.label
                 shapes.append(MaskShape(mask=binary_mask, bbox=metadata["bbox"]))
