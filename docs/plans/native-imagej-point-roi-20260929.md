@@ -67,8 +67,14 @@ import; that setup failure was retained separately and was not a codec test.
 
 Before-change lightweight census and overlay at committed HEAD took 0.48 and
 1.61 seconds respectively, with 21,776 and 39,628 KiB peak RSS. They read Git
-revisions, not uncommitted files. Candidate measurements are recorded after the
-implementation commit, without claiming global NRA coverage.
+revisions, not uncommitted files. Candidate `7c7f681` versus the recorded main
+adds 80 production code lines, removes one None probe, and changes none of the
+other census debt counts. The native external-kind switch has been deleted,
+as independently confirmed in the combined source diff. Census: 0.14 seconds,
+20,212 KiB peak RSS. Candidate overlay: 1.59 seconds, 40,748 KiB peak RSS; its
+category totals match the baseline, with no parse warnings. Existing unrelated
+switches and record-shape leads remain, so neither metric is a claim of a clean
+package or completed global NRA coverage.
 
 ## Native evidence
 
