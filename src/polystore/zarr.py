@@ -12,13 +12,13 @@ import logging
 import os
 import shutil
 from collections.abc import Iterator, Mapping, Sequence
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import zarr
 from numcodecs.abc import Codec
-from ome_zarr.format import FormatV04
 from zarr.storage import LocalStore
 
 from .array_payload import storage_numpy_array
@@ -27,7 +27,6 @@ from .base import PicklableBackend, StorageBackend
 from .config import ZarrConfig
 from .constants import Backend
 from .exceptions import StorageResolutionError
-from .ome_zarr_metadata import OmeZarrLocation
 from .zarr_batch import (
     ATTR_DIMENSIONS,
     ATTR_FILENAME_MAP,
@@ -50,6 +49,7 @@ def _get_attr(attrs: Any, key: str):
 
 def _declared_well_image_paths(well_group: zarr.Group) -> tuple[str, ...]:
     """Return declared HCS images, with the historical group-zero fallback."""
+    from .ome_zarr_metadata import OmeZarrLocation
 
     location = OmeZarrLocation(well_group.store.root / well_group.path)
     well_metadata = _get_attr(location.root_attrs, "well")
@@ -83,6 +83,8 @@ def _declared_well_image_paths(well_group: zarr.Group) -> tuple[str, ...]:
 
 def _plate_image_arrays(root: zarr.Group) -> Iterator[zarr.Array]:
     """Project the plate's declared wells and image resolutions once."""
+    from .ome_zarr_metadata import OmeZarrLocation
+
     location = OmeZarrLocation(root.store.root / root.path)
     for well in location.root_attrs["plate"]["wells"]:
         well_group = root[well["path"]]
@@ -114,8 +116,14 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
     """Zarr storage backend with automatic registration."""
 
     _backend_type = Backend.ZARR.value
-    output_format = FormatV04()
     supports_arbitrary_files = False  # Class attribute: zarr only handles array data
+
+    @cached_property
+    def output_format(self):
+        """Resolve NGFF format only when a Zarr write needs its declaration."""
+        from ome_zarr.format import FormatV04
+
+        return FormatV04()
 
     @staticmethod
     def _is_disk_passthrough_path(path: str | Path) -> bool:
@@ -139,6 +147,8 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         return None
 
     def source_image_dtype(self, backend_address: str | Path, *, base_path: Path) -> np.dtype:
+        from .ome_zarr_metadata import OmeZarrLocation
+
         address = self.resolve_address(backend_address, base_path=base_path)
         store, key = self._split_store_and_key(address)
         location = OmeZarrLocation(store, mode="r")
@@ -662,6 +672,8 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             from .backend_registry import get_backend_instance
 
             return get_backend_instance(Backend.DISK.value).load(file_path, **kwargs)
+        from .ome_zarr_metadata import OmeZarrLocation
+
         store, key = self._split_store_and_key(file_path)
         location = OmeZarrLocation(store, mode="r")
         group = location.group
@@ -689,6 +701,8 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
         List all file-like entries (i.e. arrays) in a Zarr store, optionally filtered.
         Returns filenames from array attributes (output_paths) if available.
         """
+
+        from .ome_zarr_metadata import OmeZarrLocation
 
         store, relative_key = self._split_store_and_key(directory)
         result: list[Path] = []
