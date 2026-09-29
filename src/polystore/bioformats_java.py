@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -151,10 +152,25 @@ class BioFormatsJavaContext:
 
     def declares_path(self, source_path: str | Path) -> bool:
         """Return whether Bio-Formats positively identifies this source path."""
+        with self._probe_reader() as reader:
+            return bool(reader.isThisType(str(source_path)))
+
+    def is_single_file(self, source_path: str | Path) -> bool:
+        """Ask the decoder whether this source is independent of companion files.
+
+        The format probe does not call setId or initialize OME metadata. Callers
+        own selection policy; this context owns Java initialization and lifetime.
+        """
+        with self._probe_reader() as reader:
+            return bool(reader.isSingleFile(str(source_path)))
+
+    @contextmanager
+    def _probe_reader(self) -> Iterator[Any]:
+        """Own a metadata-free reader for the duration of one format probe."""
         self.ensure_initialized()
         reader = self.ImageReader()
         try:
-            return bool(reader.isThisType(str(source_path)))
+            yield reader
         finally:
             reader.close()
 
