@@ -586,9 +586,11 @@ def load_rois_from_zip(zip_path: Path) -> List[ROI]:
         raise FileNotFoundError(f"ROI zip file not found: {zip_path}")
 
     try:
-        from roifile import ImagejRoi, ROI_TYPE
+        from roifile import ImagejRoi
     except ImportError:
         raise ImportError("roifile library required for loading .roi.zip files. Install with: pip install roifile")
+
+    from .roi_converters import ImageJROIShapeConverter
 
     rois = []
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -598,20 +600,13 @@ def load_rois_from_zip(zip_path: Path) -> List[ROI]:
                 continue
             roi_bytes = zf.read(filename)
             ij_roi = ImagejRoi.frombytes(roi_bytes)
-            coords = ij_roi.coordinates()
-            if coords is None or len(coords) == 0:
-                raise ValueError(f"ImageJ ROI member {filename!r} has no coordinates.")
-            coords_yx = coords[:, [1, 0]]
-            if ij_roi.roitype == ROI_TYPE.POLYLINE:
-                shape = PolylineShape(coordinates=coords_yx)
-            else:
-                shape = PolygonShape(coordinates=coords_yx)
+            shapes = ImageJROIShapeConverter.for_imagej_roi(ij_roi).roi_shapes(ij_roi)
             if filename not in metadata_by_filename:
                 raise ValueError(
                     f"ROI archive {zip_path} missing metadata sidecar entry for {filename!r}."
                 )
             metadata = dict(metadata_by_filename[filename])
-            rois.append(ROI(shapes=[shape], metadata=metadata))
+            rois.append(ROI(shapes=list(shapes), metadata=metadata))
 
     if not rois:
         raise ValueError(f"No valid ROIs found in {zip_path}")

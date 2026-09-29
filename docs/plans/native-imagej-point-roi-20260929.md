@@ -1,12 +1,74 @@
 # Native ImageJ point archive repair checkpoint
 
-Reference evidence and proposed closure, not an implemented repair.
+Implemented native codec repair. Dependency integration and live viewer validation
+remain separate from native archive validation.
 
 Base and source audited: `0efe67fdd14985bf90cee6e0f0c4735d41d265d1`,
 OpenHCSDev/PolyStore main. Issue: OpenHCSDev/PolyStore#12.
 Dependent work: OpenHCSDev/openhcs#134 and draft OpenHCSDev/openhcs#153.
 Branch: `fix/native-imagej-point-roi-20260929`.
-Own worktree: `/home/ts/code/projects/polystore-point-roi-20260929`.
+Own worktree: `/home/ts/wt/polystore-point-roi-20260929`.
+
+## Current delivery decision
+
+The user explicitly authorized bounded Python inspection and the lightweight
+refactor-audit scripts so the FULL NRA memory defect does not block OpenHCS.
+Main owns this codec repair; the previous worker is no longer active. The
+existing archive reader and `ImageJROIShapeConverter` family are the bounded
+production corpus. All 53 original classes across these two modules were
+inspected through NRA's canonical syntax index and joined to its 53 eligible
+class-family projections. Declared local codec bases resolve to the existing
+family. External base execution/MRO proof and full global/R1 coverage remain
+OPEN and are not claimed. The bounded projection took 1.02 seconds and 63,800 KiB
+peak RSS.
+
+The admitted external-format obligation is POINT bytes to PointShape, preserving
+all XY coordinates and existing per-member metadata. Polygon/polyline/oval
+members must keep their own geometry, not use a silent polygon fallback.
+Extend the existing registered converter family with decoding behavior and
+derive native-kind lookup from its leaf declarations. The archive reader keeps
+ownership of ZIP bytes and metadata sidecar assembly. Delete its geometry
+switch. Unsupported native kinds must fail explicitly. This closes IMPL-4 and
+the concrete BOUND-2 bypass within this boundary; it is not a proof of global
+architecture or unrelated external ROI subtype support.
+
+Native encoding/decoding additions are behavior changes validated by actual
+roifile bytes and the disk entrypoint, not asserted equivalent from syntax.
+New geometry requires one codec declaration, not a ZIP-reader branch. Existing
+scientific archives and native Z/C/T metadata are not rewritten or guessed.
+Owned small test output/cache: `/home/ts/.cache/agent-scratch/openhcs-point-codec-20260929`.
+
+## Implemented behavior and validation
+
+- POINT encoding sets the actual native POINT kind. Decode retains every
+  point, exact fractional YX, and existing logical metadata.
+- Polygon, polyline, and oval decoding belongs to their existing codec leaves.
+  Oval writing now uses the native subpixel bounding rectangle rather than a
+  two-point FREEHAND payload relabeled OVAL. Independent integer oval input is
+  tested too.
+- Native kinds resolve from the existing registered leaf declarations. There
+  is no added registry or archive-reader geometry switch. Unsupported kinds,
+  specialized subtypes, malformed/empty/nonfinite coordinates, missing sidecar
+  metadata, and mask encoding fail explicitly.
+- Old one-point FREEHAND archives stay invalid. No legacy reader is added and
+  no frozen scientific archive is rewritten.
+
+The realistic disk save/load entrypoint, native roifile bytes, Napari projection,
+existing disk tests, and streaming identity/metadata tests passed together:
+114 passed in 0.88 seconds; 1.32 seconds wall time; peak RSS 104,084 KiB.
+Command: existing OpenHCS CPython 3.12 environment, this worktree's `src` first
+on `PYTHONPATH`, recorded parent dependency source roots, plugin autoload off,
+`python -m pytest -o addopts= -q tests/test_roi.py tests/test_disk_backend.py
+tests/test_disk_more.py tests/test_disk_coverage.py tests/test_streaming_metadata.py
+tests/test_streaming_identity.py`, bounded by a 60-second shell timeout.
+This is source-override native validation, not installed or rendered-viewer proof.
+An earlier tiny CPython 3.14 environment lacked portalocker during conftest
+import; that setup failure was retained separately and was not a codec test.
+
+Before-change lightweight census and overlay at committed HEAD took 0.48 and
+1.61 seconds respectively, with 21,776 and 39,628 KiB peak RSS. They read Git
+revisions, not uncommitted files. Candidate measurements are recorded after the
+implementation commit, without claiming global NRA coverage.
 
 ## Native evidence
 
@@ -67,7 +129,8 @@ ellipse behaviour remain protected by the same family contract.
 Proposed production write scope: existing `src/polystore/roi.py`,
 `src/polystore/roi_converters.py`, and existing native codec tests. Change
 `src/polystore/disk.py` only if archive-owner closure genuinely requires it and
-coordinate the extension first. No source implementation has been changed.
+coordinate the extension first. Production changes stay within the two recorded
+ROI owners; the disk/archive metadata owner is unchanged.
 
 New-case experiment: a supported geometry declares its own external kind and
 encode/decode behaviour once; neither the archive reader nor OpenHCS adds a
@@ -75,18 +138,19 @@ dispatch branch. Guards exclude duplicate codec maps, silent polygon fallback,
 raw-string ladders and weakened validation. Unsupported geometry remains an
 explicit failure, not an alias.
 
-## Common audit gate and integration boundary
+## Historical common audit gate and integration boundary
 
 The common complete-context audit retains OpenHCS plus all eight recorded
 dependency source roots and all 79 detectors. It is not complete. The first
 compact attempt exceeded 768 MiB; the all-root compact attempt stayed bounded
 but hit the 160-second deadline (`complete=false`). Required full/raw R1,
 omitted-detector coverage and source-export evidence remain unavailable.
-No production Python changes may begin on partial cache evidence.
+That earlier implementation hold is superseded by the user's delivery decision
+above; partial cache evidence is still not a complete global audit.
 
-After complete coverage: trace R1 raw consumers and declarations, finish the
-surface receipt, simulate/apply revision-checked NRA transformations, and
-label behavioural additions/native proof gaps honestly. Native tests cover
+The old complete-coverage hold no longer controls this native repair. No
+revision-checked NRA DSL transaction or completed behavior-equivalence proof
+is claimed for these authored codec additions. Native tests cover
 POINT/standard POINT, exact fractional YX, explicit native Z and sidecar plane
 identity, label/object/source, polygon/polyline/ellipse, malformed and unsupported
 types. Test shards are bounded to 60 seconds with CPU-only/offscreen settings
@@ -94,5 +158,8 @@ where applicable and owned cache roots.
 
 This dependency worktree is independent of the common scan's pinned clone.
 The OpenHCS parent gitlink stays at the recorded base. Integration requires a
-validated/merged dependency PR and main's explicit recorded-SHA authorisation.
-Do not merge or mark this draft ready from tracking evidence.
+validated/merged dependency PR and integration owner's recorded-SHA selection.
+User authorization permits locally validated checkpoints without waiting for
+optional hosted CI. Before claiming this fixes the blind-review workflow,
+integrate the dependency and verify the actual OpenHCS/MCP/viewer route on the
+isolated display. Counts and biological acceptance remain frozen/ambiguous.
