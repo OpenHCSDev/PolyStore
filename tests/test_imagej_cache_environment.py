@@ -14,8 +14,51 @@ import pytest
 
 from polystore.imagej_distribution import (
     FijiArchiveDistribution,
+    ImageJArchiveDownloadPolicy,
     ImageJDistributionUnavailableError,
+    ImageJRuntimeArchive,
 )
+
+
+@pytest.mark.parametrize("value, allowed", ((None, True), ("true", True), (" FALSE ", False)))
+def test_download_policy_decodes_permission_without_copying_retry_defaults(value, allowed):
+    environment = {} if value is None else {
+        ImageJArchiveDownloadPolicy.allow_download_environment_key: value
+    }
+    policy = ImageJArchiveDownloadPolicy.from_environment(environment)
+    assert policy.allow_download is allowed
+    default = ImageJArchiveDownloadPolicy()
+    assert policy.timeout_seconds == default.timeout_seconds
+    assert policy.retry_delays_seconds == default.retry_delays_seconds
+
+
+@pytest.mark.parametrize("value", ("", "yes", "0", "relative/cache"))
+def test_invalid_download_permission_fails(value):
+    with pytest.raises(ImageJDistributionUnavailableError, match="true or false"):
+        ImageJArchiveDownloadPolicy.from_environment({
+            ImageJArchiveDownloadPolicy.allow_download_environment_key: value
+        })
+
+
+def test_forbidden_download_has_no_archive_or_cache_side_effects(monkeypatch, tmp_path):
+    def forbidden_io(*args, **kwargs):
+        pytest.fail("Forbidden policy reached archive IO")
+
+    monkeypatch.setattr(ImageJRuntimeArchive, "download_verified_once", forbidden_io)
+    root = tmp_path / "absent-cache"
+    policy = ImageJArchiveDownloadPolicy(allow_download=False)
+    with pytest.raises(ImageJDistributionUnavailableError, match="forbidden"):
+        policy.download(
+            ImageJRuntimeArchive("fixture", "https://invalid.example/fixture.zip", "0" * 64),
+            target_directory=root,
+        )
+    distribution = FijiArchiveDistribution(
+        release_id="fixture", imagej_version="fixture", archive_base_url="https://invalid.example",
+        cache_root=root, download_policy=policy,
+    )
+    with pytest.raises(ImageJDistributionUnavailableError, match="forbidden"):
+        distribution.materialize()
+    assert not root.exists()
 
 
 def test_unset_bundle_root_retains_distribution_default():

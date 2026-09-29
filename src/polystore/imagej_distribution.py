@@ -141,10 +141,37 @@ class ImageJRuntimeArchive:
 
 @dataclass(frozen=True, slots=True)
 class ImageJArchiveDownloadPolicy:
-    """Retry and timeout policy shared by declared ImageJ archives."""
+    """Admission, retry and timeout policy shared by declared ImageJ archives."""
+
+    allow_download_environment_key: ClassVar[str] = "POLYSTORE_IMAGEJ_ALLOW_DOWNLOAD"
 
     timeout_seconds: float = 60.0
     retry_delays_seconds: tuple[float, ...] = (1.0, 2.0, 4.0)
+    allow_download: bool = True
+
+    @classmethod
+    def from_environment(
+        cls, environment: Mapping[str, str] | None = None
+    ) -> ImageJArchiveDownloadPolicy:
+        """Decode download permission once at process configuration."""
+        values = os.environ if environment is None else environment
+        declared = values.get(cls.allow_download_environment_key)
+        if declared is None:
+            return cls()
+        normalized = declared.strip().casefold()
+        if normalized not in {"true", "false"}:
+            raise ImageJDistributionUnavailableError(
+                f"{cls.allow_download_environment_key} must be true or false."
+            )
+        return cls(allow_download=normalized == "true")
+
+    def require_download_allowed(self, label: str) -> None:
+        """Reject missing artifacts before staging, cache mutation or network IO."""
+        if not self.allow_download:
+            raise ImageJDistributionUnavailableError(
+                f"Downloading {label} is forbidden by the ImageJ download policy; "
+                "prepare the declared bundle cache before starting this process."
+            )
 
     def download(
         self,
@@ -154,6 +181,7 @@ class ImageJArchiveDownloadPolicy:
     ) -> Path:
         """Download a verified archive under this retry policy."""
 
+        self.require_download_allowed(archive.label)
         retry_delays = iter(self.retry_delays_seconds)
         while True:
             try:
@@ -400,7 +428,6 @@ class FijiArchiveDistribution(ImageJDistributionABC):
             if self.cache_root is not None
             else user_cache_path("polystore") / "imagej"
         )
-        cache_parent.mkdir(parents=True, exist_ok=True)
         runtime_digest = hashlib.sha256(
             "".join((asset.sha256, *(overlay.sha256 for overlay in self.runtime_overlays))).encode(
                 "ascii"
@@ -413,6 +440,8 @@ class FijiArchiveDistribution(ImageJDistributionABC):
         if materialization is not None:
             return materialization
 
+        self.download_policy.require_download_allowed(self.label)
+        cache_parent.mkdir(parents=True, exist_ok=True)
         lock_path = cache_parent / f".{runtime_directory.name}.lock"
         with file_lock(lock_path, timeout=self.lock_timeout_seconds):
             materialization = self._discover_runtime(runtime_directory)
@@ -518,6 +547,7 @@ FIJI_IMAGEJ_DISTRIBUTION = FijiArchiveDistribution(
     imagej_version="2.18.0",
     archive_base_url=("https://downloads.imagej.net/fiji/archive/latest/20260718-0417"),
     cache_root=FijiArchiveDistribution.cache_root_from_environment(),
+    download_policy=ImageJArchiveDownloadPolicy.from_environment(),
     runtime_overlays=(
         ImageJRuntimeOverlay(
             label="PyImageJ 1.7.0 Fiji bridge overlay",
