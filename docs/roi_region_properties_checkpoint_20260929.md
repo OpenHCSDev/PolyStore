@@ -60,25 +60,59 @@ held-out files, JVM, GUI, installed package or shared source is modified.
 
 ## Validation and resource receipt
 
-Implementation and tests authored; behavioral validation pending Euler's shared
-slot. Nonblocking validation-lock probe returned 75 (busy), so no tests/JVM/GUI
-started and no polling/sleeping. Resource guard: 13.2 GiB available RAM,
-historical swap warning 11.5 GiB. Maintain at least 8 GiB available.
+Earlier nonblocking validation-lock probe returned 75 (busy); no tests started
+then. The coordinator handed off a finite slot on 2026-09-29, after installing
+the independent #151/#212 harness checkpoint. Tested source: OpenHCS
+`006361ff28528c0159bed0999149c71b8befda94` plus PolyStore
+`8c886e79267f72ad88bda4143845ed1721325dd8`, with all nine package import locations
+verified under this isolated worktree and explicit submodule PYTHONPATH.
+
+Retained first attempt: 29 passed / 138 setup errors in 8.49s because the cleaned
+scratch parent did not exist. Create only the owned scratch parent and retain the
+same assertions. The combined retry produced 141 passed / 26 failed in 37.12s.
+All sixteen new ROI fidelity/work-count cases and the existing ROI/fragmented
+materialization cases passed, including hole/border/topology contour and archive
+reopen fidelity, exact masks/TIFFs, original parent identities and one bbox scan.
+Four actual fresh owned MCP generate/inspect/sample journeys passed as well.
+
+The 26 source-workspace failures looked for `polystore_metadata.json` where the
+application wrote `openhcs_metadata.json`. Source witness:
+`polystore.metadata_writer.MetadataConfig` reads the generic environment/default
+at module initialization; `openhcs/__init__.py:20` sets the application filename.
+Combined dependency/application collection can initialize PolyStore first. The
+retry runner had not imported OpenHCS before starting pytest, unlike the original
+path-verification runner. This is a source-supported import-order explanation,
+not an executed preservation proof. Lovelace owns the next separate-context
+application regression check; no metadata API/source rewrite is authorized here.
+
+The profile did not execute because the test subprocess exited nonzero. No
+after-change timing/speedup claim. Run it and the application regressions in their
+proper separately bootstrapped contexts at the next handed-off slot; do not race
+the newly authorized fresh author.
+
+The finite commands are terminal and released flock. A tagged-environment
+process audit found zero owned handles, including pytest/MCP children, after
+each terminal command. No restart on observation timeout, no JVM or GUI. Entry
+RAM guard: 13.4 GiB available, historical swap warning 11.9 GiB; 8 GiB minimum
+was checked before starting the run. No continuously sampled peak-RAM claim.
+No source merge, installation or frozen-harness mutation in this validation.
 
 Light evidence: new test passes Ruff; source/test AST and `git diff --check`
 are the scoped guards. No full NRA scan or broad proof. The before-change bounded
 128x128 OpenHCS profile observed two bbox scans, 3 parents and 902 members;
 single-fixture timings remain in the parent receipt, not a speedup claim.
 
-When the slot is released, run the new/existing ROI tests and OpenHCS fragmented
-materialization tests with `/home/ts/code/projects/openhcs/.venv/bin/python`,
-CPU-only mode and verified worktree/submodule source paths. Disable automatic
-coverage output for this focused run. Re-run the bounded phase profile; do not
-start a large CZI, GUI or JVM journey.
+Executed command used `/home/ts/code/projects/openhcs/.venv/bin/python -m pytest
+-q --tb=short --import-mode=importlib -o addopts=` with the new/existing ROI,
+fragmented materialization, preparation selection, Bio-Formats, source workspace,
+plane-store, zero-geometry and real MCP journey files. CPU-only mode; exact source
+paths; automatic coverage disabled. The tests' assertions were not weakened.
 
 Scratch owner: Lovelace. Purpose: tiny pytest archives and profile output.
-Planned path: `/home/ts/.cache/agent-scratch/openhcs-issue-input-20260929`.
-The previous 8.1 MiB fixtures were removed; no new generated output yet.
+Path: `/home/ts/.cache/agent-scratch/openhcs-issue-input-20260929`.
+The previous 8.1 MiB fixtures were removed. The finite check regenerated 4.2 MiB
+of disposable synthetic fixtures; that directory was also removed after retaining
+this receipt. No source/saved session/private biological data was removed.
 Receipts, code and PR body files remain on persistent worktree storage.
 
 Parent recorded gitlink remains at the base until a published paired commit is
