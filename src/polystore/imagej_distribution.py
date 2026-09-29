@@ -15,7 +15,7 @@ import time
 import urllib.request
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -433,6 +433,31 @@ class FijiArchiveDistribution(ImageJDistributionABC):
     def default_cache_root() -> Path:
         """Return the platform-owned default for the immutable bundle cache."""
         return user_cache_path("polystore") / "imagej"
+
+    @classmethod
+    def configure_process_environment(
+        cls,
+        *,
+        default_download_policy: ImageJArchiveDownloadPolicy,
+        environment: MutableMapping[str, str] | None = None,
+    ) -> None:
+        """Pin bundle storage before disposable caches or runtime imports.
+
+        Explicit selectors remain authoritative. This only configures the
+        environment inherited by children; it neither materializes a bundle
+        nor starts Java. Call before first access to the declared runtime.
+        """
+        values = os.environ if environment is None else environment
+        root = cls.cache_root_from_environment(values)
+        if root is None:
+            root = cls.default_cache_root()
+        download_key = default_download_policy.allow_download_environment_key
+        permission = "true" if default_download_policy.allow_download else "false"
+        policy_values = dict(values)
+        policy_values.setdefault(download_key, permission)
+        ImageJArchiveDownloadPolicy.from_environment(policy_values)
+        values[cls.cache_root_environment_key] = str(root)
+        values.setdefault(download_key, permission)
 
     def materialize(self) -> ImageJRuntimeLaunch:
         """Download, verify, and atomically cache this host's Fiji bundle."""

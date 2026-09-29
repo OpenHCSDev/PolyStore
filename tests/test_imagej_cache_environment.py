@@ -47,6 +47,21 @@ assert declarations.FIJI_IMAGEJ_DISTRIBUTION is FIJI_IMAGEJ_DISTRIBUTION
     assert not (tmp_path / "shared").exists()
 
 
+def test_invalid_process_permission_leaves_environment_unchanged(tmp_path):
+    values = {
+        FijiArchiveDistribution.cache_root_environment_key: str(tmp_path / "shared"),
+        ImageJArchiveDownloadPolicy.allow_download_environment_key: "yes",
+    }
+    before = dict(values)
+    with pytest.raises(ImageJDistributionUnavailableError, match="true or false"):
+        FijiArchiveDistribution.configure_process_environment(
+            environment=values,
+            default_download_policy=ImageJArchiveDownloadPolicy(allow_download=False),
+        )
+    assert values == before
+    assert not (tmp_path / "shared").exists()
+
+
 @pytest.mark.parametrize("value, allowed", ((None, True), ("true", True), (" FALSE ", False)))
 def test_download_policy_decodes_permission_without_copying_retry_defaults(value, allowed):
     environment = {} if value is None else {
