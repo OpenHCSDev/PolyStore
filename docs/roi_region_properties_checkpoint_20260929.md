@@ -84,6 +84,10 @@ retry runner had not imported OpenHCS before starting pytest, unlike the origina
 path-verification runner. This is a source-supported import-order explanation,
 not an executed preservation proof. Lovelace owns the next separate-context
 application regression check; no metadata API/source rewrite is authorized here.
+Next driver uses separate dependency/application processes and imports the
+existing `openhcs` entrypoint before application pytest collection, so its
+declared initialization owns the filename. It will not monkeypatch metadata,
+copy companion files, add a filename fallback or change a failed assertion.
 
 The profile did not execute because the test subprocess exited nonzero. No
 after-change timing/speedup claim. Run it and the application regressions in their
