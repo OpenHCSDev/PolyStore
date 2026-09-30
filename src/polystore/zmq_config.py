@@ -18,6 +18,6 @@ POLYSTORE_ZMQ_CONFIG = ZMQConfig(
     ipc_socket_dir=os.getenv("POLYSTORE_ZMQ_IPC_DIR", "ipc"),
     ipc_socket_prefix=os.getenv("POLYSTORE_ZMQ_IPC_PREFIX", "polystore-zmq"),
     ipc_socket_extension=os.getenv("POLYSTORE_ZMQ_IPC_EXT", ".sock"),
-    shared_ack_port=_env_int("POLYSTORE_ZMQ_ACK_PORT", 7555),
+    shared_ack_port=_env_int("POLYSTORE_ZMQ_ACK_PORT", 0),
     app_name=os.getenv("POLYSTORE_ZMQ_APP_NAME", "polystore"),
 )

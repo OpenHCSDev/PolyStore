@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from zmqruntime import queue_tracker
 from zmqruntime.config import TransportMode
+from zmqruntime.messages import AckReturnRoute, ProcessIdentity
 from zmqruntime.viewer_protocol import ViewerAckPolicy, ViewerTransportEndpoint
 
 import polystore.streaming._streaming_backend as streaming_backend_module
@@ -92,11 +93,7 @@ def test_queue_tracker_uses_endpoint_transport_authority(monkeypatch) -> None:
         transport_config,
     )
 
-    assert listener_start == {
-        "port": 8111,
-        "transport_mode": endpoint.transport_mode,
-        "config": transport_config,
-    }
+    assert listener_start == {}  # Registration no longer invents a second destination.
     assert registered_image_ids == ["image-1", "image-2"]
 
 
@@ -167,6 +164,8 @@ def batch_message_request(data_list, file_paths, viewer_request):
     return StreamingBatchMessageRequest(
         data_list=data_list,
         file_paths=file_paths,
+        return_route=AckReturnRoute("tcp://127.0.0.1:8111", "00000000-0000-0000-0000-000000000001",
+                                    ProcessIdentity.current()),
         stream_request=viewer_request,
         component_names_request=(
             StreamingComponentNamesRequest.from_stream_request(viewer_request)
