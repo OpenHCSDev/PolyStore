@@ -6,10 +6,11 @@ Handles ImageJ ROI Manager integration with proper component positioning.
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from polystore.streaming.handlers import HandlerBase
 from polystore.streaming.base import HandlerContext
+from zmqruntime.messages import ImageTransferIdentity
 from zmqruntime.viewer_protocol import (
     ViewerBatchItemWireField,
     ViewerWireMapping,
@@ -44,13 +45,14 @@ def fiji_roi_component_value(value: ViewerWireValue) -> FijiROIComponentValue:
 
 @dataclass(frozen=True, slots=True)
 class FijiROIWireItem:
-    """Typed ROI wire item used by the legacy Fiji handler path."""
+    """Typed ROI wire item with its original producer ACK contract."""
 
     payload: ViewerWireMapping
+    transfer: ImageTransferIdentity | None = field(kw_only=True)
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, ViewerWireValue]) -> "FijiROIWireItem":
-        return cls(payload)
+        return cls(payload, transfer=ImageTransferIdentity.from_item(payload))
 
     @property
     def rois(self) -> list[str]:
@@ -71,13 +73,6 @@ class FijiROIWireItem:
         if not isinstance(value, Mapping):
             raise TypeError("Fiji ROI item 'metadata' field must be a mapping.")
         return value
-
-    @property
-    def image_id(self) -> str | None:
-        field = ViewerBatchItemWireField.IMAGE_ID.value
-        if field not in self.payload or self.payload[field] is None:
-            return None
-        return str(self.payload[field])
 
     def component_value_tuple(
         self,
@@ -180,8 +175,7 @@ class FijiROIHandler(HandlerBase):
         for roi_item in roi_items:
             rois_encoded = roi_item.rois
             if not rois_encoded:
-                if image_id := roi_item.image_id:
-                    context.server._send_ack(image_id, status="success")
+                context.server.send_ack(roi_item.transfer, status="success")
                 continue
 
             logger.info(f"🔬 FIJI ROI HANDLER: Processing {len(rois_encoded)} ROIs")
@@ -205,8 +199,7 @@ class FijiROIHandler(HandlerBase):
 
             total_rois_added += len(java_rois)
 
-            if image_id := roi_item.image_id:
-                context.server._send_ack(image_id, status="success")
+            context.server.send_ack(roi_item.transfer, status="success")
 
         logger.info(
             f"🔬 FIJI ROI HANDLER: Added {total_rois_added} ROIs to window '{context.window_key}'"

@@ -10,11 +10,12 @@ import platform
 import shutil
 import stat
 import tempfile
+import threading
 import time
 import urllib.request
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -419,15 +420,50 @@ class FijiArchiveDistribution(ImageJDistributionABC):
 
         return f"Fiji {self.imagej_version} archive {self.release_id}"
 
+    @property
+    def resolved_cache_root(self) -> Path:
+        """Resolve the bundle cache once when configuring a process environment."""
+        return (
+            Path(self.cache_root)
+            if self.cache_root is not None
+            else self.default_cache_root()
+        )
+
+    @staticmethod
+    def default_cache_root() -> Path:
+        """Return the platform-owned default for the immutable bundle cache."""
+        return user_cache_path("polystore") / "imagej"
+
+    @classmethod
+    def configure_process_environment(
+        cls,
+        *,
+        default_download_policy: ImageJArchiveDownloadPolicy,
+        environment: MutableMapping[str, str] | None = None,
+    ) -> None:
+        """Pin bundle storage before disposable caches or runtime imports.
+
+        Explicit selectors remain authoritative. This only configures the
+        environment inherited by children; it neither materializes a bundle
+        nor starts Java. Call before first access to the declared runtime.
+        """
+        values = os.environ if environment is None else environment
+        root = cls.cache_root_from_environment(values)
+        if root is None:
+            root = cls.default_cache_root()
+        download_key = default_download_policy.allow_download_environment_key
+        permission = "true" if default_download_policy.allow_download else "false"
+        policy_values = dict(values)
+        policy_values.setdefault(download_key, permission)
+        ImageJArchiveDownloadPolicy.from_environment(policy_values)
+        values[cls.cache_root_environment_key] = str(root)
+        values.setdefault(download_key, permission)
+
     def materialize(self) -> ImageJRuntimeLaunch:
         """Download, verify, and atomically cache this host's Fiji bundle."""
 
         asset = FijiBundleAsset.for_current_host()
-        cache_parent = (
-            Path(self.cache_root)
-            if self.cache_root is not None
-            else user_cache_path("polystore") / "imagej"
-        )
+        cache_parent = self.resolved_cache_root
         runtime_digest = hashlib.sha256(
             "".join((asset.sha256, *(overlay.sha256 for overlay in self.runtime_overlays))).encode(
                 "ascii"
@@ -542,21 +578,36 @@ class FijiArchiveDistribution(ImageJDistributionABC):
             )
 
 
-FIJI_IMAGEJ_DISTRIBUTION = FijiArchiveDistribution(
-    release_id="20260718-0417",
-    imagej_version="2.18.0",
-    archive_base_url=("https://downloads.imagej.net/fiji/archive/latest/20260718-0417"),
-    cache_root=FijiArchiveDistribution.cache_root_from_environment(),
-    download_policy=ImageJArchiveDownloadPolicy.from_environment(),
-    runtime_overlays=(
-        ImageJRuntimeOverlay(
-            label="PyImageJ 1.7.0 Fiji bridge overlay",
-            url=(
-                "https://github.com/OpenHCSDev/PolyStore/releases/download/"
-                "imagej-runtime-20260718-0417-pyimagej-1.7.0/"
-                "pyimagej-1.7.0-fiji-overlay.zip"
+def _create_fiji_distribution() -> FijiArchiveDistribution:
+    """Decode process settings at first runtime access, not declaration import."""
+    return FijiArchiveDistribution(
+        release_id="20260718-0417",
+        imagej_version="2.18.0",
+        archive_base_url=("https://downloads.imagej.net/fiji/archive/latest/20260718-0417"),
+        cache_root=FijiArchiveDistribution.cache_root_from_environment(),
+        download_policy=ImageJArchiveDownloadPolicy.from_environment(),
+        runtime_overlays=(
+            ImageJRuntimeOverlay(
+                label="PyImageJ 1.7.0 Fiji bridge overlay",
+                url=(
+                    "https://github.com/OpenHCSDev/PolyStore/releases/download/"
+                    "imagej-runtime-20260718-0417-pyimagej-1.7.0/"
+                    "pyimagej-1.7.0-fiji-overlay.zip"
+                ),
+                sha256="210d1ebb2c1f1ede85d0e94e741a772e07cfb9233992ae4e85cd245b06890345",
             ),
-            sha256="210d1ebb2c1f1ede85d0e94e741a772e07cfb9233992ae4e85cd245b06890345",
         ),
-    ),
-)
+    )
+
+
+_distribution_lock = threading.Lock()
+
+
+def __getattr__(name: str) -> Any:
+    """Keep declaration imports safe for pre-runtime environment configuration."""
+    if name != "FIJI_IMAGEJ_DISTRIBUTION":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with _distribution_lock:
+        if name not in globals():
+            globals()[name] = _create_fiji_distribution()
+        return globals()[name]

@@ -22,6 +22,7 @@ import numpy as np
 import zmq
 from zmqruntime.ack_listener import GlobalAckListener
 from zmqruntime.config import ZMQConfig
+from zmqruntime.messages import AckReturnRoute, ImageTransferIdentity
 from zmqruntime.viewer_protocol import (
     ViewerBatchItemWireField,
     ViewerBatchMessagePayload,
@@ -189,6 +190,7 @@ class StreamingBatchMessageRequest:
     file_paths: list[FilePath]
     stream_request: ViewerStreamRequest
     component_names_request: StreamingComponentNamesRequest
+    return_route: AckReturnRoute = field(kw_only=True)
     display_payload_extra: ViewerDisplayPayloadExtra = field(
         default_factory=ViewerDisplayPayloadExtra
     )
@@ -445,13 +447,15 @@ class StreamingBatchItemPreparationAuthority:
                     streaming_data_type=streaming_data_type,
                 )
             )
+            routed_payload = dict(item_payload.item_payload)
+            routed_payload.update(ImageTransferIdentity(image_id, request.return_route).to_dict())
 
             batch_images.append(
                 request.stream_request.producer.batch_item_payload(
                     ViewerStreamBatchItemSource.from_input(
                         ViewerStreamBatchItemInput(
                             stream_source=request.stream_request.source,
-                            item_payload=item_payload.item_payload,
+                            item_payload=routed_payload,
                             streaming_data_type=item_payload.streaming_data_type,
                             file_path=item_path.value,
                             index=index,
@@ -659,13 +663,6 @@ class StreamingBackend(DataSink):
             port: Port number for tracker lookup
             image_ids: List of image IDs to register
         """
-        listener = GlobalAckListener()
-        listener.start(
-            port=transport_config.shared_ack_port,
-            transport_mode=transport_endpoint.transport_mode,
-            config=transport_config,
-        )
-
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
 
         registry = GlobalQueueTrackerRegistry()
@@ -736,6 +733,13 @@ class StreamingBackend(DataSink):
             return
 
         stream_request = ViewerStreamBackendKwargs.from_kwargs(kwargs).stream_request
+        transport_config = stream_request.transport_config.resolve(self._transport_config)
+        transport_endpoint = stream_request.viewer_transport
+        return_route = GlobalAckListener().start(
+            port=transport_config.shared_ack_port,
+            transport_mode=transport_endpoint.transport_mode,
+            config=transport_config,
+        )
         built_batch = StreamingBatchMessageBuilder.build(
             self,
             StreamingBatchMessageRequest(
@@ -743,13 +747,12 @@ class StreamingBackend(DataSink):
                 file_paths=file_paths,
                 stream_request=stream_request,
                 component_names_request=self.component_names_request(stream_request),
+                return_route=return_route,
                 display_payload_extra=self.display_payload_extra(stream_request),
             ),
         )
         self.after_batch_message_built(stream_request, built_batch)
 
-        transport_config = stream_request.transport_config.resolve(self._transport_config)
-        transport_endpoint = stream_request.viewer_transport
         self._register_with_queue_tracker(
             transport_endpoint,
             built_batch.image_ids,
