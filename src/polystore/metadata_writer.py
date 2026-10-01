@@ -60,6 +60,15 @@ class MetadataConfig:
     AVAILABLE_BACKENDS_KEY: str = "available_backends"
     DEFAULT_TIMEOUT: float = LOCK_CONFIG.DEFAULT_TIMEOUT
 
+    def metadata_path(self, plate_root: Union[str, Path]) -> Path:
+        """Resolve this namespace's metadata, independent of other consumers."""
+        return Path(plate_root) / self.METADATA_FILENAME
+
+    def managed_paths(self, plate_root: Union[str, Path]) -> tuple[Path, Path]:
+        """Metadata and lock owned by this namespace's transaction."""
+        path = self.metadata_path(plate_root)
+        return path, LOCK_CONFIG.lock_path(path)
+
 
 METADATA_CONFIG = MetadataConfig()
 
@@ -151,4 +160,4 @@ def get_metadata_path(plate_root: Union[str, Path]) -> Path:
     Returns:
         Path to the metadata file
     """
-    return Path(plate_root) / METADATA_CONFIG.METADATA_FILENAME
+    return METADATA_CONFIG.metadata_path(plate_root)

@@ -22,7 +22,7 @@ from .base import (
 )
 from .constants import Backend
 from .exceptions import StorageResolutionError
-from .metadata_writer import get_metadata_path
+from .metadata_writer import METADATA_CONFIG, MetadataConfig
 
 if TYPE_CHECKING:
     import numpy as np
@@ -204,9 +204,24 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
 
     _backend_type = Backend.VIRTUAL_WORKSPACE.value
 
-    def __init__(self, plate_root: Path):
-        self.plate_root = Path(plate_root)
+    def __init__(
+        self,
+        plate_root: Path,
+        *,
+        metadata_config: MetadataConfig = METADATA_CONFIG,
+    ):
         self._registry: Mapping[str, BackendBase] | None = None
+        self._open_workspace(plate_root=plate_root, metadata_config=metadata_config)
+
+    def _open_workspace(
+        self,
+        *,
+        plate_root: Path,
+        metadata_config: MetadataConfig,
+    ) -> None:
+        """Open one declared workspace, replacing its namespace-bound cache."""
+        self.plate_root = Path(plate_root)
+        self.metadata_config = metadata_config
         self._mapping_cache: Optional[Dict[str, SourcePixelRef]] = None
         self._cache_mtime: Optional[float] = None
         self._load_mapping()
@@ -222,18 +237,18 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
     ) -> "VirtualWorkspaceBackend":
         if not params:
             raise ValueError("VirtualWorkspaceBackend requires plate_root.")
-        return cls(plate_root=Path(params["plate_root"]))
+        return cls(**params)
 
     def get_connection_params(self) -> Optional[Dict[str, Any]]:
-        return {"plate_root": str(self.plate_root)}
+        return {
+            "plate_root": str(self.plate_root),
+            "metadata_config": self.metadata_config,
+        }
 
     def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
         if not params:
             raise ValueError("VirtualWorkspaceBackend requires plate_root.")
-        self.plate_root = Path(params["plate_root"])
-        self._mapping_cache = None
-        self._cache_mtime = None
-        self._load_mapping()
+        self._open_workspace(**params)
 
     @staticmethod
     def _normalize_relative_path(path_str: str) -> str:
@@ -241,7 +256,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
         return "" if normalized == "." else normalized
 
     def _load_mapping(self) -> Dict[str, SourcePixelRef]:
-        metadata_path = get_metadata_path(self.plate_root)
+        metadata_path = self.metadata_config.metadata_path(self.plate_root)
         if not metadata_path.exists():
             raise FileNotFoundError(f"Metadata not found: {metadata_path}")
         current_mtime = metadata_path.stat().st_mtime
@@ -250,7 +265,9 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
         with metadata_path.open("r", encoding="utf-8") as stream:
             metadata = json.load(stream)
         combined_mapping: Dict[str, SourcePixelRef] = {}
-        for subdirectory in metadata.get("subdirectories", {}).values():
+        for subdirectory in metadata.get(
+            self.metadata_config.SUBDIRECTORIES_KEY, {}
+        ).values():
             for virtual_path, source_ref in subdirectory.get(
                 "workspace_mapping",
                 {},
