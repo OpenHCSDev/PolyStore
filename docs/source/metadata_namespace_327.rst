@@ -51,13 +51,31 @@ mock registry or serialization replacement.
 Source evidence and guards
 --------------------------
 
-Seven focused checks pass in4.45s, peak combined process RSS298.66 MiB, one CPU.
+Final dependency sourceee1e5438d64cb7d37e2641c2d9b3ee8870663adf passes eleven
+checks in4.42s, peak combined process RSS294.78 MiB, one CPU. This includes
+three unchanged existing FileManager workspace/pickle preservation controls.
 They cover generic/custom namespace, explicit environment config with no mutation
 of the generic snapshot, real persisted reopen, connection replacement and cache
 refresh, absence of alternate-filename readers, source axes, exact pixels,
 sample provenance and native handoff. Site-specific AST guard requires the path
-call to use self.metadata_config and the handoff methods to carry that owner.
+call to use self.metadata_config and the handoff methods to use constructor
+keyword binding rather than raw params subscripts. Constructor binding rejects
+unknown fields. Reconnection preserves the existing execution-local registry.
 No guard exceptions or assertion weakening.
+
+The unchanged original structural ratchet at agent-comms3b03785f45df2ef5dc62ba6aed99294192ecbb01
+passes against PR16 for the final committed source: StringSubscript delta-2,
+all other deltas zero. The first draft48621c1 had delta+2 and failed; this is
+retained as failed evidence, not waived. The fix removed duplicated dictionary
+decoding through actual constructor/open-workspace contracts, not constant
+substitutions or detector changes. Original tool SHA256 is
+e323c94d49c2b72d9524a5169f123e64b4a6e46a41035ca9fb4497e49b6ca562.
+The tool's package import fails under Python3.12 with NameError: InputDocument;
+original CI uses3.14, and the existing system Python3.14.7 runs the unchanged
+tool from a pinned own local Git worktree. No interpreter/package download or
+tool source change. Product tests and native handoffs remain on Python3.12.
+An initial site guard counted typing annotations as raw subscripts; its failure
+is retained and the corrected guard targets params accesses specifically.
 
 Lightweight full-package AST census at pinned HEAD completes in1.06s with12,209
 code lines; it is not a global semantic audit. The original application failure
