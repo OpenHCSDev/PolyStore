@@ -210,9 +210,18 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
         *,
         metadata_config: MetadataConfig = METADATA_CONFIG,
     ):
+        self._registry: Mapping[str, BackendBase] | None = None
+        self._open_workspace(plate_root=plate_root, metadata_config=metadata_config)
+
+    def _open_workspace(
+        self,
+        *,
+        plate_root: Path,
+        metadata_config: MetadataConfig,
+    ) -> None:
+        """Open one declared workspace, replacing its namespace-bound cache."""
         self.plate_root = Path(plate_root)
         self.metadata_config = metadata_config
-        self._registry: Mapping[str, BackendBase] | None = None
         self._mapping_cache: Optional[Dict[str, SourcePixelRef]] = None
         self._cache_mtime: Optional[float] = None
         self._load_mapping()
@@ -228,10 +237,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
     ) -> "VirtualWorkspaceBackend":
         if not params:
             raise ValueError("VirtualWorkspaceBackend requires plate_root.")
-        return cls(
-            plate_root=Path(params["plate_root"]),
-            metadata_config=params["metadata_config"],
-        )
+        return cls(**params)
 
     def get_connection_params(self) -> Optional[Dict[str, Any]]:
         return {
@@ -242,11 +248,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
     def set_connection_params(self, params: Optional[Dict[str, Any]]) -> None:
         if not params:
             raise ValueError("VirtualWorkspaceBackend requires plate_root.")
-        self.plate_root = Path(params["plate_root"])
-        self.metadata_config = params["metadata_config"]
-        self._mapping_cache = None
-        self._cache_mtime = None
-        self._load_mapping()
+        self._open_workspace(**params)
 
     @staticmethod
     def _normalize_relative_path(path_str: str) -> str:

@@ -22,4 +22,15 @@ def test_workspace_retains_its_namespace_owner_not_a_filename_projection():
     methods = {node.name: node for node in tree.body[0].body if isinstance(node, ast.FunctionDef)}
     assert "self.metadata_config" in ast.unparse(methods["get_connection_params"])
     for method in ("from_connection_params", "set_connection_params"):
-        assert "params['metadata_config']" in ast.unparse(methods[method])
+        calls = [node for node in ast.walk(methods[method]) if isinstance(node, ast.Call)]
+        assert any(
+            keyword.arg is None and ast.unparse(keyword.value) == "params"
+            for call in calls
+            for keyword in call.keywords
+        )
+        assert not any(
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == 'params'
+            for node in ast.walk(methods[method])
+        )

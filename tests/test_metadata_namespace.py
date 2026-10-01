@@ -110,10 +110,11 @@ def test_connection_retarget_invalidates_mapping_and_namespace(tmp_path):
     persist_workspace(tmp_path, first, index=0)
     expected = persist_workspace(tmp_path, second)
     backend = VirtualWorkspaceBackend(tmp_path, metadata_config=first)
+    manager = FileManager({"disk": DiskBackend(), "virtual_workspace": backend})
     backend.set_connection_params(
         VirtualWorkspaceBackend(tmp_path, metadata_config=second).get_connection_params()
     )
-    manager = FileManager({"disk": DiskBackend(), "virtual_workspace": backend})
+    assert backend._registry is manager.registry
     np.testing.assert_array_equal(
         manager.load(tmp_path / "virtual.npy", backend="virtual_workspace"), expected
     )
@@ -123,3 +124,12 @@ def test_connection_retarget_invalidates_mapping_and_namespace(tmp_path):
     np.testing.assert_array_equal(
         manager.load(tmp_path / "virtual.npy", backend="virtual_workspace"), expected - 20
     )
+
+
+def test_native_parameter_boundary_uses_constructor_binding(tmp_path):
+    config = MetadataConfig(METADATA_FILENAME="explicit.json")
+    persist_workspace(tmp_path, config)
+    params = VirtualWorkspaceBackend(tmp_path, metadata_config=config).get_connection_params()
+    params["unknown"] = "not a workspace field"
+    with pytest.raises(TypeError, match="unknown"):
+        VirtualWorkspaceBackend.from_connection_params(params)

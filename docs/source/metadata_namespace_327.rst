@@ -36,8 +36,9 @@ Durable state and new-case experiment
 
 Metadata remains durable JSON at its declared path, with the existing structured
 SourcePixelRef mapping. No new store, copy, rename, alternate reader or converter.
-The runtime FileManager handoff carries the config object along with plate_root;
-old runtime connection dictionaries are not accepted through a fallback.
+The runtime FileManager handoff carries the config object along with plate_root.
+Constructor keyword binding decodes the native dictionary into the owning
+backend; no key-rewriting, version conversion or alternate metadata reader.
 
 Before, embedding a new namespace required coordinating an environment projection,
 dependency import timing and application producer declaration. After, one frozen
