@@ -1,0 +1,37 @@
+PUBLIC_WHEEL_ACTUAL_BYTE_VERIFICATION
+
+Artifact: polystore-0.3.1-py3-none-any.whl
+Expected bytes: 157342
+Expected SHA256: d1c81414f9b5ec1373a68a41bf704ec76c4b1f60a1ea0f00bb031bc8ae264e50
+
+Retained lookup: no exact public wheel found by filename under /home/ts/wt,
+/home/ts/.cache/agent-scratch, /home/ts/.cache/uv or /home/ts/.cache/pip.
+The two local 0.editable wheels were rejected as different artifacts.
+One public fetch only; no retry/resubmit, dependency fetch, installation or import.
+
+Fetch command:
+systemd-run --user --scope --quiet -p MemoryMax=512M -p MemorySwapMax=0 -p CPUQuota=100% timeout 25s taskset -c 0 curl --fail --silent --show-error --proto '=https' --max-time 20 --max-filesize 157342 --output /home/ts/.cache/agent-scratch/polystore-031-byte-proof-20261002.t9WrHD/polystore-0.3.1-py3-none-any.whl --write-out 'http_status=%{http_code} downloaded_bytes=%{size_download} elapsed_seconds=%{time_total}\nurl=%{url_effective}\n' https://files.pythonhosted.org/packages/e1/95/19cbd9b8d4c514434471f10e143c65dfacb117088272528e52a5d6e1b664/polystore-0.3.1-py3-none-any.whl
+
+Original fetch response:
+http_status=200 downloaded_bytes=157342 elapsed_seconds=0.086730
+url=https://files.pythonhosted.org/packages/e1/95/19cbd9b8d4c514434471f10e143c65dfacb117088272528e52a5d6e1b664/polystore-0.3.1-py3-none-any.whl
+
+The first orchestration wrapper failed after the fetch because it tried to
+store an absent session_id. Original HTTP200/byte result was already retained;
+subsequent verification read that same completed file. Fetch was NOT replayed.
+
+Independent local-byte command:
+systemd-run --user --scope --quiet -p MemoryMax=512M -p MemorySwapMax=0 -p CPUQuota=100% timeout 10s taskset -c 0 /home/ts/wt/openhcs-generated-inputs-installed-parent-20261001/.venv/bin/python -B -c 'import hashlib, pathlib; p=pathlib.Path("/home/ts/.cache/agent-scratch/polystore-031-byte-proof-20261002.t9WrHD/polystore-0.3.1-py3-none-any.whl"); data=p.read_bytes(); digest=hashlib.sha256(data).hexdigest(); print("file="+str(p)); print("actual_bytes="+str(len(data))); print("actual_sha256="+digest); assert len(data)==157342; assert digest=="d1c81414f9b5ec1373a68a41bf704ec76c4b1f60a1ea0f00bb031bc8ae264e50"; print("ACTUAL_BYTE_CHECK=PASS")'
+
+Independent local-byte result:
+file=/home/ts/.cache/agent-scratch/polystore-031-byte-proof-20261002.t9WrHD/polystore-0.3.1-py3-none-any.whl
+actual_bytes=157342
+actual_sha256=d1c81414f9b5ec1373a68a41bf704ec76c4b1f60a1ea0f00bb031bc8ae264e50
+ACTUAL_BYTE_CHECK=PASS
+
+Exit code: 0
+
+Bounds: one CPU; 512MiB cgroup; no swap; fetch max20s plus25s command wall;
+max response157342B; hash read max10s. Hash computed from actual read_bytes(),
+not a cached digest or metadata copy. The frozen scientific environment was
+not changed; the readonly Python interpreter executed standard library only.
