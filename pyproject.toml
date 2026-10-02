@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.3.0"
+version = "0.3.1"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -101,6 +101,7 @@ dev = [
     "genbadge[coverage]",
     "pandas>=2.3.1",
     "jpype1>=1.4.0",
+    "roifile",
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
