@@ -52,9 +52,9 @@ publisher DSSE subject digests in its retained log match these same digests:
 
 GitHub also retains both publish.attestation assets. Workflow artifact inventory
 is empty; these are actual GitHub RELEASE assets, not nonexistent Actions
-artifact uploads. Package bytes were not downloaded or installed here. The
-proof is published metadata/digest agreement, not independent local byte hashing,
-fresh installed execution or biological acceptance.
+artifact uploads. The initial publication check established metadata agreement
+only. The subsequent bounded actual-byte verification below extends that proof;
+neither check establishes fresh installed execution or biological acceptance.
 
 Full successful job log fetched through original GitHub SDK and archived
 losslessly in original-job-110701039079.log.gz. Decoded original bytes169009,
@@ -66,6 +66,31 @@ again after successful publication and remained unchanged.
 
 Publication blocker is closed. The previously recorded offline uv.lock
 limitation remains separate and unchanged; this publisher does not use it.
+
+Independent public-wheel byte verification
+-----------------------------------------
+
+After the owner authorised one157KB public fetch, no retained exact public wheel
+was found under the worktrees, agent scratch or uv/pip caches. Existing local
+editable wheels were not substituted for the published artifact. One HTTPS fetch
+of the original PyPI wheel URL completed HTTP200 in0.086730s,157342bytes.
+An independent local file read and SHA256 calculation asserted:
+
+* Actual length157342bytes.
+* Actual digest
+  d1c81414f9b5ec1373a68a41bf704ec76c4b1f60a1ea0f00bb031bc8ae264e50.
+
+Both expected identities matched, exit0. PUBLIC-WHEEL-BYTE-PROOF.txt retains
+the original command/results and bounds: oneCPU/512MiB, fetch20s(max25s wall),
+response maximum157342B, hash10s. No package installation/import, environment
+creation, source change, native/science run or dependency download occurred.
+The sdist remains metadata-agreement-only; its bytes were not independently
+downloaded/hashed. The wheel byte check does not imply installed acceptance.
+
+The completed original synthetic-test scratch and single public-wheel scratch
+will be closed after proof archival; CLEANUP.rst records the exact targets.
+Both original publisher logs, compressed evidence, source, branch history and
+native journal remain preserved.
 
 The original append-only tool-call authority is linked at
 /home/ts/wt/openhcs-issue-batch-20260929/agent-audit-20261002/Dewey/native-session.jsonl.
