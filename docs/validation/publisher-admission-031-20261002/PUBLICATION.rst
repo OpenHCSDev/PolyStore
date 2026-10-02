@@ -88,7 +88,7 @@ The sdist remains metadata-agreement-only; its bytes were not independently
 downloaded/hashed. The wheel byte check does not imply installed acceptance.
 
 The completed original synthetic-test scratch and single public-wheel scratch
-will be closed after proof archival; CLEANUP.rst records the exact targets.
+are closed after proof archival; CLEANUP.rst records the exact targets/results.
 Both original publisher logs, compressed evidence, source, branch history and
 native journal remain preserved.
 
