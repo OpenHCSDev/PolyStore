@@ -201,17 +201,15 @@ class DiskStorageBackend(StorageBackend):
         return tf.io.parse_tensor(tf.io.read_file(path.as_posix()), out_type=tf.dtypes.float32)
 
     def _tiff_writer(self, path, data, *, tiff_config: TiffConfig | None = None, **kwargs):
-        """Write TIFF pixels with optional lossless, per-call codec settings."""
+        """Write pixels with their declared TIFF semantics and codec options."""
 
         tifffile = FileFormat.TIFF.load_dependency()
         config = TiffConfig() if tiff_config is None else tiff_config
         if not isinstance(config, TiffConfig):
             raise TypeError("tiff_config must be a TiffConfig value")
-        tifffile.imwrite(
-            path,
-            storage_numpy_array(data),
-            **config.tifffile_write_kwargs(),
-        )
+        pixels = storage_numpy_array(data)
+        config.validate_shape(pixels.shape)
+        tifffile.imwrite(path, pixels, **config.tifffile_write_kwargs())
 
     def _tiff_reader(self, path):
         tifffile = FileFormat.TIFF.load_dependency()
