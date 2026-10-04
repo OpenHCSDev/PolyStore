@@ -81,10 +81,15 @@ def test_verified_source_resource_opaque_source_refuses(tmp_path):
         )
 
 
+@pytest.mark.parametrize("backend", ["disk", "zarr", "memory"])
 def test_preformatted_text_is_written_as_exact_utf8_bytes(
     tmp_path: Path,
     monkeypatch,
+    backend: str,
 ) -> None:
+    from polystore import MemoryBackend
+    from polystore.zarr import ZarrStorageBackend
+
     content = "well,count\r\nA01,2\r\n"
     output_path = tmp_path / "summary.csv"
 
@@ -93,9 +98,25 @@ def test_preformatted_text_is_written_as_exact_utf8_bytes(
         raise AssertionError("text persistence must bypass platform newline translation")
 
     monkeypatch.setattr(Path, "write_text", reject_platform_text_translation)
-    DiskBackend().save(content, output_path)
+    manager = FileManager({
+        "disk": DiskBackend(), "zarr": ZarrStorageBackend(), "memory": MemoryBackend(),
+    })
+    manager.ensure_directory(tmp_path, backend)
+    manager.save(content, output_path, backend)
+    assert manager.load_text(output_path, backend) == content
+    if backend != "memory":
+        assert output_path.read_bytes() == content.encode(disk_module.DISK_TEXT_ENCODING)
 
-    assert output_path.read_bytes() == content.encode(disk_module.DISK_TEXT_ENCODING)
+
+def test_text_read_refuses_structured_values(tmp_path):
+    from polystore import MemoryBackend
+
+    manager = FileManager({"memory": MemoryBackend()})
+    manager.ensure_directory(tmp_path, "memory")
+    path = tmp_path / "values.csv"
+    manager.save([{"count": 2}], path, "memory")
+    with pytest.raises(TypeError, match="is not text"):
+        manager.load_text(path, "memory")
 
 
 def test_tiff_save_normalizes_external_array_payload(tmp_path, monkeypatch) -> None:
