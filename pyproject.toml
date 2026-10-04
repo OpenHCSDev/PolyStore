@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.3.2"
+version = "0.3.3"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,7 +45,7 @@ dependencies = [
     "zarr>=3.0.10",  # Reads Zarr 2 and 3 stores; output format is backend-owned
     "numcodecs>=0.14.0",
     "ome-zarr>=0.12.2",   # Required for OME-ZARR HCS compliance
-    "zmqruntime>=0.3.0,<0.4",
+    "zmqruntime>=0.3.0,<0.5",
     "platformdirs>=4.0.0",
 ]
 
