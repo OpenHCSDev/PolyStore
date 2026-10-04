@@ -344,6 +344,10 @@ class DiskStorageBackend(StorageBackend):
             reader = csv.DictReader(f)
             return list(reader)
 
+    def load_text(self, file_path: str | Path) -> str:
+        """Read UTF-8 text exactly, preserving saved CSV formatting and newlines."""
+        return Path(file_path).read_bytes().decode(DISK_TEXT_ENCODING)
+
     def load(self, file_path: str | Path, **kwargs) -> Any:
         """
         Load data from disk based on explicit content type.

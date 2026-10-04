@@ -251,6 +251,13 @@ class FileManager:
             raise StorageResolutionError(f"Backend {backend!r} is not a DataSink.")
         return sink.image_serialization_preserves_values(authored_dtype, stored_dtype)
 
+    def load_text(self, file_path: str | Path, backend: str) -> str:
+        """Read exact stored text through the declared source backend."""
+        source = self._get_backend(backend)
+        if not isinstance(source, DataSource):
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
+        return source.load_text(file_path)
+
     def load(self, file_path: str | Path, backend: str, **kwargs) -> Any:
         """
         Load data from a file using the specified backend.
