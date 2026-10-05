@@ -1,0 +1,4 @@
+....................................................................     [100%]
+- generated xml file: /home/ts/wt/polystore-publisher-admission-031-20261002/docs/validation/publisher-admission-031-20261002/qualified.xml -
+68 passed in 8.43s
+BOUNDED_SOURCE peak_aggregate_rss_kib=322700 elapsed_seconds=9.089 returncode=0 reason=None

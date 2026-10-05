@@ -651,6 +651,14 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             fmt=self.output_format,
         )
 
+    def load_text(self, file_path: str | Path) -> str:
+        """Keep disk-passthrough text with its existing storage owner."""
+        if self._is_disk_passthrough_path(file_path):
+            from .backend_registry import get_backend_instance
+
+            return get_backend_instance(Backend.DISK.value).load_text(file_path)
+        return super().load_text(file_path)
+
     def load(self, file_path: str | Path, **kwargs) -> Any:
         """
         Load a single file from zarr store.

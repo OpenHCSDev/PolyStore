@@ -432,6 +432,13 @@ class DataSource(BackendBase):
             sample_origin_yx=request.origin_yx,
         )
 
+    def load_text(self, file_path: Union[str, Path]) -> str:
+        """Read a stored text value without decoding its document format."""
+        value = self.load(file_path)
+        if not isinstance(value, str):
+            raise TypeError(f"Stored value at {file_path!s} is not text.")
+        return value
+
     @abstractmethod
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
         """
