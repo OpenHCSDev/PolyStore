@@ -7,7 +7,9 @@ PolyStore exports cross-platform lock and JSON update primitives:
    Exclusive advisory lock context manager.
 
 ``atomic_write_json(path, data, ...)``
-   Write JSON through a temporary file and atomic replacement.
+   Write compact JSON through a temporary file and atomic replacement. Pass
+   ``indent=2`` (or another explicit indentation) for human-readable output.
+   Whitespace is a presentation choice; readers consume the parsed JSON document.
 
 ``atomic_update_json(path, update_func, ...)``
    Lock, read, transform, and replace a JSON document.
