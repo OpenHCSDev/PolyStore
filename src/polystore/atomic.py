@@ -31,7 +31,7 @@ class LockConfig:
     DEFAULT_POLL_INTERVAL: float = 0.1
     LOCK_SUFFIX: str = ".lock"
     TEMP_PREFIX: str = ".tmp"
-    JSON_INDENT: int = 2
+    JSON_INDENT: int | None = None
 
     def lock_path(self, file_path: str | Path) -> Path:
         """Derive the lock owned by one atomic file transaction."""
@@ -118,15 +118,16 @@ def _cleanup_lock(lock_fd: int, lock_path: Path) -> None:
 def atomic_write_json(
     file_path: str | Path,
     data: dict[str, Any],
-    indent: int = LOCK_CONFIG.JSON_INDENT,
+    indent: int | None = LOCK_CONFIG.JSON_INDENT,
     ensure_directory: bool = True,
 ) -> None:
-    """Atomically write JSON data to file using temporary file + rename."""
+    """Atomically write compact JSON, or explicit indentation, through one encoding."""
     file_path = Path(file_path)
 
     if ensure_directory:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
+    tmp_path = None
     try:
         tmp_path = _write_to_temp_file(file_path, data, indent)
         # Use os.replace() instead of os.rename() for atomic replacement on all platforms
@@ -135,21 +136,32 @@ def atomic_write_json(
         logger.debug(f"Atomically wrote JSON to {file_path}")
     except Exception as e:
         raise FileLockError(f"Atomic JSON write failed for {file_path}: {e}") from e
+    finally:
+        if tmp_path is not None:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
-def _write_to_temp_file(file_path: Path, data: dict[str, Any], indent: int) -> str:
-    """Write data to temporary file and return path."""
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=file_path.parent,
-        prefix=f"{LOCK_CONFIG.TEMP_PREFIX}{file_path.name}",
-        suffix=".json",
-        delete=False,
-    ) as tmp_file:
-        json.dump(data, tmp_file, indent=indent)
-        tmp_file.flush()
-        os.fsync(tmp_file.fileno())
-        return tmp_file.name
+def _write_to_temp_file(file_path: Path, data: dict[str, Any], indent: int | None) -> str:
+    """Encode once, then durably write the owned temporary JSON file."""
+    encoded = json.dumps(data, indent=indent)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=file_path.parent,
+            prefix=f"{LOCK_CONFIG.TEMP_PREFIX}{file_path.name}",
+            suffix=".json",
+            delete=False,
+        ) as tmp_file:
+            tmp_path = tmp_file.name
+            tmp_file.write(encoded)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        return tmp_path
+    except BaseException:
+        if tmp_path is not None:
+            Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 def atomic_update_json(
