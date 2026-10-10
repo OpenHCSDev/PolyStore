@@ -2905,7 +2905,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.3.4"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
@@ -3046,7 +3046,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0.0" },
     { name = "torchvision", marker = "extra == 'gpu'", specifier = ">=0.21.0,<0.23.0" },
     { name = "zarr", specifier = ">=3.0.10" },
-    { name = "zmqruntime", specifier = ">=0.3.0,<0.5" },
+    { name = "zmqruntime", specifier = ">=0.5.0,<0.6" },
 ]
 provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "bioformats", "all", "dev", "docs", "gpu"]
 
@@ -5028,7 +5028,7 @@ wheels = [
 
 [[package]]
 name = "zmqruntime"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
@@ -5040,7 +5040,7 @@ dependencies = [
     { name = "pyzmq" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/7c/3d6ebbe5b83462876988bf1ca417542269fd3c19f6402c72089ac554c950/zmqruntime-0.4.0.tar.gz", hash = "sha256:cfc3799fc5bf98aa7a57cee0d759b6a6fa7108136e8f937db122b54ddf165279", size = 718700, upload-time = "2026-10-04T23:28:12.247Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/5f/0e4bb73ef7762ac9bbb16dd398f4488e2c69edbc3d552fa91f4f87585245/zmqruntime-0.5.0.tar.gz", hash = "sha256:f78efa887a16c4b454211647adf901c3d4ea6f816a7449a8fcc0da2b8b4d02d3", size = 720752, upload-time = "2026-10-10T15:20:09.309Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/26/b4e6f1d70b44410acd6eb4a9d88000dcf1e8ab83a3cc008c213a39c0790c/zmqruntime-0.4.0-py3-none-any.whl", hash = "sha256:6c3ea4a8a8d2e516faeae670f3e9961ecfc1237cc1a8145118f04a27ed903fa0", size = 95908, upload-time = "2026-10-04T23:28:10.621Z" },
+    { url = "https://files.pythonhosted.org/packages/00/a1/af68de3633f5a17a4029481f518ce95867ce500d76d6d327a9c0ef91b658/zmqruntime-0.5.0-py3-none-any.whl", hash = "sha256:9aa136114501abe81e551fae58f517e26265a6eaf5555e26829d8c3ff3750523", size = 96024, upload-time = "2026-10-10T15:20:07.657Z" },
 ]
