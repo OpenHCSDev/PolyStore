@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -2905,7 +2905,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.2.18"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
@@ -2950,7 +2950,10 @@ dev = [
     { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "roifile", version = "2026.2.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "roifile", version = "2026.9.22", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "ruff" },
+    { name = "setuptools" },
 ]
 docs = [
     { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -3025,9 +3028,11 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "pyzmq", marker = "extra == 'all'", specifier = ">=25.0.0" },
     { name = "pyzmq", marker = "extra == 'streaming'", specifier = ">=25.0.0" },
+    { name = "roifile", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scyjava", marker = "extra == 'all'", specifier = "==1.12.5" },
     { name = "scyjava", marker = "extra == 'bioformats'", specifier = "==1.12.5" },
+    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=4.0.0" },
     { name = "sphinx-design", marker = "extra == 'docs'", specifier = ">=0.5.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.0.0" },
@@ -3041,7 +3046,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0.0" },
     { name = "torchvision", marker = "extra == 'gpu'", specifier = ">=0.21.0,<0.23.0" },
     { name = "zarr", specifier = ">=3.0.10" },
-    { name = "zmqruntime", specifier = ">=0.2.21" },
+    { name = "zmqruntime", specifier = ">=0.3.0,<0.5" },
 ]
 provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "bioformats", "all", "dev", "docs", "gpu"]
 
@@ -3499,15 +3504,15 @@ wheels = [
 
 [[package]]
 name = "python-introspect"
-version = "0.1.10"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "metaclass-registry" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/a7/bcdb96b1a634475cacb06f2e0a243372e35972a69c0dee7d1af9a8960a6c/python_introspect-0.1.10.tar.gz", hash = "sha256:bad096fd04040f0855ee6bbe72752dbd765aaafaa53a3622ab3cd2922e3a5518", size = 38244, upload-time = "2026-08-22T01:09:01.453Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/59/1adf9c99efdb045aab839a8e7f2be9a6926e84c29b5331bdf6c6d99071d7/python_introspect-0.2.4.tar.gz", hash = "sha256:321368d16eabd343172418378c1c8bdf4b86f637fe82cc52c5cb25f9e3ab0f6a", size = 55806, upload-time = "2026-10-10T15:10:51.401Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/f5/abc79638beb8476e6d7132a278138be9b2fbfb6ab4c16d784f59ec2fa63a/python_introspect-0.1.10-py3-none-any.whl", hash = "sha256:df6b684063515f33e3cf2a42d5f598b21e157c6b754bba8d57051433b568c2f5", size = 31639, upload-time = "2026-08-22T01:09:00.354Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/32/007720c6d27cfcfd9db5bec4b26f415b950ded3b2ff681aa4119f3bafac7/python_introspect-0.2.4-py3-none-any.whl", hash = "sha256:e46273a568a311546cd1be422eb28db0805d996afaf71c3ed8dbae80fabd8c57", size = 42257, upload-time = "2026-10-10T15:10:50.062Z" },
 ]
 
 [[package]]
@@ -3735,6 +3740,41 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
+]
+
+[[package]]
+name = "roifile"
+version = "2026.2.10"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version > '3.11' and python_full_version < '3.12'",
+    "python_full_version <= '3.11'",
+]
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/59/cf/49d9a139e292415d669dccd0c283d99a4d027b9edbd533d7f56db8ff85e0/roifile-2026.2.10.tar.gz", hash = "sha256:87d2b685b00a4ca15125187727e634ae5c00b902362de302b592f892259f3751", size = 27311, upload-time = "2026-02-11T19:54:35.027Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/78/3cc84d58e13234861adf91d2897254cd84d3d4a90534d91c960b672e67d1/roifile-2026.2.10-py3-none-any.whl", hash = "sha256:5928a616b58a8ff1c9f89a0590db3616ccbf069c6692f8ecec2a7349f8bbb6ec", size = 21201, upload-time = "2026-02-11T19:54:34.137Z" },
+]
+
+[[package]]
+name = "roifile"
+version = "2026.9.22"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*'",
+    "python_full_version == '3.12.*'",
+]
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5f/2c/d0706309b51ee03c180d34cbe914150188f0d3cb9b7c31ce30c934910ad5/roifile-2026.9.22.tar.gz", hash = "sha256:ba1de699dbabef664564cba6c021c2a01b47437d95b17d6ecf78287f46ef1a54", size = 29015, upload-time = "2026-09-21T20:11:57.243Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/dc/4b2843b4d5f7ce8f328f8c17616f76f3d935b313047ca1c67e4c6d31392a/roifile-2026.9.22-py3-none-any.whl", hash = "sha256:2bde74e084c4f2f07edd0d54df41fc3b482a548044ed43fbbed3e0db6b77363e", size = 21894, upload-time = "2026-09-21T20:11:56.257Z" },
 ]
 
 [[package]]
@@ -4988,7 +5028,7 @@ wheels = [
 
 [[package]]
 name = "zmqruntime"
-version = "0.2.21"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
@@ -4998,8 +5038,9 @@ dependencies = [
     { name = "psutil" },
     { name = "python-introspect" },
     { name = "pyzmq" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/34/b62f243dc8a22d02fbdc3c06a7b7dc36360194c0c17a7300fa65c997e778/zmqruntime-0.2.21.tar.gz", hash = "sha256:4f4846da21a866453268b0d3fecb22601fbeb9576260aad8996173ee6924b0e8", size = 111158, upload-time = "2026-09-17T20:03:20.838Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/7c/3d6ebbe5b83462876988bf1ca417542269fd3c19f6402c72089ac554c950/zmqruntime-0.4.0.tar.gz", hash = "sha256:cfc3799fc5bf98aa7a57cee0d759b6a6fa7108136e8f937db122b54ddf165279", size = 718700, upload-time = "2026-10-04T23:28:12.247Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/80/d53854167476cdb97a921643edc35cb4351b20ba308cb6f25bc5a43f41ce/zmqruntime-0.2.21-py3-none-any.whl", hash = "sha256:4f67232aed1d3d395ad2fd1b5b593d55f881e760c02dfa65ed4fb32cd6aa8ee0", size = 83207, upload-time = "2026-09-17T20:03:19.538Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/26/b4e6f1d70b44410acd6eb4a9d88000dcf1e8ab83a3cc008c213a39c0790c/zmqruntime-0.4.0-py3-none-any.whl", hash = "sha256:6c3ea4a8a8d2e516faeae670f3e9961ecfc1237cc1a8145118f04a27ed903fa0", size = 95908, upload-time = "2026-10-04T23:28:10.621Z" },
 ]
