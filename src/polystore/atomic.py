@@ -194,7 +194,7 @@ def _read_json_or_default(
         return default_data
 
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to read {file_path}, using default: {e}")
