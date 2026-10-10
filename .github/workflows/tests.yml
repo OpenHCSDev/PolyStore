@@ -113,6 +113,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[bioformats,dev]"
 
+      # Tests forbid downloads (tests/conftest.py), so the bundle cache is
+      # filled here, outside pytest, when actions/cache restores nothing.
+      - name: Prepare the declared Fiji bundle cache
+        run: python -c "from polystore.imagej_runtime import FIJI_IMAGEJ_RUNTIME; print(FIJI_IMAGEJ_RUNTIME.distribution.materialize().imagej_directory)"
+
       - name: Resolve and initialize the declared Fiji runtime
         env:
           POLYSTORE_LIVE_IMAGEJ_TEST: "1"

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_publisher_installs_the_dev_candidate_editably():
-    workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+    workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
     commands = [shlex.split(line.strip()) for line in workflow.splitlines()]
     (install,) = [command for command in commands if ".[dev]" in command]
     assert install[:4] == ["python", "-m", "pip", "install"]
@@ -30,7 +30,7 @@ def test_editable_artifact_owns_checkout_path_and_roi_dev_requirement(tmp_path, 
         assert Path(archive.read(pth).decode().strip()).resolve() == ROOT / "src"
         (metadata_name,) = [name for name in archive.namelist() if name.endswith("/METADATA")]
         metadata = Parser().parsestr(archive.read(metadata_name).decode())
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     assert metadata["Name"] == project["name"]
     assert metadata["Version"] == project["version"]
     requirements = [Requirement(value) for value in metadata.get_all("Requires-Dist")]
