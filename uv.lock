@@ -2905,7 +2905,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
@@ -3046,7 +3046,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0.0" },
     { name = "torchvision", marker = "extra == 'gpu'", specifier = ">=0.21.0,<0.23.0" },
     { name = "zarr", specifier = ">=3.0.10" },
-    { name = "zmqruntime", specifier = ">=0.5.0,<0.6" },
+    { name = "zmqruntime", specifier = ">=0.6,<0.7" },
 ]
 provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "bioformats", "all", "dev", "docs", "gpu"]
 
@@ -3504,15 +3504,15 @@ wheels = [
 
 [[package]]
 name = "python-introspect"
-version = "0.2.4"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "metaclass-registry" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/59/1adf9c99efdb045aab839a8e7f2be9a6926e84c29b5331bdf6c6d99071d7/python_introspect-0.2.4.tar.gz", hash = "sha256:321368d16eabd343172418378c1c8bdf4b86f637fe82cc52c5cb25f9e3ab0f6a", size = 55806, upload-time = "2026-10-10T15:10:51.401Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/7c/f3e5ae3cdc5ebe770077a112a2c17a2ff170ddc20e789d3c32292764bf43/python_introspect-0.2.5.tar.gz", hash = "sha256:c06cc644c5f9deac5a539519017f81fe8de615ed8c0bb6a9638fe0d2ff5a48f8", size = 55982, upload-time = "2026-10-10T16:53:51.994Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/32/007720c6d27cfcfd9db5bec4b26f415b950ded3b2ff681aa4119f3bafac7/python_introspect-0.2.4-py3-none-any.whl", hash = "sha256:e46273a568a311546cd1be422eb28db0805d996afaf71c3ed8dbae80fabd8c57", size = 42257, upload-time = "2026-10-10T15:10:50.062Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/91/c54752c7440800faec6ac3c81712995e2a200c5a052d03d76f610375ca56/python_introspect-0.2.5-py3-none-any.whl", hash = "sha256:384d4abb979eb0e373eadba4ff879bc04fab829afd7c3822530bcfd9c42d8e96", size = 42460, upload-time = "2026-10-10T16:53:50.787Z" },
 ]
 
 [[package]]
@@ -5028,7 +5028,7 @@ wheels = [
 
 [[package]]
 name = "zmqruntime"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
@@ -5040,7 +5040,7 @@ dependencies = [
     { name = "pyzmq" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/5f/0e4bb73ef7762ac9bbb16dd398f4488e2c69edbc3d552fa91f4f87585245/zmqruntime-0.5.0.tar.gz", hash = "sha256:f78efa887a16c4b454211647adf901c3d4ea6f816a7449a8fcc0da2b8b4d02d3", size = 720752, upload-time = "2026-10-10T15:20:09.309Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/2f/3eefe946dd5e05d36636168368423e0da6da120137b95892abb8e6496668/zmqruntime-0.6.0.tar.gz", hash = "sha256:ab2678650d42f191615346491bd7c5817a06da9e22ab1f6afae905b67216c2a7", size = 720867, upload-time = "2026-10-10T22:36:04.29Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/a1/af68de3633f5a17a4029481f518ce95867ce500d76d6d327a9c0ef91b658/zmqruntime-0.5.0-py3-none-any.whl", hash = "sha256:9aa136114501abe81e551fae58f517e26265a6eaf5555e26829d8c3ff3750523", size = 96024, upload-time = "2026-10-10T15:20:07.657Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/6c/ae8db3065b890842fa5e07f919c8907a9eb5a3579f203b2530f49972ba02/zmqruntime-0.6.0-py3-none-any.whl", hash = "sha256:98221c5f3dfedb75f96f62182688f215c2fa2a716391355f91dcd1a222c058ca", size = 95537, upload-time = "2026-10-10T22:36:02.701Z" },
 ]
