@@ -13,7 +13,6 @@ SHARED MEMORY OWNERSHIP MODEL:
 """
 
 import logging
-from enum import Enum
 
 from zmqruntime.viewer_protocol import (
     ViewerBatchItemWireField,
@@ -32,12 +31,6 @@ from .streaming.viewer_transport import ViewerStreamItemPayload
 
 logger = logging.getLogger(__name__)
 
-
-class NapariDisplayWireField(str, Enum):
-    """Napari-specific display fields inside the shared viewer display payload."""
-
-    COLORMAP = "colormap"
-    VARIABLE_SIZE_HANDLING = "variable_size_handling"
 
 
 class NapariStreamingBackend(StreamingBackend):

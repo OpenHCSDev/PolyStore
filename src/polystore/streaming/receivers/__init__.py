@@ -11,12 +11,11 @@ from polystore.streaming.receivers.core import (
     GroupedWindowItems,
     WindowProjectionPayloadProvider,
     WindowProjectionSource,
-    group_items_by_component_modes,
+    group_items_into_windows,
 )
 from polystore.streaming.receivers.fiji.fiji_batch_processor import FijiBatchProcessor
 from polystore.streaming.receivers.napari import (
     NapariBatchProcessor,
-    normalize_component_layout,
     build_route_key,
 )
 
@@ -27,9 +26,8 @@ __all__ = [
     "GroupedWindowItems",
     "WindowProjectionPayloadProvider",
     "WindowProjectionSource",
-    "group_items_by_component_modes",
+    "group_items_into_windows",
     "FijiBatchProcessor",
     "NapariBatchProcessor",
-    "normalize_component_layout",
     "build_route_key",
 ]

@@ -9,7 +9,7 @@ from polystore.streaming.receivers.core.window_projection import (
     GroupedWindowItems,
     WindowProjectionPayloadProvider,
     WindowProjectionSource,
-    group_items_by_component_modes,
+    group_items_into_windows,
 )
 
 __all__ = [
@@ -19,5 +19,5 @@ __all__ = [
     "GroupedWindowItems",
     "WindowProjectionPayloadProvider",
     "WindowProjectionSource",
-    "group_items_by_component_modes",
+    "group_items_into_windows",
 ]
