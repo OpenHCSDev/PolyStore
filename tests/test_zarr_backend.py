@@ -79,6 +79,16 @@ def test_zarr_lists_and_reports_directories_of_its_passthrough_saves(tmp_path):
     assert backend.list_files(results, extensions={".tif"}) == []
 
 
+@pytest.mark.parametrize("name", ["table.csv", "rois.roi.zip", "bundle.zip"])
+def test_zarr_deletes_every_passthrough_save_it_wrote(tmp_path, name):
+    backend = ZarrStorageBackend()
+    path = tmp_path / "results" / name
+    backend.save("payload" if name.endswith(".csv") else b"zip", path)
+    backend.delete(path)
+    assert not path.exists()
+    assert not backend.exists(path)
+
+
 def test_zarr_lists_passthrough_saves_beside_arrays_without_store_metadata(tmp_path):
     backend = ZarrStorageBackend()
     store = tmp_path / "images"

@@ -791,9 +791,7 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             IsADirectoryError: If path is a non-empty group
             StorageResolutionError: For unexpected failures
         """
-        # Passthrough to disk backend for text files (JSON, CSV, TXT)
-        path_str = str(path)
-        if path_str.endswith((".json", ".csv", ".txt")):
+        if self._is_disk_passthrough_path(path):
             from .backend_registry import get_backend_instance
 
             disk_backend = get_backend_instance(Backend.DISK.value)
