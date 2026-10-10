@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PLATE_NAME = os.getenv("POLYSTORE_PLATE_NAME", "Polystore_Plate")
 DISK_PASSTHROUGH_EXTENSIONS = (".json", ".csv", ".txt", ".roi.zip", ".zip")
+ZARR_METADATA_FILENAMES = frozenset({"zarr.json", ".zgroup", ".zarray", ".zattrs", ".zmetadata"})
 
 
 def _get_attr(attrs: Any, key: str):
@@ -128,6 +129,26 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
     @staticmethod
     def _is_disk_passthrough_path(path: str | Path) -> bool:
         return str(path).endswith(DISK_PASSTHROUGH_EXTENSIONS)
+
+    @classmethod
+    def _disk_passthrough_files(cls, directory: str | Path, *, recursive: bool) -> list[Path]:
+        """Files this backend saved on disk inside ``directory``, never its own metadata."""
+        root = Path(directory)
+        if not root.is_dir():
+            return []
+        entries = root.rglob("*") if recursive else root.iterdir()
+        return sorted(
+            entry
+            for entry in entries
+            if entry.name not in ZARR_METADATA_FILENAMES
+            and cls._is_disk_passthrough_path(entry)
+            and entry.is_file()
+        )
+
+    @staticmethod
+    def _declares_array_store(directory: str | Path) -> bool:
+        root = Path(directory)
+        return (root / "zarr.json").is_file() or (root / ".zgroup").is_file()
 
     def supports_file_path(self, path: str | Path) -> bool:
         return self._is_disk_passthrough_path(path) or super().supports_file_path(path)
@@ -722,6 +743,12 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                 return any(name.lower().endswith(ext.lower()) for ext in extensions)
             return True
 
+        # Disk-passthrough saves are this backend's files too: list them beside the arrays.
+        saved_on_disk = self._disk_passthrough_files(directory, recursive=recursive)
+        result.extend(path for path in saved_on_disk if _matches_filters(path.name))
+        if saved_on_disk and not self._declares_array_store(directory):
+            return result
+
         try:
             # Open zarr group and traverse OME-ZARR structure
             location = OmeZarrLocation(store, mode="r")
@@ -953,6 +980,10 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
             NotADirectoryError: If resolved target is not a group
             StorageResolutionError: For symlink cycles or other failures
         """
+        if not self._declares_array_store(path) and self._disk_passthrough_files(
+            path, recursive=False
+        ):
+            return True
         if not isinstance(self._resolved_node(path), zarr.Group):
             raise NotADirectoryError(f"Zarr path is an array (file): {path}")
         return True

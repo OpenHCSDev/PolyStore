@@ -65,6 +65,34 @@ def test_zarr_declared_passthrough_support_batch_save_and_native_readback(tmp_pa
         assert backend.physical_source_path(path, base_path=tmp_path) == path
 
 
+def test_zarr_lists_and_reports_directories_of_its_passthrough_saves(tmp_path):
+    """A result directory holding only passthrough saves is this backend's directory."""
+    backend = ZarrStorageBackend()
+    results = tmp_path / "results"
+    paths = [results / "A01_details.csv", results / "A01_rois.roi.zip"]
+    for path in paths:
+        backend.save("payload" if path.suffix == ".csv" else b"zip", path)
+    assert all(backend.exists(path) for path in paths)
+    assert backend.is_dir(results)
+    assert backend.list_files(results) == sorted(paths)
+    assert backend.list_files(results, extensions={".csv"}) == [paths[0]]
+    assert backend.list_files(results, extensions={".tif"}) == []
+
+
+def test_zarr_lists_passthrough_saves_beside_arrays_without_store_metadata(tmp_path):
+    backend = ZarrStorageBackend()
+    store = tmp_path / "images"
+    array_path = store / "A01_s1.tif"
+    text_path = store / "positions.json"
+    backend.save(np.zeros((2, 3), dtype=np.uint16), array_path)
+    backend.save("[]", text_path)
+    assert backend.is_dir(store)
+    listed = backend.list_files(store)
+    assert text_path in listed
+    assert not any(path.name in zarr_module.ZARR_METADATA_FILENAMES for path in listed)
+    assert backend.list_files(store, extensions={".json"}) == [text_path]
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_zarr_mixed_passthrough_array_batch_rejects_before_any_writes(tmp_path, reverse):
     backend = ZarrStorageBackend()
