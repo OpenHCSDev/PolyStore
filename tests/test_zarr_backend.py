@@ -152,7 +152,6 @@ def save_hcs_image_axis_batch(
         axes=(
             ZarrBatchAxis(
                 axis_name,
-                "field",
                 values,
                 ZarrBatchAxisRole.HCS_IMAGE,
             ),
@@ -306,15 +305,14 @@ class TestZarrBatchOperations:
         coordinates = ((1, 0, 1, 0), (0, 0, 0, 0), (0, 0, 1, 0), (1, 0, 0, 0))
         layout = ZarrBatchLayout(
             axes=(
-                ZarrBatchAxis("t", "time", ("1", "2")),
+                ZarrBatchAxis("t", ("1", "2")),
                 ZarrBatchAxis(
-                    "field",
                     "field",
                     ("1",),
                     ZarrBatchAxisRole.HCS_IMAGE,
                 ),
-                ZarrBatchAxis("c", "channel", ("1", "2")),
-                ZarrBatchAxis("z", "space", ("1",)),
+                ZarrBatchAxis("c", ("1", "2")),
+                ZarrBatchAxis("z", ("1",)),
             ),
             item_coordinates=coordinates,
         )
@@ -356,7 +354,7 @@ class TestZarrBatchOperations:
     def test_batch_operations_length_mismatch(self, zarr_backend, temp_zarr_dir):
         """Test that batch operations raise error on length mismatch."""
         layout = ZarrBatchLayout(
-            axes=(ZarrBatchAxis("c", "channel", ("1",)),),
+            axes=(ZarrBatchAxis("c", ("1",)),),
             item_coordinates=((0,),),
         )
         with pytest.raises(ValueError, match="equal lengths"):
@@ -384,7 +382,7 @@ class TestZarrBatchOperations:
         )
         before = zarr_backend.load_batch(paths)
         layout = ZarrBatchLayout(
-            axes=(ZarrBatchAxis("c", "channel", ("1", "2")),),
+            axes=(ZarrBatchAxis("c", ("1", "2")),),
             item_coordinates=((0,), (1,)),
         )
         with pytest.raises(ValueError, match="image-plane shape|two-dimensional"):
@@ -411,15 +409,14 @@ class TestZarrBatchOperations:
         ]
         layout = ZarrBatchLayout(
             axes=(
-                ZarrBatchAxis("t", "time", ("1",)),
+                ZarrBatchAxis("t", ("1",)),
                 ZarrBatchAxis(
-                    "field",
                     "field",
                     ("3", "7"),
                     ZarrBatchAxisRole.HCS_IMAGE,
                 ),
-                ZarrBatchAxis("c", "channel", ("1",)),
-                ZarrBatchAxis("z", "space", ("1",)),
+                ZarrBatchAxis("c", ("1",)),
+                ZarrBatchAxis("z", ("1",)),
             ),
             item_coordinates=((0, 0, 0, 0), (0, 1, 0, 0)),
         )
