@@ -13,12 +13,9 @@ from polystore.streaming.identity import (
 from polystore.streaming.receivers.core import (
     DebouncedBatchEngine,
     WindowProjectionSource,
-    group_items_by_component_modes,
+    group_items_into_windows,
 )
-from polystore.streaming.receivers.napari import (
-    build_route_key,
-    normalize_component_layout,
-)
+from polystore.streaming.receivers.napari import build_route_key
 from polystore.streaming_constants import StreamingDataType
 
 
@@ -64,7 +61,7 @@ class PipelineProducerFixture:
         )
 
 
-def test_group_items_by_component_modes_keys_windows_by_producer_identity() -> None:
+def test_group_items_into_windows_keys_windows_by_producer_identity() -> None:
     image_identity = PipelineProducerFixture.main_output(
         step_name="RawLoad",
         pipeline_position=1,
@@ -90,18 +87,16 @@ def test_group_items_by_component_modes_keys_windows_by_producer_identity() -> N
     component_modes = {"well": "frame", "channel": "channel"}
     component_order = ["well", "channel"]
 
-    grouped = group_items_by_component_modes(
+    grouped = group_items_into_windows(
         WindowProjectionSource.from_wire_payloads(items),
         display_layout=ViewerBatchDisplayPayload(
             component_modes=component_modes,
             component_order=component_order,
         ),
+        window_components=(),
     )
 
-    assert grouped.window_components == []
-    assert grouped.channel_components == ["channel"]
-    assert grouped.frame_components == ["well"]
-    assert grouped.slice_components == []
+    assert grouped.window_components == ()
     assert grouped.fixed_window_labels[
         "origin_pipeline_kind_artifact_projection_Nuclei_step_2_name_Segment"
     ] == (("producer", "3. Segment Nuclei"),)
@@ -123,7 +118,7 @@ def test_named_main_outputs_share_projection_and_keep_exact_provenance() -> None
         pipeline_position=2,
     )
 
-    grouped = group_items_by_component_modes(
+    grouped = group_items_into_windows(
         WindowProjectionSource.from_wire_payloads(
             [
                 {
@@ -142,6 +137,7 @@ def test_named_main_outputs_share_projection_and_keep_exact_provenance() -> None
             component_modes={"channel": "channel"},
             component_order=("channel",),
         ),
+        window_components=(),
     )
 
     assert tuple(grouped.windows) == (
@@ -158,33 +154,23 @@ def test_named_main_outputs_share_projection_and_keep_exact_provenance() -> None
     assert build_route_key(
         producer_identity=first,
         component_info={"channel": 1},
-        display_layout=ViewerBatchDisplayPayload(
-            component_modes={"channel": "stack"},
-            component_order=("channel",),
-        ),
+        layer_components=(),
         data_type=StreamingDataType.IMAGE,
     ) == build_route_key(
         producer_identity=second,
         component_info={"channel": 2},
-        display_layout=ViewerBatchDisplayPayload(
-            component_modes={"channel": "stack"},
-            component_order=("channel",),
-        ),
+        layer_components=(),
         data_type=StreamingDataType.IMAGE,
-    )
-    layer_layout = ViewerBatchDisplayPayload(
-        component_modes={"channel": "layer"},
-        component_order=("channel",),
     )
     assert build_route_key(
         producer_identity=first,
         component_info={"channel": 1},
-        display_layout=layer_layout,
+        layer_components=("channel",),
         data_type=StreamingDataType.IMAGE,
     ) != build_route_key(
         producer_identity=second,
         component_info={"channel": 2},
-        display_layout=layer_layout,
+        layer_components=("channel",),
         data_type=StreamingDataType.IMAGE,
     )
 
@@ -202,7 +188,7 @@ def test_named_main_outputs_cannot_claim_the_same_projection_slot() -> None:
     )
 
     try:
-        group_items_by_component_modes(
+        group_items_into_windows(
             WindowProjectionSource.from_wire_payloads(
                 [
                     {
@@ -221,6 +207,7 @@ def test_named_main_outputs_cannot_claim_the_same_projection_slot() -> None:
                 component_modes={"channel": "channel"},
                 component_order=("channel",),
             ),
+            window_components=(),
         )
     except ValueError as error:
         assert "same component coordinate" in str(error)
@@ -228,14 +215,14 @@ def test_named_main_outputs_cannot_claim_the_same_projection_slot() -> None:
         raise AssertionError("distinct producer slot collision must fail loudly")
 
 
-def test_group_items_by_component_modes_rejects_missing_metadata() -> None:
+def test_group_items_into_windows_rejects_missing_metadata() -> None:
     producer = PipelineProducerFixture.main_output(
         step_name="RawLoad",
         pipeline_position=1,
     )
 
     try:
-        group_items_by_component_modes(
+        group_items_into_windows(
             WindowProjectionSource.from_wire_payloads(
                 [{"producer_identity": producer.to_payload()}]
             ),
@@ -243,6 +230,7 @@ def test_group_items_by_component_modes_rejects_missing_metadata() -> None:
                 component_modes={"well": "window"},
                 component_order=["well"],
             ),
+            window_components=('well',),
         )
     except ValueError as error:
         assert "metadata" in str(error)
@@ -291,26 +279,18 @@ def test_napari_route_key_builder_uses_producer_layer_components_and_payload_typ
         step_name="Segment",
         pipeline_position=2,
     )
-    component_modes = {"well": "layer", "channel": "stack", "site": "layer"}
-    component_order = ["well", "channel", "site"]
     component_info = {"well": "A01", "channel": 2, "site": 3}
 
     key_image = build_route_key(
         producer_identity=producer,
         component_info=component_info,
-        display_layout=ViewerBatchDisplayPayload(
-            component_modes=component_modes,
-            component_order=component_order,
-        ),
+        layer_components=("well", "site"),
         data_type=StreamingDataType.IMAGE,
     )
     key_shapes = build_route_key(
         producer_identity=producer,
         component_info=component_info,
-        display_layout=ViewerBatchDisplayPayload(
-            component_modes=component_modes,
-            component_order=component_order,
-        ),
+        layer_components=("well", "site"),
         data_type=StreamingDataType.SHAPES,
     )
 
@@ -329,10 +309,7 @@ def test_napari_route_key_builder_rejects_missing_layer_component() -> None:
         build_route_key(
             producer_identity=producer,
             component_info={"well": "A01"},
-            display_layout=ViewerBatchDisplayPayload(
-                component_modes={"well": "layer", "site": "layer"},
-                component_order=["well", "site"],
-            ),
+            layer_components=("well", "site"),
             data_type=StreamingDataType.IMAGE,
         )
     except ValueError as error:
@@ -340,16 +317,6 @@ def test_napari_route_key_builder_rejects_missing_layer_component() -> None:
     else:
         raise AssertionError("missing layer component must fail loudly")
 
-
-def test_normalize_component_layout_dict_config() -> None:
-    display_layout = normalize_component_layout(
-        {
-            "component_modes": {"well": "layer", "channel": "stack"},
-            "component_order": ["well", "channel"],
-        }
-    )
-    assert list(display_layout.component_order) == ["well", "channel"]
-    assert display_layout.component_modes["well"] == "layer"
 
 
 def test_debounced_batch_engine_flush_processes_pending_once() -> None:

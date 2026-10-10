@@ -15,18 +15,10 @@ from polystore.streaming.identity import (
 from zmqruntime.viewer_protocol import (
     ViewerBatchDisplayPayload,
     ViewerBatchItemWireField,
-    ViewerComponentMode,
     ViewerWireMapping,
     ViewerWireValue,
 )
 
-
-WINDOW_COMPONENT_MODES = (
-    ViewerComponentMode.WINDOW,
-    ViewerComponentMode.CHANNEL,
-    ViewerComponentMode.SLICE,
-    ViewerComponentMode.FRAME,
-)
 WindowLabel = tuple[str, ViewerWireValue]
 WindowProjectionItemT = TypeVar("WindowProjectionItemT")
 WindowProjectionProviderT = TypeVar(
@@ -56,12 +48,9 @@ class WindowItemPayload(dict[str, ViewerWireValue]):
 
 @dataclass(frozen=True, slots=True)
 class GroupedWindowItems(Generic[WindowProjectionItemT]):
-    """Projection result for a single batch."""
+    """Items of one batch grouped into windows."""
 
-    window_components: list[str]
-    channel_components: list[str]
-    slice_components: list[str]
-    frame_components: list[str]
+    window_components: tuple[str, ...]
     windows: dict[str, list[WindowProjectionItemT]]
     fixed_window_labels: dict[str, tuple[WindowLabel, ...]]
 
@@ -143,26 +132,13 @@ class WindowProjectionSource(Generic[WindowProjectionItemT]):
         return dict(value)
 
 
-def group_items_by_component_modes(
+def group_items_into_windows(
     items: Sequence[WindowProjectionSource[WindowProjectionItemT]],
     display_layout: ViewerBatchDisplayPayload,
+    window_components: Sequence[str],
 ) -> GroupedWindowItems[WindowProjectionItemT]:
-    """Project items into window groups using declared component modes."""
-    mode_groups = display_layout.component_mode_groups(WINDOW_COMPONENT_MODES)
-    mode_groups.require_all_supported("window projection")
-
-    window_components = list(
-        mode_groups.components_for_mode(ViewerComponentMode.WINDOW)
-    )
-    channel_components = list(
-        mode_groups.components_for_mode(ViewerComponentMode.CHANNEL)
-    )
-    slice_components = list(
-        mode_groups.components_for_mode(ViewerComponentMode.SLICE)
-    )
-    frame_components = list(
-        mode_groups.components_for_mode(ViewerComponentMode.FRAME)
-    )
+    """Group items into one window per value combination of ``window_components``."""
+    window_components = tuple(window_components)
 
     windows: dict[str, list[WindowProjectionItemT]] = {}
     fixed_window_labels: dict[str, tuple[WindowLabel, ...]] = {}
@@ -226,9 +202,6 @@ def group_items_by_component_modes(
 
     return GroupedWindowItems(
         window_components=window_components,
-        channel_components=channel_components,
-        slice_components=slice_components,
-        frame_components=frame_components,
         windows=windows,
         fixed_window_labels=fixed_window_labels,
     )

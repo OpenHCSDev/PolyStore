@@ -12,7 +12,6 @@ SHARED MEMORY OWNERSHIP MODEL:
 """
 
 import logging
-from enum import Enum
 
 from zmqruntime.viewer_protocol import (
     ViewerBatchItemWireField,
@@ -36,12 +35,6 @@ from .streaming_constants import StreamingDataType
 
 logger = logging.getLogger(__name__)
 
-
-class FijiDisplayWireField(str, Enum):
-    """Fiji-specific display fields inside the shared viewer display payload."""
-
-    LUT = "lut"
-    AUTO_CONTRAST = "auto_contrast"
 
 
 class FijiMessageMetadata:
