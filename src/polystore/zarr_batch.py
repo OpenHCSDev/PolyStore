@@ -6,12 +6,22 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 
 _ATTR_PREFIX = "polystore"
 ATTR_FILENAME_MAP = f"{_ATTR_PREFIX}_filename_map"
 ATTR_OUTPUT_PATHS = f"{_ATTR_PREFIX}_output_paths"
 ATTR_DIMENSIONS = f"{_ATTR_PREFIX}_dimensions"
 ATTR_IMAGE_COORDINATE = f"{_ATTR_PREFIX}_image_coordinate"
+
+
+NGFF_AXIS_TYPES: Mapping[str, str] = MappingProxyType(
+    {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
+)
+"""OME-NGFF axis names and the axis type each one declares."""
+
+PIXEL_AXIS_NAMES = ("y", "x")
+"""Storage-owned pixel axes that follow every declared batch axis."""
 
 
 class ZarrBatchAxisRole(Enum):
@@ -31,17 +41,19 @@ class ZarrBatchAxis:
     """
 
     name: str
-    axis_type: str
     values: tuple[str, ...]
     role: ZarrBatchAxisRole = ZarrBatchAxisRole.ARRAY
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Zarr batch axis name cannot be empty")
-        if not self.axis_type:
-            raise ValueError("Zarr batch axis type cannot be empty")
-        if self.name in {"x", "y"}:
+        if self.name in PIXEL_AXIS_NAMES:
             raise ValueError("Zarr batch axes cannot redeclare pixel axes x or y")
+        if self.role is ZarrBatchAxisRole.ARRAY and self.name not in NGFF_AXIS_TYPES:
+            raise ValueError(
+                f"Zarr batch array axis {self.name!r} is not an OME-NGFF axis; "
+                f"array axes are named {sorted(set(NGFF_AXIS_TYPES) - set(PIXEL_AXIS_NAMES))}"
+            )
         if not self.values:
             raise ValueError(f"Zarr batch axis {self.name!r} has no values")
         if len(set(self.values)) != len(self.values):
@@ -58,7 +70,7 @@ class ZarrBatchAxis:
     def ngff_declaration(self) -> dict[str, str]:
         """Return this axis in the representation consumed by ome-zarr."""
 
-        return {"name": self.name, "type": self.axis_type}
+        return {"name": self.name, "type": NGFF_AXIS_TYPES[self.name]}
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,9 +161,8 @@ class ZarrBatchLayout:
     def ngff_axes(self) -> tuple[dict[str, str], ...]:
         """Return declared axes followed by the storage-owned pixel axes."""
 
-        return tuple(axis.ngff_declaration() for axis in self.array_axes) + (
-            {"name": "y", "type": "space"},
-            {"name": "x", "type": "space"},
+        return tuple(axis.ngff_declaration() for axis in self.array_axes) + tuple(
+            {"name": name, "type": NGFF_AXIS_TYPES[name]} for name in PIXEL_AXIS_NAMES
         )
 
     def dimensions_attribute(self) -> dict[str, Mapping[str, object]]:

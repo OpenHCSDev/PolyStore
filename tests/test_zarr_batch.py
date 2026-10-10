@@ -15,9 +15,29 @@ from polystore.zarr_batch import (
 def test_layout_rejects_incomplete_dense_coordinates() -> None:
     with pytest.raises(ValueError, match="one item for every coordinate"):
         ZarrBatchLayout(
-            axes=(ZarrBatchAxis("c", "channel", ("1", "2")),),
+            axes=(ZarrBatchAxis("c", ("1", "2")),),
             item_coordinates=((0,),),
         )
+
+
+def test_array_axes_take_their_type_from_the_ngff_axis_name() -> None:
+    layout = ZarrBatchLayout(
+        axes=(
+            ZarrBatchAxis("t", ("1",)),
+            ZarrBatchAxis("c", ("1",)),
+            ZarrBatchAxis("z", ("1",)),
+        ),
+        item_coordinates=((0, 0, 0),),
+    )
+    assert layout.ngff_axes == (
+        {"name": "t", "type": "time"},
+        {"name": "c", "type": "channel"},
+        {"name": "z", "type": "space"},
+        {"name": "y", "type": "space"},
+        {"name": "x", "type": "space"},
+    )
+    with pytest.raises(ValueError, match="not an OME-NGFF axis"):
+        ZarrBatchAxis("band", ("1",))
 
 
 def test_layout_rejects_multiple_hcs_image_axes() -> None:
@@ -25,8 +45,8 @@ def test_layout_rejects_multiple_hcs_image_axes() -> None:
     with pytest.raises(ValueError, match="at most one HCS image axis"):
         ZarrBatchLayout(
             axes=(
-                ZarrBatchAxis("field", "field", ("1",), image_role),
-                ZarrBatchAxis("scene", "field", ("1",), image_role),
+                ZarrBatchAxis("field", ("1",), image_role),
+                ZarrBatchAxis("scene", ("1",), image_role),
             ),
             item_coordinates=((0, 0),),
         )
