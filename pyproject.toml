@@ -102,6 +102,7 @@ dev = [
     "pandas>=2.3.1",
     "jpype1>=1.4.0",
     "roifile",
+    "setuptools>=77.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]

@@ -206,7 +206,7 @@ def test_format_probe_closes_failed_reader_and_can_retry(monkeypatch, operation)
 
 
 def test_format_probe_operations_share_the_context_reader_lifetime():
-    tree = ast.parse(Path(bioformats_java.__file__).read_text())
+    tree = ast.parse(Path(bioformats_java.__file__).read_text(encoding="utf-8"))
     context = next(
         node
         for node in tree.body
