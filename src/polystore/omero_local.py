@@ -1130,6 +1130,18 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
         except (ValueError, IndexError):
             return False
 
+    def is_dir(self, path: str | Path) -> bool:
+        """A valid OMERO path without a file suffix names a virtual directory.
+
+        Plates and their derived output groups are directories; planes and
+        tables are files named with their format's suffix.
+        """
+        return self.exists(path) and not PurePosixPath(str(path).replace("\\", "/")).suffix
+
+    def is_file(self, path: str | Path) -> bool:
+        """A valid OMERO path with a file suffix names a virtual file."""
+        return self.exists(path) and bool(PurePosixPath(str(path).replace("\\", "/")).suffix)
+
     def ensure_directory(self, directory: str | Path) -> None:
         """
         Ensure directory exists (no-op for OMERO virtual backend).
