@@ -1992,11 +1992,11 @@ wheels = [
 
 [[package]]
 name = "metaclass-registry"
-version = "0.2.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1a/b9/a46e1949baeebc216edba81f5cb78744fee323a2dda7c265848a99ac3e1f/metaclass_registry-0.2.0.tar.gz", hash = "sha256:381215e8e8cbf19869e3f3a5ede9ff973801298f5a943f26c4d9a67db853833e", size = 27954, upload-time = "2026-08-05T23:07:43.274Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/a7/480cac5c73f0b5b50359ce2b5248d816b331b8d104e5ffb0741de669c020/metaclass_registry-0.4.0.tar.gz", hash = "sha256:b66fce0cbeb6460d7835103d4206dd11be4b607247db75608a843e2e57b60fd3", size = 45713, upload-time = "2026-10-12T12:11:39.549Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/23/42be968d1a676f8e958f070be023b104a8008ce63cac6878ca6562ed40f7/metaclass_registry-0.2.0-py3-none-any.whl", hash = "sha256:03b1c1e0b85bd9f8ddba06d7ffa0ae74bd10ddfae0a80a7eff6e4f36a5ebd93e", size = 21202, upload-time = "2026-08-05T23:07:42.184Z" },
+    { url = "https://files.pythonhosted.org/packages/40/e9/cc748c2779cea13bae6f89f7db2e0f5ba5da47c5a9380c7c0eb73adf7ce7/metaclass_registry-0.4.0-py3-none-any.whl", hash = "sha256:9b68043883edafd5da04d171f3aeeb14e5fa27094ffcb154d959832091a91dcd", size = 33389, upload-time = "2026-10-12T12:11:38.121Z" },
 ]
 
 [[package]]
@@ -2905,7 +2905,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.6.1"
+version = "0.6.2"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
@@ -3012,7 +3012,7 @@ requires-dist = [
     { name = "jax-cuda12-plugin", marker = "extra == 'gpu'", specifier = ">=0.5.3,<0.6.0" },
     { name = "jaxlib", marker = "extra == 'gpu'", specifier = ">=0.5.3,<0.6.0" },
     { name = "jpype1", marker = "extra == 'dev'", specifier = ">=1.4.0" },
-    { name = "metaclass-registry", specifier = ">=0.1.5" },
+    { name = "metaclass-registry", specifier = ">=0.4.0" },
     { name = "numcodecs", specifier = ">=0.14.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "ome-zarr", specifier = ">=0.12.2" },
@@ -3046,7 +3046,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0.0" },
     { name = "torchvision", marker = "extra == 'gpu'", specifier = ">=0.21.0,<0.23.0" },
     { name = "zarr", specifier = ">=3.0.10" },
-    { name = "zmqruntime", specifier = ">=0.6,<0.7" },
+    { name = "zmqruntime", specifier = ">=0.6.4,<0.7" },
 ]
 provides-extras = ["zarr", "torch", "jax", "tensorflow", "cupy", "streaming", "omero", "bioformats", "all", "dev", "docs", "gpu"]
 
@@ -5028,7 +5028,7 @@ wheels = [
 
 [[package]]
 name = "zmqruntime"
-version = "0.6.0"
+version = "0.6.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
@@ -5040,7 +5040,7 @@ dependencies = [
     { name = "pyzmq" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/2f/3eefe946dd5e05d36636168368423e0da6da120137b95892abb8e6496668/zmqruntime-0.6.0.tar.gz", hash = "sha256:ab2678650d42f191615346491bd7c5817a06da9e22ab1f6afae905b67216c2a7", size = 720867, upload-time = "2026-10-10T22:36:04.29Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/64/df1de7577e7ae986625feb242e217477bc2dd29b9e905754324911f17eb1/zmqruntime-0.6.4.tar.gz", hash = "sha256:8e980bc4d0a2945c65d1dc94e9eb4d1a8599c9ee9cff680fe828ec9bda59314b", size = 727576, upload-time = "2026-10-12T12:35:33.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/6c/ae8db3065b890842fa5e07f919c8907a9eb5a3579f203b2530f49972ba02/zmqruntime-0.6.0-py3-none-any.whl", hash = "sha256:98221c5f3dfedb75f96f62182688f215c2fa2a716391355f91dcd1a222c058ca", size = 95537, upload-time = "2026-10-10T22:36:02.701Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/77/7451f76f64db3e9616461746be8841183962fb947df11cbc2e960071a371/zmqruntime-0.6.4-py3-none-any.whl", hash = "sha256:6869ecb54b1b4487007e0f07e8edcd9e48bf9616b544201793cd830c33e5dde2", size = 99055, upload-time = "2026-10-12T12:35:31.994Z" },
 ]
