@@ -162,3 +162,20 @@ def test_list_files_breadth_first_order(tmp_path: Path):
     assert str_files.index(
         next(s for s in str_files if s.endswith("rootfile.txt"))
     ) < str_files.index(next(s for s in str_files if s.endswith("deep.txt")))
+
+
+def test_file_format_registry_rejects_a_second_codec_for_one_extension():
+    registry = FileFormatRegistry()
+
+    def writer(path, data):
+        path.write_text(str(data))
+
+    def reader(path):
+        return path.read_text()
+
+    registry.register(".foo", writer, reader)
+    registry.register(".FOO", writer, reader)  # the same codec again is not a conflict
+
+    with pytest.raises(ValueError, match="'.foo' already has a writer and a reader"):
+        registry.register(".foo", lambda path, data: None, reader)
+    assert registry.get_writer(".foo") is writer

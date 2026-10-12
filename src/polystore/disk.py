@@ -34,6 +34,12 @@ class FileFormatRegistry:
 
     def register(self, ext: str, writer: Callable, reader: Callable):
         ext = ext.lower()
+        if ext in self._writers and (
+            self._writers[ext] is not writer or self._readers[ext] is not reader
+        ):
+            raise ValueError(
+                f"File format {ext!r} already has a writer and a reader registered."
+            )
         self._writers[ext] = writer
         self._readers[ext] = reader
 
