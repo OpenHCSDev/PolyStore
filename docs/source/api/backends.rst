@@ -37,7 +37,7 @@ Array payload boundary
 ----------------------
 
 ArrayBridge owns the memory-type taxonomy and framework conversion semantics.
-``polystore.MemoryType`` is a compatibility re-export of
+``polystore.MemoryType`` is a re-export of
 ``arraybridge.MemoryType`` with the same class identity. Disk, Zarr, and
 streaming sinks normalize supported framework arrays through ArrayBridge when
 a host NumPy payload is required; individual storage backends do not maintain

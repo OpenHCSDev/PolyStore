@@ -4,18 +4,7 @@ PolyStore constants and compatibility exports.
 
 from enum import Enum
 
-from arraybridge.types import (
-    CPU_MEMORY_TYPES as CPU_MEMORY_TYPES,
-)
-from arraybridge.types import (
-    GPU_MEMORY_TYPES as GPU_MEMORY_TYPES,
-)
-from arraybridge.types import (
-    SUPPORTED_MEMORY_TYPES as SUPPORTED_MEMORY_TYPES,
-)
-from arraybridge.types import (
-    MemoryType as MemoryType,
-)
+from arraybridge.types import MemoryType as MemoryType
 
 
 class Backend(Enum):

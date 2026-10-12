@@ -1,24 +1,15 @@
 """ArrayBridge-backed normalization at persistent storage boundaries."""
 
-from typing import Any
-
 import numpy as np
-from arraybridge import ArrayPayload, convert_memory, detect_memory_type
-from arraybridge.types import MemoryType
+from arraybridge import ArrayPayload
+from arraybridge.libraries import ArrayLibrary
 
 
-def storage_numpy_array(data: Any) -> np.ndarray:
+def storage_numpy_array(data: object) -> np.ndarray:
     """Return one supported array payload as a host NumPy array."""
 
     if isinstance(data, ArrayPayload):
         data = data.array_payload_data()
     if isinstance(data, np.ndarray):
         return data
-    source_type = detect_memory_type(data)
-    converted = convert_memory(
-        data,
-        source_type=source_type,
-        target_type=MemoryType.NUMPY,
-        gpu_id=0,
-    )
-    return np.asarray(converted)
+    return ArrayLibrary.of(data).to_numpy(data)

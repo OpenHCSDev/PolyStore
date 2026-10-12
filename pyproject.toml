@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polystore"
-version = "0.6.2"
+version = "0.6.3"
 description = "Framework-agnostic multi-backend storage abstraction for ML and scientific computing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,7 +37,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "arraybridge>=0.3.0",
+    "arraybridge>=0.5.0,<0.6",
     "numpy>=1.26.0",
     "portalocker>=2.8.0",  # Cross-platform file locking
     "metaclass-registry>=0.4.0",
