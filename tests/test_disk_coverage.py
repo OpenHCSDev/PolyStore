@@ -553,8 +553,8 @@ class TestDiskErrorHandling:
         def writer(path, data, **kwargs):
             written.append((path, data, kwargs))
 
-        self.backend.format_registry.register(".roi.zip", writer, lambda path: path)
-        output_path = tmp_path / "objects.roi.zip"
+        self.backend.format_registry.register(".witness.zip", writer, lambda path: path)
+        output_path = tmp_path / "objects.witness.zip"
         payload = {"object_id": 1}
 
         self.backend.save(payload, output_path, source="regression")
