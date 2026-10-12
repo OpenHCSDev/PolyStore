@@ -275,3 +275,23 @@ def test_symlink_creation_and_detection(tmp_path: Path):
     # create symlink
     disk.create_symlink(src_file, link)
     assert disk.is_symlink(link)
+
+
+def test_prepare_process_loads_tiff_codecs_and_raster_plugins():
+    """Preparation leaves no codec or plugin import for the first image I/O."""
+    import sys
+
+    import tifffile
+    from PIL import Image
+
+    from polystore.base import prepare_storage_backends, storage_registry
+
+    prepare_storage_backends()
+
+    assert "disk" in dict.keys(storage_registry)
+    assert "imageio.plugins.pillow" in sys.modules
+    assert Image._initialized == 2
+    loaded = set(sys.modules)
+    for compression in tifffile.COMPRESSION:
+        compression in tifffile.TIFF.DECOMPRESSORS
+    assert set(sys.modules) == loaded
