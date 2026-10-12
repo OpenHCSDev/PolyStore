@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 from .exceptions import StorageResolutionError
+from .file_content import FileContent
 from .formats import DEFAULT_IMAGE_EXTENSIONS
 from .virtual_workspace import SourcePixelRef
 
@@ -257,6 +258,13 @@ class FileManager:
         if not isinstance(source, DataSource):
             raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
         return source.load_text(file_path)
+
+    def file_content(self, file_path: str | Path, backend: str) -> FileContent:
+        """Ask the declared source backend what bytes a file holds."""
+        source = self._get_backend(backend)
+        if not isinstance(source, DataSource):
+            raise StorageResolutionError(f"Backend {backend!r} is not a DataSource.")
+        return source.file_content(file_path)
 
     def load(self, file_path: str | Path, backend: str, **kwargs) -> Any:
         """
