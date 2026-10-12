@@ -19,20 +19,22 @@ bibliography: paper.bib
 
 # Summary
 
-PolyStore provides a unified API for heterogeneous storage backends—disk, memory, Zarr, and live streaming to Napari or Fiji—through a single interface. The key insight: **streaming viewers are just backends**:
+PolyStore gives Python programs one call interface for storage backends (files on disk, an in-memory store, Zarr [@zarr]) and for live viewers (napari [@napari], Fiji [@fiji]). A viewer is registered as a backend like the others: saving to it sends the data to the viewer instead of storing it.
 
 ```python
-from polystore import FileManager, BackendRegistry
+import numpy as np
+from polystore import DiskBackend, FileManager, MemoryBackend
 
-fm = FileManager(BackendRegistry())
+fm = FileManager({"disk": DiskBackend(), "memory": MemoryBackend()})
+image = np.zeros((512, 512), dtype=np.uint16)
 
-# Same API for persistent storage, cache, and live visualization
+# The backend is named on every call
 fm.save(image, "result.npy", backend="disk")
 fm.save(image, "result.npy", backend="memory")
-fm.save(image, "result.npy", backend="napari_stream")  # Appears in Napari
+loaded = fm.load("result.npy", backend="disk")
 ```
 
-The `FileManager` routes operations to explicitly selected backends with no implicit fallback. Backends auto-register via metaclass, support lazy imports for optional dependencies, and provide atomic file operations for concurrent metadata updates.
+`FileManager` holds a mapping from backend names to instances and passes each call to the named backend. It has no default backend and does not infer one from the path. Backend classes register by name when defined, format libraries are imported on first use, and JSON metadata can be updated atomically under a file lock.
 
 # Statement of Need
 
@@ -46,75 +48,64 @@ zarr.save("result.zarr", data)                 # Zarr
 socket.send(msgpack.packb({"data": data}))    # Streaming
 ```
 
-With PolyStore, one call handles all backends. The explicit `backend=` parameter ensures deterministic behavior—no silent fallbacks, no hidden resolution logic.
+With PolyStore the destination is a value, the `backend=` argument. `FileManager` never substitutes another backend: if the named backend lacks the operation (for example `load` on a viewer), the call raises.
 
 # State of the Field
 
-| Feature | PolyStore | fsspec | zarr | xarray |
-|---------|:---------:|:------:|:----:|:------:|
-| Unified storage API | ✓ | ✓ | — | — |
-| Streaming backends | ✓ | — | — | — |
-| Multi-framework I/O | ✓ | — | — | ✓ |
-| Atomic concurrent writes | ✓ | — | — | — |
-| Explicit backend selection | ✓ | — | — | — |
-| Zero implicit fallback | ✓ | — | — | — |
+| | PolyStore | fsspec | zarr | xarray |
+|---------|---------|------|----|------|
+| Unit of abstraction | named backend that saves and loads Python objects by path | filesystem of files and bytes | chunked array format | labelled N-D arrays |
+| Destination chosen by | backend name on each call | protocol or URL | store | format engine |
+| Write-only viewer destinations | yes | no | no | no |
 
-**fsspec** [@fsspec] provides unified filesystem access but cannot support streaming because its abstraction is *filesystems*—everything must behave like a file. PolyStore's abstraction is *data sinks*, which includes destinations that consume data without persisting it. This distinction is fundamental: a Napari viewer is not a filesystem, but it is a valid data sink.
+**fsspec** [@fsspec] gives uniform access to filesystems; its interface is files and byte streams. PolyStore's write interface is `DataSink.save(data, identifier)`, which a destination such as a napari viewer can implement without being able to read anything back.
 
-**zarr** [@zarr] handles chunked arrays but is a single format, not a storage abstraction. **xarray** [@xarray] provides multi-dimensional arrays with NetCDF/Zarr backends but no streaming or explicit backend routing.
+**zarr** [@zarr] is a chunked array format, which PolyStore uses as one backend. **xarray** [@xarray] provides labelled multi-dimensional arrays with NetCDF and Zarr I/O.
 
 # Software Design
 
-**Backend Hierarchy**: The key architectural decision is the base abstraction. `DataSink` (write-only) is the root interface—not `StorageBackend`. This allows streaming backends that consume data without supporting reads:
+**Backend Hierarchy**: Reading and writing are separate abstract base classes under one registered root, and a backend inherits only what it can do:
 
 ```python
-class StreamingBackend(DataSink):      # Write-only sink
-    def save_batch(self, data, paths, **kwargs): ...
-    # No load() method - streaming is one-way
-
-class StorageBackend(DataSink):        # Read/write storage
-    def save_batch(self, data, paths, **kwargs): ...
-    def load_batch(self, paths, **kwargs): ...
+class BackendBase(metaclass=AutoRegisterMeta): ...  # registry keyed by _backend_type
+class DataSink(BackendBase): ...                    # save, save_batch
+class DataSource(BackendBase): ...                  # load, load_batch, list_files, exists
+class StorageBackend(DataSource, DataSink): ...     # disk, memory, zarr
+class ReadOnlyBackend(DataSource): ...              # virtual_workspace, ome_zarr, bioformats
+class StreamingBackend(DataSink): ...               # napari_stream, fiji_stream
 ```
 
-The `FileManager` routes to any `DataSink`. Pipeline code doesn't know whether data goes to disk, memory, or a live Napari viewer—and doesn't need to.
+A subclass that sets `_backend_type` is registered under that name through `metaclass-registry` [@metaclassregistry]; no other list of backends exists. Release 0.6.3 registers nine: the eight above and `omero_local` for OMERO [@omero]. A viewer backend has no `load` and a read-only source has no `save`; calling a missing operation through `FileManager`, or naming an unknown backend, raises `StorageResolutionError`.
 
-**Streaming Internals Hidden**: Streaming backends handle substantial complexity internally—GPU tensor conversion, shared memory allocation, ZMQ socket management, ROI serialization—all behind the same `save_batch()` interface. The orchestrator remains backend-agnostic.
+**Streaming**: `StreamingBackend.save_batch` converts each array to NumPy, copies it into a shared-memory block, sends one JSON message naming the blocks over a ZeroMQ [@zeromq] request socket, waits for the viewer's reply, and then releases the blocks. ROI lists become napari shapes or ImageJ ROI bytes. The caller passes one keyword, `stream_request`, a `ViewerStreamRequest` carrying the viewer endpoint, display configuration, and source metadata. Text, and items whose path extension is neither a pixel format nor `.roi.zip`, are skipped without an error.
 
-**Atomic Operations**: Cross-platform file locking (`fcntl` on Unix, `portalocker` on Windows) with `atomic_update_json()` for concurrent metadata writes from multiple pipeline workers. This is critical for OpenHCS where multiple worker processes write metadata simultaneously—without atomic operations, race conditions corrupt JSON files.
+**Atomic Metadata Updates**: `atomic_update_json()` takes an exclusive lock on a sidecar `.lock` file (through `portalocker` on every platform), reads the JSON file, applies the caller's function, writes the result to a temporary file, and replaces the original with `os.replace`. `AtomicMetadataWriter` builds plate-metadata updates on it, and the Zarr backend takes the same lock while it writes OME-Zarr plate metadata. Array and image files are written directly, without this protection.
 
-**Lazy Backend Instantiation**: Backends auto-register via `metaclass-registry` [@metaclassregistry] and are lazily instantiated, keeping optional dependencies unloaded until used. For example, the Napari streaming backend only imports `napari` when first used, avoiding dependency bloat for users who don't need visualization.
+**Lazy Loading**: `import polystore` imports no backend module; each exported name loads its module on first access. The disk backend imports `tifffile`, `imageio`, PyTorch, and the other format libraries when a file of that format is first read or written. The process-wide `storage_registry` is built on first read.
 
-**Batch Operations**: The `save_batch()` and `load_batch()` interfaces accept lists of paths and data, enabling backends to optimize I/O. The Zarr backend can write multiple arrays in a single transaction; the Napari backend can batch ROI updates into a single viewer refresh. This is more efficient than per-file operations.
+**Batch Operations**: `save_batch()` and `load_batch()` take lists of data and paths. The disk and memory backends loop over the items. The Zarr backend writes a batch of 2-D planes as one OME-Zarr [@ome_zarr] well, stacking them into one array per field and recording a filename-to-index map so that `load_batch()` returns planes by their original paths; it requires the keywords `chunk_name`, `batch_layout`, `row`, and `col`. A streaming backend sends one message per batch.
 
 # Research Application
 
-PolyStore was developed for OpenHCS (Open High-Content Screening) where microscopy pipelines process thousands of images per experiment. A typical workflow:
+PolyStore was developed for OpenHCS (Open High-Content Screening), where microscopy pipelines process the images of a multi-well plate. A typical workflow:
 
-1. **Load**: Read raw images from disk (TIFF, OME-TIFF) or virtual workspace (lazy-loaded)
+1. **Load**: Read TIFF images from disk, or through `virtual_workspace`, a read-only backend that maps virtual paths recorded in plate metadata to pixels held by another backend
 2. **Process**: Apply filters, segmentation, feature extraction in memory
-3. **Save**: Write results to Zarr (chunked, compressed for efficient storage)
-4. **Stream**: Send intermediate results to Napari for live preview and quality control
-
-All through one interface:
+3. **Save**: Write results to OME-Zarr (chunked, zlib-compressed by default)
+4. **Stream**: Send intermediate results to napari or Fiji for live preview
 
 ```python
-# Load → process → save → stream: same API
+# layout: polystore.zarr_batch.ZarrBatchLayout
+# request: polystore.streaming.viewer_transport.ViewerStreamRequest
 images = fm.load_batch(paths, backend="disk")
 processed = pipeline(images)
-fm.save_batch(processed, paths, backend="zarr")
-fm.save_batch(processed, paths, backend="napari_stream")
+fm.save_batch(processed, out_paths, backend="zarr",
+              chunk_name="A01", batch_layout=layout, row="A", col="01")
+fm.save_batch(processed, out_paths, backend="napari_stream",
+              stream_request=request)
 ```
 
-**Concrete Example**: A user processes 10,000 images. Without PolyStore, the pipeline code would contain:
-- `np.load()` for disk reads
-- `zarr.open_array()` for Zarr writes
-- `napari.Viewer.add_image()` for visualization
-- Custom socket code for streaming to remote Fiji instances
-
-With PolyStore, all I/O goes through `FileManager`, and the user can switch backends by changing a config parameter—no code changes needed.
-
-**Bug Prevention**: The explicit backend model eliminated an entire class of bugs where code assumed disk storage but ran against memory or streaming backends. For example, a function that called `os.path.exists()` would fail silently against a memory backend. With PolyStore, the backend is explicit, and such mismatches are caught immediately.
+Arguments that only one backend needs travel as keywords; OpenHCS asks each destination for them through `contextual_save_kwargs()`. OpenHCS writes plate metadata through `AtomicMetadataWriter`. A `FileManager` can be sent to worker processes: it pickles as its backend names plus the connection parameters of backends that declare them, and the backends are rebuilt in the worker.
 
 # AI Usage Disclosure
 
