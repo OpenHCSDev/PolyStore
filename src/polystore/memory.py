@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Union
 from .base import StorageBackend
 from .constants import Backend
 from .exceptions import StorageResolutionError
+from .file_content import FileContent, UnhashedFileContent
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +403,18 @@ class MemoryStorageBackend(StorageBackend):
 
         return True
     
+    def file_content(self, file_path: str | Path) -> FileContent:
+        """Memory entries are live objects; there are no file bytes to hash."""
+        key = self._normalize(file_path)
+        if key not in self._memory_store:
+            raise FileNotFoundError(f"Memory path does not exist: {file_path}")
+        if self._memory_store[key] is None:
+            return UnhashedFileContent(f"Memory path {file_path} is a directory, not a file.")
+        return UnhashedFileContent(
+            f"{type(self).__name__} holds {file_path} as an object in process memory, "
+            "not as file bytes."
+        )
+
     def _resolve_path(self, path: Union[str, Path]) -> Optional[Any]:
         """Resolve one path through the backend's flat normalized-key namespace."""
         return self._memory_store.get(self._normalize(path))
