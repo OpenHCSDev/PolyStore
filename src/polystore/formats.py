@@ -5,6 +5,7 @@ This module defines the supported file formats and their extensions.
 """
 
 import importlib
+import importlib.util
 from enum import Enum
 from types import ModuleType
 
@@ -20,6 +21,11 @@ class FileFormatDependency(Enum):
     SCIPY_IO = "scipy.io"
     TIFFFILE = "tifffile"
     IMAGEIO = "imageio.v3"
+
+    @property
+    def is_installed(self) -> bool:
+        """Whether this runtime's distribution is present, without importing it."""
+        return importlib.util.find_spec(self.value.partition(".")[0]) is not None
 
     def load(self) -> ModuleType:
         """Import this runtime only when a format operation requires it."""
