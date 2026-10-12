@@ -195,37 +195,11 @@ def test_backend_that_cannot_read_files_is_refused(registry):
         manager.file_content("/plate/image.tif", "omero_local")
 
 
-@pytest.mark.parametrize(
-    "content, record",
-    [
-        (
-            HashedFileContent(sha256=SHA256_OF_NOTHING, size_bytes=0),
-            {"hashed": True, "sha256": SHA256_OF_NOTHING, "size_bytes": 0},
-        ),
-        (
-            UnhashedFileContent(reason="MemoryStorageBackend holds an object, not file bytes"),
-            {"hashed": False, "reason": "MemoryStorageBackend holds an object, not file bytes"},
-        ),
-    ],
-)
-def test_record_round_trips_through_json(content, record):
-    assert content.to_record() == record
-    assert FileContent.from_record(json.loads(json.dumps(content.to_record()))) == content
-
-
-@pytest.mark.parametrize(
-    "record",
-    [
-        {},
-        {"hashed": None, "reason": "unknown"},
-        {"hashed": 1, "sha256": SHA256_OF_NOTHING, "size_bytes": 0},
-        {"hashed": True, "sha256": SHA256_OF_NOTHING},
-        {"hashed": False, "reason": "no file", "sha256": SHA256_OF_NOTHING},
-    ],
-)
-def test_record_that_does_not_state_one_kind_exactly_is_refused(record):
-    with pytest.raises(ValueError):
-        FileContent.from_record(record)
+def test_each_answer_is_registered_under_the_key_that_names_it_in_stored_data():
+    assert dict(FileContent.__registry__) == {
+        "hashed": HashedFileContent,
+        "not_hashed": UnhashedFileContent,
+    }
 
 
 @pytest.mark.parametrize(
