@@ -63,29 +63,31 @@ def test_storage_numpy_array_preserves_numpy_identity() -> None:
     assert array_payload.storage_numpy_array(data) is data
 
 
-def test_storage_numpy_array_delegates_framework_semantics_to_arraybridge(
-    monkeypatch,
-) -> None:
+def test_storage_numpy_array_asks_the_library_that_made_the_array(monkeypatch) -> None:
     data = SimpleNamespace()
-    converted = np.arange(4, dtype=np.float32)
+    downloaded = np.arange(4, dtype=np.float32)
     calls = []
-    monkeypatch.setattr(array_payload, "detect_memory_type", lambda value: "tensor")
+
+    class _Library:
+        def to_numpy(self, value):
+            calls.append(value)
+            return downloaded
+
+    library = _Library()
+    owners = []
     monkeypatch.setattr(
-        array_payload,
-        "convert_memory",
-        lambda value, **kwargs: calls.append((value, kwargs)) or converted,
+        array_payload.ArrayLibrary,
+        "of",
+        classmethod(lambda cls, value: owners.append(value) or library),
     )
 
     result = array_payload.storage_numpy_array(data)
 
-    assert result is converted
-    assert calls == [
-        (
-            data,
-            {
-                "source_type": "tensor",
-                "target_type": array_payload.MemoryType.NUMPY,
-                "gpu_id": 0,
-            },
-        )
-    ]
+    assert result is downloaded
+    assert owners == [data]
+    assert calls == [data]
+
+
+def test_storage_numpy_array_rejects_an_object_no_library_made() -> None:
+    with pytest.raises(ValueError, match="Unknown memory type"):
+        array_payload.storage_numpy_array(SimpleNamespace())

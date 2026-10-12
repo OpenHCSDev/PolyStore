@@ -253,15 +253,16 @@ wheels = [
 
 [[package]]
 name = "arraybridge"
-version = "0.3.1"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "metaclass-registry" },
     { name = "numpy" },
+    { name = "python-introspect" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/da/1a984e7d6bfb8508e222a5dd3a8125df7faffbbbab2c453e99f7d4d322f6/arraybridge-0.3.1.tar.gz", hash = "sha256:93af611ce4b8bd21ad0ed4f93f7e6c1be104c52e23fbd952324b150c28dc83c1", size = 95672, upload-time = "2026-08-22T03:49:32.297Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/e0/d9bf8fff91238becf13a6abb0cd0b48e8cd71ed6c945e1b1285dd13e53c9/arraybridge-0.5.0.tar.gz", hash = "sha256:43ae14f682884bd1f6a3e76f5b8967f0a3da0b630a68861a466d2474992169f6", size = 114594, upload-time = "2026-10-12T19:21:08.16Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/69/c88c43f32102bea78139745072408eff814ebd2c0b59023ce2d4643e1dfa/arraybridge-0.3.1-py3-none-any.whl", hash = "sha256:0589ec5501db38471cb759d9027754fde751211ab9ef5983f89d1263795cee22", size = 33604, upload-time = "2026-08-22T03:49:30.815Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/0a/85073cf0b4498108eb6f622856005841b512d457ccf1cd02d7b0fc2e9344/arraybridge-0.5.0-py3-none-any.whl", hash = "sha256:86dc05b609c94002cebaf40f632eab6d3872a848ce23272b828a348f312ea341", size = 38590, upload-time = "2026-10-12T19:21:07.019Z" },
 ]
 
 [[package]]
@@ -2905,7 +2906,7 @@ wheels = [
 
 [[package]]
 name = "polystore"
-version = "0.6.2"
+version = "0.6.3"
 source = { editable = "." }
 dependencies = [
     { name = "arraybridge" },
@@ -2994,7 +2995,7 @@ torch = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arraybridge", specifier = ">=0.3.0" },
+    { name = "arraybridge", specifier = ">=0.5.0,<0.6" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.3.2" },
     { name = "cucim-cu12", marker = "extra == 'gpu'", specifier = ">=25.6.0,<26.0.0" },
