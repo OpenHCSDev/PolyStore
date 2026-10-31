@@ -15,6 +15,7 @@ from .base import (
 )
 from .constants import Backend
 from .exceptions import StorageResolutionError
+from .file_content import FileContent, UnhashedFileContent
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,16 @@ class BioFormatsStorageBackend(ReadOnlyBackend, PicklableBackend):
         if ref.source_path.is_absolute():
             return ref.to_backend_address()
         return replace(ref, source_path=Path(base_path) / ref.source_path).to_backend_address()
+
+    def file_content(self, file_path: str | Path) -> FileContent:
+        """A plane address names part of a container, never a whole file's bytes."""
+        ref = BioFormatsPlaneRef.from_backend_address(str(file_path))
+        if not ref.source_path.exists():
+            raise FileNotFoundError(f"Bio-Formats container not found: {ref.source_path}")
+        return UnhashedFileContent(
+            f"{type(self).__name__} address names plane {ref.plane_index} of series "
+            f"{ref.series_index} inside {ref.source_path}, not a whole file."
+        )
 
     def set_connection_params(self, params: dict[str, Any] | None) -> None:
         if params is not None:

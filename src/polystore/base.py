@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import stat
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from .constants import Backend
 from .exceptions import StorageResolutionError
+from .file_content import FileContent, HashedFileContent, UnhashedFileContent
 
 if TYPE_CHECKING:
     import numpy as np
@@ -394,6 +396,33 @@ class DataSource(BackendBase):
         if hashlib.sha256(data).hexdigest() != expected_sha256.lower():
             raise ValueError("Verified resource SHA256 does not match its declaration.")
         return data
+
+    def file_content(self, file_path: str | Path) -> FileContent:
+        """Say what bytes the file at an absolute address holds, or why none can be stated.
+
+        The physical file is the one this backend's path hook declares. A missing
+        file raises ``FileNotFoundError``; it is never an unhashed answer.
+        """
+        # An empty base keeps a relative address relative, so it is refused below
+        # instead of being read from whatever the working directory happens to be.
+        declared_path = self.physical_source_path(file_path, base_path=Path())
+        if declared_path is None:
+            if not self.exists(file_path):
+                raise FileNotFoundError(f"{type(self).__name__} has no file at {file_path}.")
+            return UnhashedFileContent(
+                f"{type(self).__name__} declares no physical file for {file_path}."
+            )
+        physical_path = Path(declared_path)
+        if not physical_path.is_absolute():
+            raise StorageResolutionError(
+                f"File content needs an absolute address, got {file_path!s}."
+            )
+        mode = physical_path.stat().st_mode
+        if stat.S_ISDIR(mode):
+            return UnhashedFileContent(f"{physical_path} is a directory, not a file.")
+        if not stat.S_ISREG(mode):
+            return UnhashedFileContent(f"{physical_path} is not a regular file.")
+        return HashedFileContent.of_physical_file(physical_path)
 
     def sample(
         self,

@@ -22,6 +22,7 @@ from .base import (
 )
 from .constants import Backend
 from .exceptions import StorageResolutionError
+from .file_content import FileContent, UnhashedFileContent
 from .metadata_writer import METADATA_CONFIG, MetadataConfig
 
 if TYPE_CHECKING:
@@ -102,6 +103,22 @@ class SourcePixelRef:
                 self.backend_address,
                 base_path=base_path,
             )
+        )
+
+    def file_content(
+        self,
+        registry: Mapping[str, BackendBase],
+        *,
+        base_path: Path,
+    ) -> FileContent:
+        """Say what bytes this reference names, as stated by the source owner."""
+
+        if self.source_axis_indices:
+            return UnhashedFileContent(
+                f"{self!r} selects part of its source file, so it names no whole file's bytes."
+            )
+        return self.source_backend(registry).file_content(
+            self.resolved_address(registry, base_path=base_path)
         )
 
     def load(
@@ -341,6 +358,19 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
 
     def load(self, file_path: Union[str, Path], **kwargs: Any) -> Any:
         return self._load_ref(self._resolve_ref(file_path), **kwargs)
+
+    def file_content(self, file_path: str | Path) -> FileContent:
+        """Answer for the source file a virtual path stands for."""
+        if self.is_file(file_path):
+            return self._resolve_ref(file_path).file_content(
+                self._registry_for_ref(),
+                base_path=self.plate_root,
+            )
+        if self.is_dir(file_path):
+            return UnhashedFileContent(
+                f"{type(self).__name__} path {file_path} is a directory, not a file."
+            )
+        raise FileNotFoundError(f"Path not in virtual workspace mapping: {file_path}")
 
     def sample(
         self,
