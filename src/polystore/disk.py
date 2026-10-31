@@ -159,6 +159,39 @@ class DiskStorageBackend(StorageBackend):
             ),
         )
 
+    def prepare_process(self) -> None:
+        """Load TIFF codecs and raster image plugins before the first image I/O."""
+        self._load_tiff_codecs()
+        self._load_raster_image_plugins()
+
+    @staticmethod
+    def _load_tiff_codecs() -> None:
+        """Resolve every codec tifffile can use; it imports each on first lookup."""
+        if not FileFormat.TIFF.dependency.is_installed:
+            return
+        tifffile = FileFormat.TIFF.load_dependency()
+        codec_tables = (
+            (tifffile.COMPRESSION, tifffile.TIFF.COMPRESSORS),
+            (tifffile.COMPRESSION, tifffile.TIFF.DECOMPRESSORS),
+            (tifffile.PREDICTOR, tifffile.TIFF.PREDICTORS),
+            (tifffile.PREDICTOR, tifffile.TIFF.UNPREDICTORS),
+        )
+        for kinds, table in codec_tables:
+            for kind in kinds:
+                # Membership resolves and caches the codec; False means the
+                # codec's optional library is absent.
+                kind in table  # noqa: B015
+
+    @staticmethod
+    def _load_raster_image_plugins() -> None:
+        """Round-trip one pixel through imageio; its first I/O loads the plugins."""
+        imageio = FileFormat.PNG.load_dependency()
+        extension = FileFormat.PNG.extensions[0]
+        encoded = imageio.imwrite(
+            "<bytes>", np.zeros((1, 1), dtype=np.uint8), extension=extension
+        )
+        imageio.imread(encoded, extension=extension)
+
     # Format-specific writer/reader functions (pickleable)
     # Only needed for formats that require special handling beyond library save/load
 

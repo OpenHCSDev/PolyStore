@@ -209,6 +209,13 @@ class BackendBase(metaclass=AutoRegisterMeta):
         del path
         return self.supports_arbitrary_files
 
+    def prepare_process(self) -> None:
+        """Pay this backend's one-time library costs now instead of on first I/O.
+
+        A serving process calls this before it forks workers and reports ready.
+        Backends whose libraries load plugins or codecs lazily override it.
+        """
+
     def bind_registry(self, registry: Mapping[str, "BackendBase"]) -> None:
         """Bind an execution-local backend registry when this backend needs it."""
         del registry
@@ -777,6 +784,13 @@ def ensure_storage_registry() -> None:
                 storage_registry.update(_create_storage_registry())
                 _registry_initialized = True
                 logger.info("Lazily initialized storage registry")
+
+
+def prepare_storage_backends() -> None:
+    """Build the storage registry and prepare every backend in it for first I/O."""
+    ensure_storage_registry()
+    for backend in storage_registry.values():
+        backend.prepare_process()
 
 
 def get_backend(backend_type: str) -> DataSink:
