@@ -203,6 +203,7 @@ class VirtualWorkspaceBackend(ReadOnlyBackend, PicklableBackend):
     """Read-only virtual paths dispatched through an execution-local registry."""
 
     _backend_type = Backend.VIRTUAL_WORKSPACE.value
+    requires_context = True
 
     def __init__(
         self,

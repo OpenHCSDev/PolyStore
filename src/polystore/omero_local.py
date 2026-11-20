@@ -145,6 +145,7 @@ class OMEROLocalBackend(VirtualBackend, PicklableBackend):
     """
 
     _backend_type = "omero_local"
+    requires_context = True
 
     def resolve_listed_address(
         self,
