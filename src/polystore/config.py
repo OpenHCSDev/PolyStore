@@ -43,6 +43,11 @@ class ZarrCompressorFactory(ABC, metaclass=AutoRegisterMeta):
     ) -> Codec | None:
         """Create the codec for this compressor variant."""
 
+    @abstractmethod
+    def create_v3(self, compression_level: int, shuffle: bool = True):
+        """This compressor as a Zarr v3 codec: the specification's own codec where it has
+        one, so any v3 reader can open the array."""
+
 
 class NoZarrCompressorFactory(ZarrCompressorFactory):
     """Factory for disabling Zarr compression."""
@@ -54,6 +59,9 @@ class NoZarrCompressorFactory(ZarrCompressorFactory):
         compression_level: int,
         shuffle: bool = True,
     ) -> None:
+        return None
+
+    def create_v3(self, compression_level: int, shuffle: bool = True) -> None:
         return None
 
 
@@ -73,6 +81,12 @@ class BloscZarrCompressorFactory(ZarrCompressorFactory):
             shuffle=shuffle,
         )
 
+    def create_v3(self, compression_level: int, shuffle: bool = True):
+        from zarr.codecs import BloscCodec
+
+        return BloscCodec(
+            cname="lz4", clevel=compression_level, shuffle="shuffle" if shuffle else "noshuffle")
+
 
 class ZlibZarrCompressorFactory(ZarrCompressorFactory):
     """Factory for zlib-backed Zarr compression."""
@@ -85,6 +99,12 @@ class ZlibZarrCompressorFactory(ZarrCompressorFactory):
         shuffle: bool = True,
     ) -> Zlib:
         return Zlib(level=compression_level)
+
+    def create_v3(self, compression_level: int, shuffle: bool = True):
+        """Deflate in the v3 specification is the gzip codec; zlib framing has none."""
+        from zarr.codecs import GzipCodec
+
+        return GzipCodec(level=compression_level)
 
 
 class Lz4ZarrCompressorFactory(ZarrCompressorFactory):
@@ -99,6 +119,13 @@ class Lz4ZarrCompressorFactory(ZarrCompressorFactory):
     ) -> LZ4:
         return LZ4(acceleration=compression_level)
 
+    def create_v3(self, compression_level: int, shuffle: bool = True):
+        """Standalone LZ4 has no v3 specification codec: numcodecs' wrapper, which only
+        numcodecs-aware readers open. Blosc carries LZ4 inside the specification."""
+        from numcodecs.zarr3 import LZ4 as LZ4V3
+
+        return LZ4V3(acceleration=compression_level)
+
 
 class ZstdZarrCompressorFactory(ZarrCompressorFactory):
     """Factory for Zstandard-backed Zarr compression."""
@@ -112,12 +139,93 @@ class ZstdZarrCompressorFactory(ZarrCompressorFactory):
     ) -> Zstd:
         return Zstd(level=compression_level)
 
+    def create_v3(self, compression_level: int, shuffle: bool = True):
+        from zarr.codecs import ZstdCodec
+
+        return ZstdCodec(level=compression_level)
+
+
+class ZarrLayout(ABC):
+    """How one stored array is laid out: its chunks, its shards, the NGFF format that can
+    describe that, and the form its compressor takes in that format."""
+
+    @abstractmethod
+    def chunks(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+        """The chunk shape for an array of ``shape`` (leading axes, then ``y, x``)."""
+
+    def shards(self, shape: tuple[int, ...], chunks: tuple[int, ...]) -> tuple[int, ...] | None:
+        """The shard shape for an array of ``shape`` stored in ``chunks``, or ``None`` when
+        every chunk is its own object."""
+        return None
+
+    @abstractmethod
+    def output_format(self):
+        """The OME-NGFF format declaration that can describe this layout."""
+
+    @abstractmethod
+    def codec_arguments(self, factory: ZarrCompressorFactory, level: int) -> dict[str, object]:
+        """The ``create_array`` compression arguments in this layout's Zarr format."""
+
+
+class ZarrV2Layout(ZarrLayout):
+    """Zarr v2 / OME-NGFF 0.4: one object per chunk, numcodecs compressors."""
+
+    def output_format(self):
+        from ome_zarr.format import FormatV04
+
+        return FormatV04()
+
+    def codec_arguments(self, factory: ZarrCompressorFactory, level: int) -> dict[str, object]:
+        return {"compressor": factory.create(level, shuffle=True)}
+
+
+class WholeWellLayout(ZarrV2Layout):
+    """One chunk for the whole well: optimal for batch I/O."""
+
+    def chunks(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+        return shape
+
+
+class PlaneLayout(ZarrV2Layout):
+    """Each original plane is compressed separately, whatever the leading axes."""
+
+    def chunks(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+        return (1,) * (len(shape) - 2) + shape[-2:]
+
+
+class ShardedPlaneLayout(PlaneLayout):
+    """Each plane its own chunk, all of them inside one shard object per array: plane-level
+    random access with one file per well. Sharding exists only in Zarr v3, so this layout
+    writes OME-NGFF 0.5 with Zarr v3 codecs."""
+
+    def shards(self, shape: tuple[int, ...], chunks: tuple[int, ...]) -> tuple[int, ...]:
+        """One shard holding the whole array: the array's extent rounded up to whole chunks,
+        as a shard must be a multiple of its chunk shape."""
+        return tuple(-(-extent // chunk) * chunk for extent, chunk in zip(shape, chunks, strict=True))
+
+    def output_format(self):
+        from ome_zarr.format import FormatV05
+
+        return FormatV05()
+
+    def codec_arguments(self, factory: ZarrCompressorFactory, level: int) -> dict[str, object]:
+        codec = factory.create_v3(level, shuffle=True)
+        return {"compressors": (codec,) if codec is not None else None}
+
 
 class ZarrChunkStrategy(Enum):
-    """Chunking strategies supported by :class:`ZarrStorageBackend`."""
+    """Chunking strategies supported by :class:`ZarrStorageBackend`; each member owns its
+    :class:`ZarrLayout`."""
 
-    WELL = "well"
-    FILE = "file"
+    WELL = ("well", WholeWellLayout())
+    FILE = ("file", PlaneLayout())
+    SHARDED = ("sharded", ShardedPlaneLayout())
+
+    def __new__(cls, value: str, layout: ZarrLayout):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.layout = layout
+        return member
 
 
 class TiffCompression(Enum):

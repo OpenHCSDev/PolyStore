@@ -119,12 +119,23 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
     _backend_type = Backend.ZARR.value
     supports_arbitrary_files = False  # Class attribute: zarr only handles array data
 
-    @cached_property
+    @property
     def output_format(self):
-        """Resolve NGFF format only when a Zarr write needs its declaration."""
-        from ome_zarr.format import FormatV04
+        """The NGFF format the configured layout writes; resolved only when a write needs it."""
+        return self.config.chunk_strategy.layout.output_format()
 
-        return FormatV04()
+    def _array_layout(
+        self, shape: tuple[int, ...], chunks: tuple[int, ...] | None = None,
+    ) -> dict[str, object]:
+        """The configured layout's chunk, shard and compression arguments for ``shape``;
+        ``chunks`` overrides the layout's own chunk shape."""
+        layout = self.config.chunk_strategy.layout
+        chunks = layout.chunks(shape) if chunks is None else chunks
+        return {
+            "chunks": chunks,
+            "shards": layout.shards(shape, chunks),
+            **layout.codec_arguments(self.config.compressor_factory, self.config.compression_level),
+        }
 
     @staticmethod
     def _is_disk_passthrough_path(path: str | Path) -> bool:
@@ -242,28 +253,6 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
     def _as_cpu_array(data: Any) -> Any:
         return storage_numpy_array(data)
 
-    def _calculate_chunks(self, data_shape: tuple[int, ...]) -> tuple[int, ...]:
-        """
-        Calculate chunk shape based on configured strategy.
-
-        Args:
-            data_shape: Array shape with arbitrary leading semantic axes and
-                trailing ``y, x`` pixel axes.
-
-        Returns:
-            Chunk shape tuple
-        """
-        from .config import ZarrChunkStrategy
-
-        match self.config.chunk_strategy:
-            case ZarrChunkStrategy.WELL:
-                # Single chunk for entire well (current behavior, optimal for batch I/O)
-                return data_shape
-            case ZarrChunkStrategy.FILE:
-                # Each original plane is compressed separately regardless of
-                # the number of declared leading axes.
-                return (1,) * (len(data_shape) - 2) + data_shape[-2:]
-
     def _split_store_and_key(self, path: str | Path) -> tuple[LocalStore, str]:
         """
         Split path into zarr store and key.
@@ -333,10 +322,9 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                 name=key,
                 shape=cpu_data.shape,
                 dtype=cpu_data.dtype,
-                chunks=chunks,
-                compressor=kwargs.get("compressor", self.compressor),
                 chunk_key_encoding=self.output_format.chunk_key_encoding,
                 overwrite=False,  # 🔒 Must be False by doctrine
+                **self._array_layout(cpu_data.shape, tuple(chunks)),
             )
             array[:] = cpu_data
         except Exception as e:
@@ -540,9 +528,8 @@ class ZarrStorageBackend(StorageBackend, PicklableBackend):
                 "0",
                 shape=reshaped_data.shape,
                 dtype=reshaped_data.dtype,
-                chunks=self._calculate_chunks(reshaped_data.shape),
-                compressor=self.compressor,
                 chunk_key_encoding=self.output_format.chunk_key_encoding,
+                **self._array_layout(reshaped_data.shape),
             )
             field_array[:] = reshaped_data
             transformations = self.output_format.generate_coordinate_transformations(
