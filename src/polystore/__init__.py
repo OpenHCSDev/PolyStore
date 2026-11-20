@@ -80,6 +80,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "NapariShapeType": ".streaming_constants",
     "StreamingDataType": ".streaming_constants",
     "SourcePixelRef": ".virtual_workspace",
+    "GitBackend": ".git",
+    "GitCommit": ".git",
     "DiskBackend": ".disk",
     "DiskStorageBackend": ".disk",
 }

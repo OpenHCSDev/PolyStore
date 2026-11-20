@@ -14,6 +14,7 @@ class Backend(Enum):
     DISK = "disk"
     MEMORY = "memory"
     ZARR = "zarr"
+    GIT = "git"
     OME_ZARR = "ome_zarr"
     STREAMING = "streaming"
     NAPARI_STREAM = "napari_stream"

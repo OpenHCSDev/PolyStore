@@ -192,6 +192,13 @@ class BackendBase(metaclass=AutoRegisterMeta):
         """
         pass
 
+    requires_context: bool = False
+    """
+    Whether constructing this backend needs application context (a plate root, a server
+    connection, a repository): the application builds it and adds it to its registry. A
+    context-free backend is built by ``create_storage_registry``.
+    """
+
     # Class attribute: can be accessed without instantiation
     supports_arbitrary_files: bool = True
     """

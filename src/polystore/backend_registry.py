@@ -74,14 +74,11 @@ def create_storage_registry() -> dict[str, DataSink]:
     STORAGE_BACKENDS._discover()
     logger.debug("Triggered backend discovery via LazyDiscoveryDict")
 
-    # Backends that require context-specific initialization (e.g., plate_root)
-    # These are registered lazily when needed, not at startup
-    SKIP_BACKENDS = {"virtual_workspace", "omero_local", "bioformats"}
-
     registry = {}
-    for backend_type in STORAGE_BACKENDS.keys():
-        # Skip backends that need context-specific initialization
-        if backend_type in SKIP_BACKENDS:
+    for backend_type, backend_class in STORAGE_BACKENDS.items():
+        # A backend that declares it needs application context (a plate root, a
+        # repository) is built by the application, not here.
+        if backend_class.requires_context:
             logger.debug(
                 f"Skipping backend '{backend_type}' - requires context-specific initialization"
             )

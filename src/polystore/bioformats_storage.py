@@ -79,6 +79,7 @@ class BioFormatsStorageBackend(ReadOnlyBackend, PicklableBackend):
     """Load planes addressed directly by ``BioFormatsPlaneRef`` values."""
 
     _backend_type = Backend.BIOFORMATS.value
+    requires_context = True
 
     def get_connection_params(self) -> dict[str, Any] | None:
         return None
