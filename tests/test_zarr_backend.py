@@ -811,7 +811,52 @@ class TestZarrConfigIntegration:
     def test_chunk_strategy_controls_backend_chunks(self, strategy, expected):
         backend = ZarrStorageBackend(ZarrConfig(chunk_strategy=strategy))
 
-        assert backend._calculate_chunks((2, 3, 4, 10, 20)) == expected
+        layout = backend._array_layout((2, 3, 4, 10, 20))
+        assert layout["chunks"] == expected
+        assert layout["shards"] is None
+
+    def test_sharded_strategy_stores_planes_as_chunks_of_one_shard(self):
+        backend = ZarrStorageBackend(ZarrConfig(chunk_strategy=ZarrChunkStrategy.SHARDED))
+
+        layout = backend._array_layout((2, 3, 4, 10, 20))
+        assert layout["chunks"] == (1, 1, 1, 10, 20)
+        assert layout["shards"] == (2, 3, 4, 10, 20)
+        assert backend.output_format.zarr_format == 3
+
+    @pytest.mark.parametrize("compressor", tuple(ZarrCompressor))
+    def test_a_sharded_array_is_one_object_and_round_trips_with_every_codec(self, tmp_path, compressor):
+        """Chunks that do not divide the array still fit one shard, rounded up to whole chunks."""
+        backend = ZarrStorageBackend(
+            ZarrConfig(compressor=compressor, chunk_strategy=ZarrChunkStrategy.SHARDED))
+        pixels = np.arange(5 * 7 * 9, dtype=np.uint16).reshape(5, 7, 9)
+        path = tmp_path / "image.tif"
+        backend.save(pixels, path, chunks=(2, 7, 9))
+        array = zarr.open_array(str(path), mode="r")
+
+        assert array.metadata.zarr_format == 3
+        assert array.chunks == (2, 7, 9)
+        assert array.shards == (6, 7, 9)
+        stored = [file for file in path.rglob("*") if file.is_file() and file.name != "zarr.json"]
+        assert len(stored) == 1
+        # Every compressor the v3 specification covers is written as its specified codec.
+        inner = [codec.to_dict()["name"] for codec in array.metadata.codecs[0].codecs]
+        specified = {ZarrCompressor.BLOSC: "blosc", ZarrCompressor.ZLIB: "gzip",
+                     ZarrCompressor.ZSTD: "zstd"}
+        if compressor in specified:
+            assert specified[compressor] in inner
+        np.testing.assert_array_equal(backend.load(path), pixels)
+
+    def test_a_sharded_well_batch_round_trips_through_its_filename_mapping(self, tmp_path):
+        backend = ZarrStorageBackend(ZarrConfig(chunk_strategy=ZarrChunkStrategy.SHARDED))
+        paths = save_hcs_image_axis_batch(
+            backend, tmp_path / "plate.zarr", axis_name="channel", values=(1, 2, 3), row="A", col="01")
+
+        loaded = backend.load_batch(paths)
+        assert [int(image[0, 0]) for image in loaded] == [0, 1, 2]
+        field = zarr.open_array(str(tmp_path / "plate.zarr" / "A" / "01" / "0" / "0"), mode="r")
+        assert field.metadata.zarr_format == 3
+        assert field.shards == field.shape
+        assert field.chunks == (1,) * (field.ndim - 2) + field.shape[-2:]
 
     @pytest.mark.parametrize("compressor", tuple(ZarrCompressor))
     @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.int32, np.float16, np.float64])
