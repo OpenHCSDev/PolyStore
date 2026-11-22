@@ -124,6 +124,8 @@ class GitStream:
             except StorageResolutionError as failure:
                 failures.append(failure)
         if failures:
+            for other in failures[1:]:
+                failures[0].add_note(str(other))
             raise failures[0]
 
     @classmethod
