@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 from .exceptions import StorageResolutionError
 from .formats import DEFAULT_IMAGE_EXTENSIONS
+from .utils import natural_sort
 from .virtual_workspace import SourcePixelRef
 
 logger = logging.getLogger(__name__)
@@ -480,9 +481,6 @@ class FileManager:
         """
         backend_instance = self._get_backend(backend)
 
-        # List image files and apply natural sorting
-        from .utils import natural_sort
-
         files = backend_instance.list_files(str(directory), pattern, extensions, recursive)
         return natural_sort([str(path) for path in files])
 
@@ -521,9 +519,6 @@ class FileManager:
         """
         # Get backend instance
         backend_instance = self._get_backend(backend)
-
-        # List files and apply natural sorting
-        from .utils import natural_sort
 
         files = backend_instance.list_files(
             str(directory), pattern, extensions, recursive, **kwargs
@@ -568,9 +563,6 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         try:
-            # Get directory listing and apply natural sorting
-            from .utils import natural_sort
-
             entries = backend_instance.list_dir(str(path))
             return natural_sort(entries)
         except (FileNotFoundError, NotADirectoryError):
@@ -974,9 +966,6 @@ class FileManager:
                         f"[collect_dirs_and_files] Skipping {full_path}: {type(e).__name__} — {e}"
                     )
                     continue
-
-        # Apply natural sorting to both dirs and files before returning
-        from .utils import natural_sort
 
         return natural_sort(dirs), natural_sort(files)
 
