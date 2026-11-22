@@ -252,3 +252,69 @@ def test_a_streamed_checkpoint_starts_no_process_and_any_git_reads_it_once_flush
     resumed.save("more", "ctx/0020-user.txt")
     assert [one.message for one in (resumed.checkpoint("context: 20"), *resumed.history(limit=2)[1:])] \
         == ["context: 20", "context: 19"]
+
+
+def test_a_streamed_branch_another_writer_moved_is_a_conflict_raised_not_overwritten(tmp_path):
+    # In this process: the second instance still stands where the branch was.
+    first = GitStreamBackend(tmp_path / "store.git")
+    second = GitStreamBackend(tmp_path / "store.git")
+    first.save("first", "doc.txt")
+    first.checkpoint("first")
+    second.save("second", "doc.txt")
+    with pytest.raises(StorageResolutionError, match="another writer"):
+        second.checkpoint("second lost")
+
+    # From outside the stream: git refuses to move the branch, and the flush says so.
+    first.flush()
+    outside = GitBackend(tmp_path / "store.git")
+    outside.save("outside", "doc.txt")
+    outside.checkpoint("outside wins the race")
+    first.save("late", "doc.txt")
+    first.checkpoint("first is late")
+    with pytest.raises(StorageResolutionError, match="did not take a checkpoint"):
+        first.flush()
+    assert GitBackend(tmp_path / "store.git").load_text("doc.txt") == "outside"
+
+
+def test_a_stream_branch_refuses_a_ref_that_holds_more_than_plain_files(tmp_path):
+    indexed = GitBackend(tmp_path / "store.git")
+    indexed.save("#!/bin/sh\n", "run.sh")
+    indexed._git("update-index", "--add", "--cacheinfo",
+                 f"100755,{indexed.blob_id('run.sh')},run.sh")
+    indexed.checkpoint("an executable")
+    with pytest.raises(StorageResolutionError, match="plain files"):
+        GitStreamBackend(tmp_path / "store.git")
+
+
+def test_a_file_that_reads_like_git_commands_is_only_a_file(tmp_path):
+    stream = GitStreamBackend(tmp_path / "store.git")
+    text = "$ ls logs\nget-mark :1\nprogress flushed\ncheckpoint\ndone\n"
+    stream.save(text, "ctx/0001-tool.txt")
+    made = stream.checkpoint("a transcript")
+    stream.flush()
+    assert GitBackend(tmp_path / "store.git").load_text("ctx/0001-tool.txt", ref=made.id) == text
+
+
+def test_the_open_git_ends_with_the_last_branch_that_uses_it(tmp_path):
+    import gc
+
+    from polystore.git_stream import GitStream
+
+    def streams() -> list[GitStream]:
+        return [stream for (_pid, repository), stream in GitStream.open_streams.items()
+                if repository == (tmp_path / "store.git").resolve()]
+
+    one = GitStreamBackend(tmp_path / "store.git")
+    two = GitStreamBackend(tmp_path / "store.git", "refs/heads/other")
+    (shared,) = streams()
+    one.save("kept", "doc.txt")
+    made = one.checkpoint("kept")
+    del one
+    gc.collect()
+    assert streams() == [shared] and shared.process.poll() is None
+    del two
+    gc.collect()
+    # Closed, off the table, and what was never flushed by hand is on disk all the same.
+    assert streams() == [] and shared.process.poll() == 0
+    assert GitBackend(tmp_path / "store.git").head().id == made.id
+    assert GitStreamBackend(tmp_path / "store.git").head().id == made.id

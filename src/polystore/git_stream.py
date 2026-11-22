@@ -3,21 +3,25 @@
 ``GitBackend`` starts git for every operation: about a dozen processes to stage a few files and
 checkpoint them. ``GitStreamBackend`` keeps its staged tree in memory, names every blob and tree
 itself (a git id is a hash of the content), and writes checkpoints down one ``git fast-import``
-that stays open for the repository. A checkpoint costs no process.
+that stays open while any branch of the repository is open here. A checkpoint starts no
+process; a ``flush`` of fewer than a hundred objects starts one.
 
-What that changes for a caller: a checkpoint is in git's hands when ``checkpoint`` returns and
-on disk, where another process reads it, at ``flush``. Reading anything this instance has not
-staged flushes first. The branch has this one writer: another writer's checkpoint in between
-is not detected here.
+What the base promises when ``checkpoint`` returns, this member promises at ``flush``: the
+checkpoint is on disk, and the branch moved only from the head this instance saw. A branch
+another writer moved is a conflict raised by the checkpoint that can see it, or by the flush
+that git refuses it at. Reading anything this instance has not staged flushes first. It holds
+plain files only, and a ref that holds anything else is refused when it is opened.
 """
 
 from __future__ import annotations
 
-import atexit
 import hashlib
+import os
 import subprocess
+import tempfile
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -34,8 +38,8 @@ def blob_id(data: bytes) -> str:
 
 
 def tree_id(entries: dict[str, str]) -> str:
-    """The id git gives the tree of ``entries``: each path, relative to the tree, and its
-    blob id."""
+    """The id git gives the tree of ``entries``: each plain file's path, relative to the tree,
+    and its blob id."""
     files: dict[str, str] = {}
     folders: dict[str, dict[str, str]] = {}
     for path, blob in entries.items():
@@ -62,91 +66,152 @@ def _quoted(path: str) -> str:
 
 
 class GitStream:
-    """One ``git fast-import`` on a repository, shared by every stream branch of it in this
-    process and open until the process ends."""
+    """One ``git fast-import`` on a repository, shared by every stream branch of it this
+    process has open, and closed when the last of them goes."""
 
-    open_streams: ClassVar[dict[Path, GitStream]] = {}
+    #: The open stream of each repository, per process: a forked child opens its own.
+    open_streams: ClassVar[dict[tuple[int, Path], GitStream]] = {}
     opening: ClassVar[threading.Lock] = threading.Lock()
 
-    def __init__(self, backend: GitStreamBackend) -> None:
+    def __init__(self, backend: GitStreamBackend, key: tuple[int, Path]) -> None:
+        self.key = key
         self.turn = threading.RLock()
+        self.branches = 0
         self.unflushed = False
         self.marks = 0
         #: Each branch's newest commit made here and the mark git knows it by: a commit git
         #: has only in the stream is named to it by mark, one on disk by its id.
         self.tips: dict[str, tuple[str, int]] = {}
+        environment = backend._environment(bound=True)
+        self.committer = (f"{environment['GIT_COMMITTER_NAME']} "
+                          f"<{environment['GIT_COMMITTER_EMAIL']}>")
+        # What git says of a branch it would not move goes to a file read at every flush: a
+        # pipe nobody drains is read by nobody, and blocks git once it fills.
+        said = backend.repository / "polystore-stream"
+        said.mkdir(exist_ok=True)
+        handle, self.said = tempfile.mkstemp(dir=said, suffix=".err")
+        self.heard = 0
         self.process = subprocess.Popen(  # noqa: S603 - git, with this backend's own arguments
             ["git", f"--git-dir={backend.repository}", "fast-import", "--quiet", "--done"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=backend._environment(bound=True),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=handle, env=environment,
         )
-        atexit.register(self.close)
+        os.close(handle)
 
     @classmethod
-    def of(cls, backend: GitStreamBackend) -> GitStream:
-        repository = backend.repository.resolve()
+    def joined(cls, backend: GitStreamBackend) -> GitStream:
+        """The repository's open stream, with one more branch on it."""
+        key = (os.getpid(), backend.repository.resolve())
         with cls.opening:
-            if repository not in cls.open_streams:
-                cls.open_streams[repository] = cls(backend)
-            return cls.open_streams[repository]
+            if key not in cls.open_streams:
+                cls.open_streams[key] = cls(backend, key)
+            stream = cls.open_streams[key]
+            stream.branches += 1
+            return stream
 
     @classmethod
     def settle(cls, repository: Path) -> None:
         """Put on disk whatever this process has streamed to ``repository``."""
-        stream = cls.open_streams.get(repository.resolve())
+        stream = cls.open_streams.get((os.getpid(), repository.resolve()))
         if stream is not None:
             stream.flush()
 
-    def told(self, text: bytes, answered: bool = False) -> str:
-        """Write ``text`` to git and, for a command git answers, read its one line."""
+    def left(self) -> None:
+        """One branch fewer; the last one closes the stream."""
+        with self.opening:
+            self.branches -= 1
+            if self.branches:
+                return
+        self.close()
+
+    def refused(self) -> str:
+        """What git has said since it was last asked: it is quiet unless something is wrong."""
+        with open(self.said, "rb") as said:
+            said.seek(self.heard)
+            text = said.read()
+        self.heard += len(text)
+        return text.decode(errors="replace").strip()
+
+    def told(self, text: bytes, answers: int) -> list[str]:
+        """Write ``text`` to git and read the ``answers`` lines git answers it with."""
         try:
             self.process.stdin.write(text)
-            if not answered:
-                return ""
             self.process.stdin.flush()
-            answer = self.process.stdout.readline()
+            lines = [self.process.stdout.readline().decode().rstrip("\n") for _ in range(answers)]
         except BrokenPipeError:
-            answer = b""
-        if answered and not answer:
-            raise StorageResolutionError(
-                "git fast-import stopped: "
-                + self.process.stderr.read().decode(errors="replace").strip())
-        return answer.decode().strip()
+            lines = [""]
+        if not all(lines):
+            self.process.wait()
+            raise StorageResolutionError(f"git fast-import stopped: {self.ended()}")
+        return lines
 
-    def commit(self, ref: str, parent: str | None, message: str, fresh: dict[str, bytes],
-               removed: list[str], staged: dict[str, str], timestamp: int) -> str:
+    def commit(self, ref: str, parent: str | None, tree: str, message: str,
+               fresh: dict[str, bytes], removed: list[str], staged: dict[str, str],
+               timestamp: int) -> str:
         """One checkpoint: the blobs git has not seen, then the commit that removes and stages
-        paths on top of ``parent``. Answers the commit's id."""
+        paths on top of ``parent``. Answers the commit's id. A branch this stream has moved
+        past ``parent`` is another writer's, and a tree git names otherwise than ``tree`` is
+        a tree this member cannot name: both raise."""
         with self.turn:
+            tip, mark = self.tips.get(ref, (parent, 0))
+            if parent != tip:
+                raise StorageResolutionError(
+                    f"{ref} moved to {tip} since this branch was at {parent}: "
+                    "another writer's checkpoint is not overwritten")
             self.marks += 1
-            lines = [b"".join((b"blob\ndata %d\n" % len(data), data, b"\n")) for data in fresh.values()]
             said = message.encode()
+            lines = [b"".join((b"blob\ndata %d\n" % len(data), data, b"\n"))
+                     for data in fresh.values()]
             lines.append(
                 f"commit {ref}\nmark :{self.marks}\n"
-                f"committer polystore <polystore@localhost> {timestamp} +0000\n".encode()
+                f"committer {self.committer} {timestamp} +0000\n".encode()
                 + b"data %d\n" % len(said) + said + b"\n")
-            tip, mark = self.tips.get(ref, (None, 0))
             lines.append(b"" if parent is None
-                         else f"from {f':{mark}' if parent == tip else parent}\n".encode())
+                         else f"from {f':{mark}' if mark else parent}\n".encode())
             lines.extend(f"D {_quoted(path)}\n".encode() for path in removed)
             lines.extend(f"M {_FILE_MODE} {blob} {_quoted(path)}\n".encode()
                          for path, blob in staged.items())
             self.unflushed = True
-            commit = self.told(b"".join(lines) + f"\nget-mark :{self.marks}\n".encode(), answered=True)
+            commit, root = self.told(
+                b"".join(lines) + f'\nget-mark :{self.marks}\nls :{self.marks} ""\n'.encode(), 2)
+            named = root.split("\t")[0].split()[-1]
+            if named != tree:
+                raise StorageResolutionError(
+                    f"git names the tree of {commit} {named}; it was computed as {tree}")
             self.tips[ref] = (commit, self.marks)
             return commit
 
     def flush(self) -> None:
-        """Have git put every checkpoint so far on disk and move the branches to them."""
+        """Have git put every checkpoint so far on disk and move the branches to them. A
+        branch git would not move, because another writer moved it first, raises."""
         with self.turn:
             if self.unflushed:
-                self.told(b"checkpoint\nprogress flushed\n", answered=True)
                 self.unflushed = False
+                self.told(b"checkpoint\nprogress flushed\n", 1)
+            refused = self.refused()
+            if refused:
+                raise StorageResolutionError(f"git did not take a checkpoint: {refused}")
+
+    def ended(self) -> str:
+        """This stream is over and no longer the repository's, so the next branch opens a new
+        one. Answers git's last words."""
+        with self.opening:
+            if self.open_streams.get(self.key) is self:
+                del self.open_streams[self.key]
+        refused = self.refused()
+        os.unlink(self.said)
+        return refused
 
     def close(self) -> None:
+        """Finish the stream: what it holds goes to disk, and git's last word is heard. A
+        stream that already stopped has said its last."""
         with self.turn:
-            if self.process.poll() is None:
-                self.process.communicate(b"done\n")
+            if self.process.poll() is not None:
+                return
+            self.process.communicate(b"done\n")
+            refused = self.ended()
+            if self.process.returncode or refused:
+                raise StorageResolutionError(
+                    f"git fast-import ended with {self.process.returncode}: {refused}")
 
 
 class GitStreamBackend(GitBackend):
@@ -160,7 +225,8 @@ class GitStreamBackend(GitBackend):
         self._tree: dict[str, str] = {}
         self._recorded: dict[str, str] = {}
         self._fresh: dict[str, bytes] = {}
-        self._stream = GitStream.of(self)
+        self._stream = GitStream.joined(self)
+        self._finalizer = weakref.finalize(self, self._stream.left)
 
     def _staging_environment(self) -> dict[str, str]:
         return {}
@@ -172,7 +238,13 @@ class GitStreamBackend(GitBackend):
         return super()._run(*arguments, input=input, bound=bound)
 
     def _stage_tree_at(self, ref: str | None) -> None:
-        self._tree = super()._entries(ref) if ref else {}
+        rows = self._rows(ref) if ref else []
+        other = sorted(path for mode, _blob, path in rows if mode != _FILE_MODE)
+        if other:
+            raise StorageResolutionError(
+                f"{ref} holds more than plain files ({', '.join(other[:3])}): "
+                "a stream branch names its own trees and knows only plain files")
+        self._tree = {path: blob for _mode, blob, path in rows}
         if self._base is not None and ref == self._base.id:
             self._recorded = dict(self._tree)
 
@@ -211,25 +283,26 @@ class GitStreamBackend(GitBackend):
 
     def checkpoint(self, message: str) -> GitCommit:
         """Record the staged tree as a commit on the branch, through the open git. A tree
-        identical to the head's records nothing and returns the head. On disk at ``flush``."""
+        identical to the head's records nothing and returns the head. The branch moves only
+        from the head this instance saw, on disk at ``flush``."""
         tree = tree_id(self._tree)
         parent = self._base
+        staged = {path: blob for path, blob in self._tree.items() if self._recorded.get(path) != blob}
+        fresh = {blob: self._fresh[blob] for blob in set(staged.values()) if blob in self._fresh}
+        self._fresh.clear()
         if parent is not None and parent.tree == tree:
             return parent
-        staged = {path: blob for path, blob in self._tree.items() if self._recorded.get(path) != blob}
         timestamp = int(time.time())
         commit = self._stream.commit(
-            self.ref, parent.id if parent else None, message,
-            {blob: self._fresh[blob] for blob in set(staged.values()) if blob in self._fresh},
+            self.ref, parent.id if parent else None, tree, message, fresh,
             [path for path in self._recorded if path not in self._tree], staged, timestamp)
-        self._fresh.clear()
         self._recorded = dict(self._tree)
         self._base = GitCommit(commit, tree, timestamp, message)
         return self._base
 
     def flush(self) -> None:
         """Put this repository's streamed checkpoints on disk."""
-        GitStream.settle(self.repository)
+        self._stream.flush()
 
     def tree_id(self, directory: str | Path = "") -> str:
         base = self._path(directory, directory=True)

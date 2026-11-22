@@ -134,15 +134,18 @@ class GitBackend(StorageBackend, PicklableBackend):
             raise StorageResolutionError("A git file path cannot be the repository root")
         return text
 
+    def _rows(self, ref: str | None = None) -> list[tuple[str, str, str]]:
+        """Every file's mode, blob id and path: of the staged tree, or of the tree at ``ref``."""
+        listing = self._run(*(("ls-files", "--stage", "-z") if ref is None
+                              else ("ls-tree", "-r", "-z", ref))).decode()
+        rows = (row.split("\t", 1) for row in listing.split("\0") if row)
+        # "mode blob stage" for the index, "mode type blob" for a tree.
+        return [(meta.split()[0], meta.split()[1 if ref is None else 2], path)
+                for meta, path in rows]
+
     def _entries(self, ref: str | None = None) -> dict[str, str]:
         """Every file path and its blob id: the staged tree, or the tree at ``ref``."""
-        if ref is None:
-            listing = self._run("ls-files", "--stage", "-z").decode()
-            rows = (row.split("\t", 1) for row in listing.split("\0") if row)
-            return {path: meta.split()[1] for meta, path in rows}
-        listing = self._run("ls-tree", "-r", "-z", ref).decode()
-        rows = (row.split("\t", 1) for row in listing.split("\0") if row)
-        return {path: meta.split()[2] for meta, path in rows}
+        return {path: blob for _mode, blob, path in self._rows(ref)}
 
     @staticmethod
     def _under(entries: dict[str, str], directory: str) -> dict[str, str]:
