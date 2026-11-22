@@ -10,11 +10,13 @@ import pytest
 from polystore import FileManager, GitBackend, MemoryBackend
 from polystore.backend_registry import create_storage_registry
 from polystore.exceptions import StorageResolutionError
+from polystore.git_stream import GitStreamBackend
 
 
-@pytest.fixture
-def backend(tmp_path):
-    return GitBackend(tmp_path / "store.git")
+@pytest.fixture(params=[GitBackend, GitStreamBackend])
+def backend(request, tmp_path):
+    """A branch of each kind: whatever a caller does to a branch, both answer alike."""
+    return request.param(tmp_path / "store.git")
 
 
 def test_saved_files_are_read_back_and_listed_like_a_filesystem(backend):
@@ -188,3 +190,167 @@ def test_the_default_registry_builds_no_backend_that_needs_context():
     registry = create_storage_registry()
     assert "git" not in registry and "virtual_workspace" not in registry
     assert {"disk", "memory", "zarr"} <= set(registry)
+
+
+def test_a_batch_is_stored_by_two_git_processes_whatever_its_size(tmp_path, monkeypatch):
+    import subprocess
+
+    backend = GitBackend(tmp_path / "store.git")
+    started: list[list[str]] = []
+    run = subprocess.run
+
+    def counted(command, *arguments, **keywords):
+        started.append(command)
+        return run(command, *arguments, **keywords)
+
+    monkeypatch.setattr(subprocess, "run", counted)
+    names = [f"ctx/{number:04d} turn.txt" for number in range(60)]
+    backend.save_batch([f"text {number}\n" for number in range(59)] + [b"\x00bytes"], names)
+    assert len(started) == 2
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert backend.list_files("ctx") == names
+    assert backend.load_text(names[7]) == "text 7\n" and backend.load(names[-1]) == b"\x00bytes"
+    backend.save("replaced\n", names[7])
+    backend.checkpoint("batch")
+    assert GitBackend(tmp_path / "store.git").load_text(names[7]) == "replaced\n"
+
+
+def test_a_streamed_checkpoint_starts_no_process_and_any_git_reads_it_once_flushed(
+        tmp_path, monkeypatch):
+    stream = GitStreamBackend(tmp_path / "store.git")
+    started = []
+    real_run, real_popen = subprocess.run, subprocess.Popen
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: started.append(a) or real_run(*a, **k))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: started.append(a) or real_popen(*a, **k))
+    made = []
+    for revision in range(20):
+        stream.save_batch([f"turn {revision}", "told"], [f"ctx/{revision:04d}-user.txt", "system.txt"])
+        if revision == 10:
+            stream.delete_all("ctx/0003-user.txt")
+        made.append((stream.checkpoint(f"context: {revision}"), stream.tree_id("ctx")))
+    assert stream.checkpoint("nothing changed") == made[-1][0]
+    assert not started
+
+    stream.flush()
+    monkeypatch.undo()
+
+    def git(*arguments: str) -> str:
+        return subprocess.run(["git", f"--git-dir={tmp_path / 'store.git'}", *arguments],
+                              capture_output=True, check=True).stdout.decode().strip()
+
+    # The ids it named itself are the ids git gives the same content.
+    for commit, context in (made[0], made[10], made[-1]):
+        assert git("rev-parse", f"{commit.id}^{{tree}}") == commit.tree
+        assert git("rev-parse", f"{commit.id}:ctx") == context
+    assert git("rev-parse", "refs/heads/main") == made[-1][0].id
+    assert git("rev-list", "--count", "refs/heads/main") == "20"
+    assert "ctx/0003-user.txt" not in git("ls-tree", "-r", "--name-only", made[10][0].id)
+    reopened = GitBackend(tmp_path / "store.git")
+    assert reopened.head().id == made[-1][0].id and reopened.tree_id("ctx") == made[-1][1]
+    resumed = GitStreamBackend(tmp_path / "store.git")
+    resumed.save("more", "ctx/0020-user.txt")
+    assert [one.message for one in (resumed.checkpoint("context: 20"), *resumed.history(limit=2)[1:])] \
+        == ["context: 20", "context: 19"]
+
+
+def test_a_streamed_branch_another_writer_moved_is_a_conflict_raised_not_overwritten(tmp_path):
+    # In this process: the second instance still stands where the branch was.
+    first = GitStreamBackend(tmp_path / "store.git")
+    second = GitStreamBackend(tmp_path / "store.git")
+    first.save("first", "doc.txt")
+    first.checkpoint("first")
+    second.save("second", "doc.txt")
+    with pytest.raises(StorageResolutionError, match="another writer"):
+        second.checkpoint("second lost")
+    # Losing the race does not lose what was staged: nothing of it reached git, so it is
+    # still here to be read and put somewhere else.
+    assert second.load_text("doc.txt") == "second"
+
+    # From outside the stream: git refuses to move the branch, and the flush says so.
+    first.flush()
+    outside = GitBackend(tmp_path / "store.git")
+    outside.save("outside", "doc.txt")
+    outside.checkpoint("outside wins the race")
+    first.save("late", "doc.txt")
+    first.checkpoint("first is late")
+    with pytest.raises(StorageResolutionError, match="did not take a checkpoint"):
+        first.flush()
+    assert GitBackend(tmp_path / "store.git").load_text("doc.txt") == "outside"
+
+    # It was said once: a branch that stays where it lost is not refused again, another
+    # branch of the repository goes on, and the stream ends clean.
+    other = GitStreamBackend(tmp_path / "store.git", "refs/heads/other")
+    other.save("other", "doc.txt")
+    other.checkpoint("another branch")
+    other.flush()
+    assert GitBackend(tmp_path / "store.git", "refs/heads/other").load_text("doc.txt") == "other"
+    from polystore.git_stream import GitStream
+
+    for branch in (first, second, other):
+        branch._finalizer()
+    GitStream.reap()
+
+
+def test_a_stream_branch_refuses_a_ref_that_holds_more_than_plain_files(tmp_path):
+    indexed = GitBackend(tmp_path / "store.git")
+    indexed.save("#!/bin/sh\n", "run.sh")
+    indexed._git("update-index", "--add", "--cacheinfo",
+                 f"100755,{indexed.blob_id('run.sh')},run.sh")
+    indexed.checkpoint("an executable")
+    with pytest.raises(StorageResolutionError, match="plain files"):
+        GitStreamBackend(tmp_path / "store.git")
+
+
+def test_a_file_that_reads_like_git_commands_is_only_a_file(tmp_path):
+    stream = GitStreamBackend(tmp_path / "store.git")
+    text = "$ ls logs\nget-mark :1\nprogress flushed\ncheckpoint\ndone\n"
+    stream.save(text, "ctx/0001-tool.txt")
+    made = stream.checkpoint("a transcript")
+    stream.flush()
+    assert GitBackend(tmp_path / "store.git").load_text("ctx/0001-tool.txt", ref=made.id) == text
+
+
+def test_the_open_git_ends_with_the_last_branch_that_uses_it(tmp_path):
+    import gc
+
+    from polystore.git_stream import GitStream
+
+    def streams() -> list[GitStream]:
+        return [stream for (_pid, repository), stream in GitStream.open_streams.items()
+                if repository == (tmp_path / "store.git").resolve()]
+
+    one = GitStreamBackend(tmp_path / "store.git")
+    two = GitStreamBackend(tmp_path / "store.git", "refs/heads/other")
+    (shared,) = streams()
+    one.save("kept", "doc.txt")
+    made = one.checkpoint("kept")
+    del one
+    gc.collect()
+    assert streams() == [shared] and shared.process.poll() is None
+    # A branch goes wherever the collector finds it, the thread opening a stream included,
+    # so its going takes no lock: it is noted, and the next open or flush closes the stream.
+    del two
+    with GitStream.opening:
+        gc.collect()
+    assert streams() == [shared] and shared.process.poll() is None
+    GitStreamBackend(tmp_path / "elsewhere.git")
+    # Closed, off the table, and what was never flushed by hand is on disk all the same.
+    assert streams() == [] and shared.process.poll() == 0
+    assert GitBackend(tmp_path / "store.git").head().id == made.id
+    again = GitStreamBackend(tmp_path / "store.git")
+    assert again.head().id == made.id
+
+    # A stream that ended says so to a branch still holding it, and a forked process is told
+    # to open its own.
+    (stream,) = streams()
+    stream.close()
+    again.save("late", "doc.txt")
+    with pytest.raises(StorageResolutionError, match="this stream ended"):
+        again.checkpoint("late")
+    fresh = GitStreamBackend(tmp_path / "store.git")
+    (stream,) = streams()
+    stream.key = (stream.key[0] + 1, stream.key[1])
+    fresh.save("from a fork", "doc.txt")
+    with pytest.raises(StorageResolutionError, match="a forked process opens the branch again"):
+        fresh.checkpoint("from a fork")
