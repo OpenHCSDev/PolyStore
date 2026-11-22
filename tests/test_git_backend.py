@@ -188,3 +188,27 @@ def test_the_default_registry_builds_no_backend_that_needs_context():
     registry = create_storage_registry()
     assert "git" not in registry and "virtual_workspace" not in registry
     assert {"disk", "memory", "zarr"} <= set(registry)
+
+
+def test_a_batch_is_stored_by_two_git_processes_whatever_its_size(tmp_path, monkeypatch):
+    import subprocess
+
+    backend = GitBackend(tmp_path / "store.git")
+    started: list[list[str]] = []
+    run = subprocess.run
+
+    def counted(command, *arguments, **keywords):
+        started.append(command)
+        return run(command, *arguments, **keywords)
+
+    monkeypatch.setattr(subprocess, "run", counted)
+    names = [f"ctx/{number:04d} turn.txt" for number in range(60)]
+    backend.save_batch([f"text {number}\n" for number in range(59)] + [b"\x00bytes"], names)
+    assert len(started) == 2
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert backend.list_files("ctx") == names
+    assert backend.load_text(names[7]) == "text 7\n" and backend.load(names[-1]) == b"\x00bytes"
+    backend.save("replaced\n", names[7])
+    backend.checkpoint("batch")
+    assert GitBackend(tmp_path / "store.git").load_text(names[7]) == "replaced\n"

@@ -134,20 +134,34 @@ class GitBackend(StorageBackend, PicklableBackend):
     def save(self, data: Any, identifier: str | Path, **kwargs) -> None:
         """Stage ``data`` (bytes, or text as UTF-8) at ``identifier``, replacing what was there;
         the previous content stays in every checkpoint that recorded it."""
-        del kwargs
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        if not isinstance(data, bytes):
-            raise TypeError(f"GitBackend stores bytes or text, not {type(data).__name__}")
-        path = self._path(identifier)
-        blob = self._git("hash-object", "-w", "--stdin", input=data)
-        self._git("update-index", "--add", "--cacheinfo", f"{_FILE_MODE},{blob},{path}")
+        self.save_batch([data], [identifier], **kwargs)
 
     def save_batch(self, data_list: list[Any], identifiers: list[str | Path], **kwargs) -> None:
+        """Stage each of ``data_list`` at its identifier. Git is started twice whatever the
+        number of files: once to store every blob, once to stage every path."""
+        del kwargs
         if len(data_list) != len(identifiers):
             raise ValueError("data_list and identifiers must have the same length")
-        for data, identifier in zip(data_list, identifiers, strict=True):
-            self.save(data, identifier, **kwargs)
+        payloads = [data.encode("utf-8") if isinstance(data, str) else data for data in data_list]
+        for payload in payloads:
+            if not isinstance(payload, bytes):
+                raise TypeError(f"GitBackend stores bytes or text, not {type(payload).__name__}")
+        paths = [self._path(identifier) for identifier in identifiers]
+        if not paths:
+            return
+        with tempfile.TemporaryDirectory(dir=Path(self._index).parent) as folder:
+            files = [Path(folder) / str(number) for number in range(len(payloads))]
+            for file, payload in zip(files, payloads, strict=True):
+                file.write_bytes(payload)
+            blobs = self._git(
+                "hash-object", "-w", "--stdin-paths",
+                input="".join(f"{file}\n" for file in files).encode(),
+            ).split()
+        self._run(
+            "update-index", "--add", "-z", "--index-info",
+            input="".join(f"{_FILE_MODE} {blob}\t{path}\0"
+                          for blob, path in zip(blobs, paths, strict=True)).encode(),
+        )
 
     # -- DataSource ---------------------------------------------------------
 
