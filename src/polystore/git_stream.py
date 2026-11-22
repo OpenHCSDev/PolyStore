@@ -111,7 +111,10 @@ class GitStream:
             while cls.departures:
                 stream = cls.departures.popleft()
                 stream.branches -= 1
-                if not stream.branches and cls.open_streams.get(stream.key) is stream:
+                # A forked process inherits its parent's notes; the parent's streams are not
+                # its to close.
+                if (not stream.branches and stream.key[0] == os.getpid()
+                        and cls.open_streams.get(stream.key) is stream):
                     del cls.open_streams[stream.key]
                     over.append(stream)
         failures = []
