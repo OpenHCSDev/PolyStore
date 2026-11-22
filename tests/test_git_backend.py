@@ -10,11 +10,13 @@ import pytest
 from polystore import FileManager, GitBackend, MemoryBackend
 from polystore.backend_registry import create_storage_registry
 from polystore.exceptions import StorageResolutionError
+from polystore.git_stream import GitStreamBackend
 
 
-@pytest.fixture
-def backend(tmp_path):
-    return GitBackend(tmp_path / "store.git")
+@pytest.fixture(params=[GitBackend, GitStreamBackend])
+def backend(request, tmp_path):
+    """A branch of each kind: whatever a caller does to a branch, both answer alike."""
+    return request.param(tmp_path / "store.git")
 
 
 def test_saved_files_are_read_back_and_listed_like_a_filesystem(backend):
@@ -212,3 +214,41 @@ def test_a_batch_is_stored_by_two_git_processes_whatever_its_size(tmp_path, monk
     backend.save("replaced\n", names[7])
     backend.checkpoint("batch")
     assert GitBackend(tmp_path / "store.git").load_text(names[7]) == "replaced\n"
+
+
+def test_a_streamed_checkpoint_starts_no_process_and_any_git_reads_it_once_flushed(
+        tmp_path, monkeypatch):
+    stream = GitStreamBackend(tmp_path / "store.git")
+    started = []
+    real_run, real_popen = subprocess.run, subprocess.Popen
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: started.append(a) or real_run(*a, **k))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: started.append(a) or real_popen(*a, **k))
+    made = []
+    for revision in range(20):
+        stream.save_batch([f"turn {revision}", "told"], [f"ctx/{revision:04d}-user.txt", "system.txt"])
+        if revision == 10:
+            stream.delete_all("ctx/0003-user.txt")
+        made.append((stream.checkpoint(f"context: {revision}"), stream.tree_id("ctx")))
+    assert stream.checkpoint("nothing changed") == made[-1][0]
+    assert not started
+
+    stream.flush()
+    monkeypatch.undo()
+
+    def git(*arguments: str) -> str:
+        return subprocess.run(["git", f"--git-dir={tmp_path / 'store.git'}", *arguments],
+                              capture_output=True, check=True).stdout.decode().strip()
+
+    # The ids it named itself are the ids git gives the same content.
+    for commit, context in (made[0], made[10], made[-1]):
+        assert git("rev-parse", f"{commit.id}^{{tree}}") == commit.tree
+        assert git("rev-parse", f"{commit.id}:ctx") == context
+    assert git("rev-parse", "refs/heads/main") == made[-1][0].id
+    assert git("rev-list", "--count", "refs/heads/main") == "20"
+    assert "ctx/0003-user.txt" not in git("ls-tree", "-r", "--name-only", made[10][0].id)
+    reopened = GitBackend(tmp_path / "store.git")
+    assert reopened.head().id == made[-1][0].id and reopened.tree_id("ctx") == made[-1][1]
+    resumed = GitStreamBackend(tmp_path / "store.git")
+    resumed.save("more", "ctx/0020-user.txt")
+    assert [one.message for one in (resumed.checkpoint("context: 20"), *resumed.history(limit=2)[1:])] \
+        == ["context: 20", "context: 19"]

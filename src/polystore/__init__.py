@@ -81,6 +81,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "StreamingDataType": ".streaming_constants",
     "SourcePixelRef": ".virtual_workspace",
     "GitBackend": ".git",
+    "GitStreamBackend": ".git_stream",
     "GitCommit": ".git",
     "DiskBackend": ".disk",
     "DiskStorageBackend": ".disk",

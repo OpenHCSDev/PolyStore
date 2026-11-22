@@ -58,6 +58,16 @@ class GitBackend(StorageBackend, PicklableBackend):
             self._run("init", "--bare", "--quiet", str(self.repository), bound=False)
             # A checkpoint that returned is on disk: objects and the ref are fsynced.
             self._run(f"--git-dir={self.repository}", "config", "core.fsync", "all", bound=False)
+        self._open_staging()
+        # The checkpoint this instance's staged tree is based on: the only head its own
+        # checkpoint may replace.
+        self._base = self.head()
+        self._stage_tree_at(self._base.id if self._base else None)
+
+    # -- where the staged tree is kept ---------------------------------------
+
+    def _open_staging(self) -> None:
+        """Somewhere of this instance's own to stage in: a git index file."""
         staging = self.repository / "polystore-index"
         staging.mkdir(exist_ok=True)
         handle, index = tempfile.mkstemp(dir=staging, suffix=".index")
@@ -65,15 +75,28 @@ class GitBackend(StorageBackend, PicklableBackend):
         os.unlink(index)  # git creates it; a zero-byte file is not a valid index
         self._index = index
         self._finalizer = weakref.finalize(self, _discard, index)
-        # The checkpoint this instance's staged tree is based on: the only head its own
-        # checkpoint may replace.
-        self._base = self.head()
-        self._git("read-tree", self._base.id if self._base else "--empty")
+
+    def _staging_environment(self) -> dict[str, str]:
+        """What a git started for this instance is told about where it stages."""
+        return {"GIT_INDEX_FILE": self._index}
+
+    def _stage_tree_at(self, ref: str | None) -> None:
+        """Make the staged tree the one recorded at ``ref``; the empty tree for ``None``."""
+        self._git("read-tree", ref or "--empty")
+
+    def _stage_blobs(self, staged: dict[str, str]) -> None:
+        """Stage blobs git already holds, each at its path."""
+        self._run(
+            "update-index", "--add", "-z", "--index-info",
+            input="".join(f"{_FILE_MODE} {blob}\t{path}\0" for path, blob in staged.items()).encode(),
+        )
 
     # -- git plumbing -------------------------------------------------------
 
-    def _run(self, *arguments: str, input: bytes | None = None, bound: bool = True) -> bytes:
-        environment = {
+    def _environment(self, bound: bool = True) -> dict[str, str]:
+        """What a git started here runs under: this user's and this machine's configuration
+        play no part, and a git bound to the repository stages where this instance does."""
+        return {
             "PATH": os.environ.get("PATH", os.defpath),
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": os.devnull,
@@ -82,13 +105,14 @@ class GitBackend(StorageBackend, PicklableBackend):
             "GIT_AUTHOR_EMAIL": "polystore@localhost",
             "GIT_COMMITTER_NAME": "polystore",
             "GIT_COMMITTER_EMAIL": "polystore@localhost",
+            **(self._staging_environment() if bound else {}),
         }
-        command = ["git"]
-        if bound:
-            command.append(f"--git-dir={self.repository}")
-            environment["GIT_INDEX_FILE"] = self._index
+
+    def _run(self, *arguments: str, input: bytes | None = None, bound: bool = True) -> bytes:
+        command = ["git", *([f"--git-dir={self.repository}"] if bound else [])]
         completed = subprocess.run(
-            [*command, *arguments], input=input, env=environment, capture_output=True, check=False,
+            [*command, *arguments], input=input, env=self._environment(bound),
+            capture_output=True, check=False,
         )
         if completed.returncode != 0:
             raise StorageResolutionError(
@@ -157,11 +181,7 @@ class GitBackend(StorageBackend, PicklableBackend):
                 "hash-object", "-w", "--stdin-paths",
                 input="".join(f"{file}\n" for file in files).encode(),
             ).split()
-        self._run(
-            "update-index", "--add", "-z", "--index-info",
-            input="".join(f"{_FILE_MODE} {blob}\t{path}\0"
-                          for blob, path in zip(blobs, paths, strict=True)).encode(),
-        )
+        self._stage_blobs(dict(zip(paths, blobs, strict=True)))
 
     # -- DataSource ---------------------------------------------------------
 
@@ -270,8 +290,7 @@ class GitBackend(StorageBackend, PicklableBackend):
         )
         if not moved:
             raise FileNotFoundError(f"No such git path: {source}")
-        for path, blob in moved.items():
-            self._git("update-index", "--add", "--cacheinfo", f"{_FILE_MODE},{blob},{path}")
+        self._stage_blobs(moved)
 
     def move(self, src: str | Path, dst: str | Path) -> None:
         self.copy(src, dst)
@@ -330,7 +349,7 @@ class GitBackend(StorageBackend, PicklableBackend):
     def restore(self, ref: str) -> None:
         """Stage the tree recorded at ``ref``. The next checkpoint records the return as a
         new commit; history is never rewritten."""
-        self._git("read-tree", ref)
+        self._stage_tree_at(ref)
 
     def fork(self, ref: str) -> GitBackend:
         """A new branch starting at this branch's head; staged changes are not carried."""
