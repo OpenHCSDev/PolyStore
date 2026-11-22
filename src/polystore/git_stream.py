@@ -15,6 +15,7 @@ plain files only, and a ref that holds anything else is refused when it is opene
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import os
 import subprocess
@@ -22,6 +23,7 @@ import tempfile
 import threading
 import time
 import weakref
+from collections import deque
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -72,6 +74,9 @@ class GitStream:
     #: The open stream of each repository, per process: a forked child opens its own.
     open_streams: ClassVar[dict[tuple[int, Path], GitStream]] = {}
     opening: ClassVar[threading.Lock] = threading.Lock()
+    #: The stream of each branch that has gone. A branch's finalizer runs at any line of any
+    #: thread, the one holding ``opening`` included, so it takes no lock: it only notes this.
+    departures: ClassVar[deque[GitStream]] = deque()
 
     def __init__(self, backend: GitStreamBackend, key: tuple[int, Path]) -> None:
         self.key = key
@@ -97,8 +102,38 @@ class GitStream:
         )
 
     @classmethod
+    def reap(cls) -> None:
+        """Close every stream whose branches have all gone. What a closing stream raises is
+        raised here, after the rest are closed: the branch it belonged to is no longer there
+        to be told."""
+        over = []
+        with cls.opening:
+            while cls.departures:
+                stream = cls.departures.popleft()
+                stream.branches -= 1
+                if not stream.branches and cls.open_streams.get(stream.key) is stream:
+                    del cls.open_streams[stream.key]
+                    over.append(stream)
+        failures = []
+        for stream in over:
+            try:
+                stream.close()
+            except StorageResolutionError as failure:
+                failures.append(failure)
+        if failures:
+            raise failures[0]
+
+    @classmethod
+    def close_all(cls) -> None:
+        """At exit: close the streams this process opened."""
+        for stream in [stream for (pid, _), stream in cls.open_streams.items()
+                       if pid == os.getpid()]:
+            stream.close()
+
+    @classmethod
     def joined(cls, backend: GitStreamBackend) -> GitStream:
         """The repository's open stream, with one more branch on it."""
+        cls.reap()
         key = (os.getpid(), backend.repository.resolve())
         with cls.opening:
             if key not in cls.open_streams:
@@ -114,19 +149,19 @@ class GitStream:
         if stream is not None:
             stream.flush()
 
-    def left(self) -> None:
-        """One branch fewer; the last one closes the stream."""
-        with self.opening:
-            self.branches -= 1
-            if self.branches:
-                return
-        self.close()
+    def usable(self) -> None:
+        """A stream is written by the process that opened it, until it ends."""
+        if self.key[0] != os.getpid():
+            raise StorageResolutionError(
+                f"this stream is process {self.key[0]}'s: a forked process opens the branch again")
+        if self.said.closed:
+            raise StorageResolutionError("this stream ended: open the branch again")
 
     def refused(self) -> str:
         """What git has said since it was last asked: it is quiet unless something is wrong."""
-        # Git writes through the same open file, so its place in it is git's, not ours.
-        self.said.seek(self.heard)
-        text = self.said.read()
+        # Read beside git's place in the file: git writes through the same open file.
+        descriptor = self.said.fileno()
+        text = os.pread(descriptor, os.fstat(descriptor).st_size - self.heard, self.heard)
         self.heard += len(text)
         return text.decode(errors="replace").strip()
 
@@ -151,6 +186,7 @@ class GitStream:
         past ``parent`` is another writer's, and a tree git names otherwise than ``tree`` is
         a tree this member cannot name: both raise."""
         with self.turn:
+            self.usable()
             tip, mark = self.tips.get(ref, (parent, 0))
             if parent != tip:
                 raise StorageResolutionError(
@@ -182,7 +218,9 @@ class GitStream:
     def flush(self) -> None:
         """Have git put every checkpoint so far on disk and move the branches to them. A
         branch git would not move, because another writer moved it first, raises."""
+        self.reap()
         with self.turn:
+            self.usable()
             if self.unflushed:
                 self.unflushed = False
                 self.told(b"checkpoint\nprogress flushed\n", 1)
@@ -209,7 +247,7 @@ class GitStream:
         """Finish the stream: what it holds goes to disk, and git's last word is heard. A
         stream that already stopped has said its last."""
         with self.turn:
-            if self.process.poll() is not None:
+            if self.said.closed:
                 return
             self.process.communicate(b"done\n")
             refused = self.ended()
@@ -231,7 +269,7 @@ class GitStreamBackend(GitBackend):
         self._recorded: dict[str, str] = {}
         self._fresh: dict[str, bytes] = {}
         self._stream = GitStream.joined(self)
-        self._finalizer = weakref.finalize(self, self._stream.left)
+        self._finalizer = weakref.finalize(self, GitStream.departures.append, self._stream)
 
     def _staging_environment(self) -> dict[str, str]:
         return {}
@@ -294,13 +332,16 @@ class GitStreamBackend(GitBackend):
         parent = self._base
         staged = {path: blob for path, blob in self._tree.items() if self._recorded.get(path) != blob}
         fresh = {blob: self._fresh[blob] for blob in set(staged.values()) if blob in self._fresh}
-        self._fresh.clear()
+        # The bytes are let go only once nothing needs them: a checkpoint that raises still
+        # holds what it staged.
         if parent is not None and parent.tree == tree:
+            self._fresh.clear()
             return parent
         timestamp = int(time.time())
         commit = self._stream.commit(
             self.ref, parent.id if parent else None, tree, message, fresh,
             [path for path in self._recorded if path not in self._tree], staged, timestamp)
+        self._fresh.clear()
         self._recorded = dict(self._tree)
         self._base = GitCommit(commit, tree, timestamp, message)
         return self._base
@@ -314,3 +355,6 @@ class GitStreamBackend(GitBackend):
         self.is_dir(base)
         prefix = f"{base}/" if base else ""
         return tree_id({path[len(prefix):]: blob for path, blob in self._under(self._tree, base).items()})
+
+
+atexit.register(GitStream.close_all)

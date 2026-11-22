@@ -263,6 +263,9 @@ def test_a_streamed_branch_another_writer_moved_is_a_conflict_raised_not_overwri
     second.save("second", "doc.txt")
     with pytest.raises(StorageResolutionError, match="another writer"):
         second.checkpoint("second lost")
+    # Losing the race does not lose what was staged: nothing of it reached git, so it is
+    # still here to be read and put somewhere else.
+    assert second.load_text("doc.txt") == "second"
 
     # From outside the stream: git refuses to move the branch, and the flush says so.
     first.flush()
@@ -282,8 +285,11 @@ def test_a_streamed_branch_another_writer_moved_is_a_conflict_raised_not_overwri
     other.checkpoint("another branch")
     other.flush()
     assert GitBackend(tmp_path / "store.git", "refs/heads/other").load_text("doc.txt") == "other"
+    from polystore.git_stream import GitStream
+
     for branch in (first, second, other):
         branch._finalizer()
+    GitStream.reap()
 
 
 def test_a_stream_branch_refuses_a_ref_that_holds_more_than_plain_files(tmp_path):
@@ -322,9 +328,29 @@ def test_the_open_git_ends_with_the_last_branch_that_uses_it(tmp_path):
     del one
     gc.collect()
     assert streams() == [shared] and shared.process.poll() is None
+    # A branch goes wherever the collector finds it, the thread opening a stream included,
+    # so its going takes no lock: it is noted, and the next open or flush closes the stream.
     del two
-    gc.collect()
+    with GitStream.opening:
+        gc.collect()
+    assert streams() == [shared] and shared.process.poll() is None
+    GitStreamBackend(tmp_path / "elsewhere.git")
     # Closed, off the table, and what was never flushed by hand is on disk all the same.
     assert streams() == [] and shared.process.poll() == 0
     assert GitBackend(tmp_path / "store.git").head().id == made.id
-    assert GitStreamBackend(tmp_path / "store.git").head().id == made.id
+    again = GitStreamBackend(tmp_path / "store.git")
+    assert again.head().id == made.id
+
+    # A stream that ended says so to a branch still holding it, and a forked process is told
+    # to open its own.
+    (stream,) = streams()
+    stream.close()
+    again.save("late", "doc.txt")
+    with pytest.raises(StorageResolutionError, match="this stream ended"):
+        again.checkpoint("late")
+    fresh = GitStreamBackend(tmp_path / "store.git")
+    (stream,) = streams()
+    stream.key = (stream.key[0] + 1, stream.key[1])
+    fresh.save("from a fork", "doc.txt")
+    with pytest.raises(StorageResolutionError, match="a forked process opens the branch again"):
+        fresh.checkpoint("from a fork")
