@@ -78,6 +78,7 @@ class GitStream:
         self.turn = threading.RLock()
         self.branches = 0
         self.unflushed = False
+        self.refused_a_branch = False
         self.marks = 0
         #: Each branch's newest commit made here and the mark git knows it by: a commit git
         #: has only in the stream is named to it by mark, one on disk by its id.
@@ -86,16 +87,14 @@ class GitStream:
         self.committer = (f"{environment['GIT_COMMITTER_NAME']} "
                           f"<{environment['GIT_COMMITTER_EMAIL']}>")
         # What git says of a branch it would not move goes to a file read at every flush: a
-        # pipe nobody drains is read by nobody, and blocks git once it fills.
-        said = backend.repository / "polystore-stream"
-        said.mkdir(exist_ok=True)
-        handle, self.said = tempfile.mkstemp(dir=said, suffix=".err")
+        # pipe nobody drains is read by nobody, and blocks git once it fills. The file has no
+        # name, so it outlives a repository deleted under it and leaves nothing behind.
+        self.said = tempfile.TemporaryFile()
         self.heard = 0
         self.process = subprocess.Popen(  # noqa: S603 - git, with this backend's own arguments
             ["git", f"--git-dir={backend.repository}", "fast-import", "--quiet", "--done"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=handle, env=environment,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.said, env=environment,
         )
-        os.close(handle)
 
     @classmethod
     def joined(cls, backend: GitStreamBackend) -> GitStream:
@@ -125,9 +124,9 @@ class GitStream:
 
     def refused(self) -> str:
         """What git has said since it was last asked: it is quiet unless something is wrong."""
-        with open(self.said, "rb") as said:
-            said.seek(self.heard)
-            text = said.read()
+        # Git writes through the same open file, so its place in it is git's, not ours.
+        self.said.seek(self.heard)
+        text = self.said.read()
         self.heard += len(text)
         return text.decode(errors="replace").strip()
 
@@ -189,6 +188,11 @@ class GitStream:
                 self.told(b"checkpoint\nprogress flushed\n", 1)
             refused = self.refused()
             if refused:
+                # Said once: git forgets where the stream had each branch, so it asks again
+                # only for a branch that is checkpointed again from a head it does not hold.
+                self.process.stdin.write(b"".join(f"reset {ref}\n".encode() for ref in self.tips))
+                self.tips.clear()
+                self.refused_a_branch = True
                 raise StorageResolutionError(f"git did not take a checkpoint: {refused}")
 
     def ended(self) -> str:
@@ -198,7 +202,7 @@ class GitStream:
             if self.open_streams.get(self.key) is self:
                 del self.open_streams[self.key]
         refused = self.refused()
-        os.unlink(self.said)
+        self.said.close()
         return refused
 
     def close(self) -> None:
@@ -209,7 +213,8 @@ class GitStream:
                 return
             self.process.communicate(b"done\n")
             refused = self.ended()
-            if self.process.returncode or refused:
+            # Git ends with 1 for a branch it refused earlier; that was raised when it did.
+            if refused or (self.process.returncode and not self.refused_a_branch):
                 raise StorageResolutionError(
                     f"git fast-import ended with {self.process.returncode}: {refused}")
 

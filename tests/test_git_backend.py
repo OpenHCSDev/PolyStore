@@ -275,6 +275,16 @@ def test_a_streamed_branch_another_writer_moved_is_a_conflict_raised_not_overwri
         first.flush()
     assert GitBackend(tmp_path / "store.git").load_text("doc.txt") == "outside"
 
+    # It was said once: a branch that stays where it lost is not refused again, another
+    # branch of the repository goes on, and the stream ends clean.
+    other = GitStreamBackend(tmp_path / "store.git", "refs/heads/other")
+    other.save("other", "doc.txt")
+    other.checkpoint("another branch")
+    other.flush()
+    assert GitBackend(tmp_path / "store.git", "refs/heads/other").load_text("doc.txt") == "other"
+    for branch in (first, second, other):
+        branch._finalizer()
+
 
 def test_a_stream_branch_refuses_a_ref_that_holds_more_than_plain_files(tmp_path):
     indexed = GitBackend(tmp_path / "store.git")
